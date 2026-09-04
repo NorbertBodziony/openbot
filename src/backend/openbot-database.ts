@@ -1,7 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { chmod, copyFile, mkdir, readFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import type {
   AgentProviderId,
   BotSummary,
@@ -25,28 +23,19 @@ import {
   ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX,
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
+import { DatabaseCore, deleteOrphanReceipts, type OrchestrationEventInput } from "./database/database-core";
 import {
   databaseRow,
   databaseRows,
   decodeConversationMessageJson,
   decodeConversationThreadRow,
   decodeThreadAgentRow,
-  errorCode,
   objectValue,
   optionalStringColumn,
   requiredEventRow,
   requiredNumberColumn,
   requiredStringColumn,
 } from "./database/database-rows";
-import { migrateOpenBotDatabase } from "./openbot-database-schema";
-
-export interface OrchestrationEventInput {
-  aggregateType: string;
-  aggregateId: string;
-  eventType: string;
-  payload: unknown;
-  occurredAt?: string;
-}
 
 export interface ProviderSession {
   id: string;
@@ -88,11 +77,6 @@ export interface ActiveHostedSiteConversationEvent {
   turnId: string;
   createdAt: string;
   event: HostedSiteConversationEvent & { status: "running" };
-}
-
-interface ReceiptRow {
-  last_sequence: number;
-  result_json: string;
 }
 
 interface SessionRow {
@@ -171,6 +155,11 @@ interface MailboxProjectionState {
   reactions: MailboxProjectionReaction[];
 }
 
+// Declared in this module before the split and part of the frozen public surface, so it stays
+// reachable from here rather than only from the controller that owns it now. Structural `Pick<...>`
+// types over this class do not cover exported types.
+export type { OrchestrationEventInput } from "./database/database-core";
+
 /**
  * The local OpenBot event log and its read projections.
  *
@@ -178,42 +167,26 @@ interface MailboxProjectionState {
  * SQLite transaction. Providers never receive direct access to this database.
  */
 export class OpenBotDatabase {
-  readonly path: string;
-  readonly #legacyBackupRoot: string;
-  #db: DatabaseSync | null = null;
+  readonly #core: DatabaseCore;
 
   constructor(readonly userDataPath: string) {
-    this.path = join(userDataPath, "openbot.db");
-    this.#legacyBackupRoot = join(userDataPath, "legacy-backup-v1");
+    this.#core = new DatabaseCore({ userDataPath });
+  }
+
+  get path(): string {
+    return this.#core.path;
   }
 
   async initialize(): Promise<void> {
-    if (this.#db) return;
-    await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
-    const db = new DatabaseSync(this.path);
-    try {
-      db.exec("PRAGMA journal_mode = WAL");
-      db.exec("PRAGMA foreign_keys = ON");
-      db.exec("PRAGMA busy_timeout = 5000");
-      db.exec("PRAGMA synchronous = NORMAL");
-      this.#db = db;
-      this.#migrate();
-      await chmod(this.path, 0o600);
-    } catch (error) {
-      db.close();
-      this.#db = null;
-      throw error;
-    }
+    await this.#core.initialize();
   }
 
   close(): void {
-    this.#db?.close();
-    this.#db = null;
+    this.#core.close();
   }
 
   get connection(): DatabaseSync {
-    if (!this.#db) throw new Error("OpenBot database is not initialized.");
-    return this.#db;
+    return this.#core.connection;
   }
 
   dispatch<T>(
@@ -221,62 +194,19 @@ export class OpenBotDatabase {
     events: OrchestrationEventInput[],
     project: (db: DatabaseSync, sequences: number[]) => T,
   ): T {
-    const db = this.connection;
-    const receipt = decodeReceiptRow(
-      db
-        .prepare("SELECT last_sequence, result_json FROM orchestration_command_receipts WHERE command_id = ?")
-        .get(commandId),
-    );
-    if (receipt) return JSON.parse(receipt.result_json);
-
-    const ownsTransaction = !db.isTransaction;
-    if (ownsTransaction) db.exec("BEGIN IMMEDIATE");
-    try {
-      const sequences: number[] = [];
-      const append = db.prepare(`
-        INSERT INTO orchestration_events (
-          event_id, command_id, aggregate_type, aggregate_id, event_type, occurred_at, payload_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-      `);
-      for (const event of events) {
-        const result = append.run(
-          randomUUID(),
-          commandId,
-          event.aggregateType,
-          event.aggregateId,
-          event.eventType,
-          event.occurredAt ?? new Date().toISOString(),
-          JSON.stringify(event.payload),
-        );
-        sequences.push(Number(result.lastInsertRowid));
-      }
-      const result = project(db, sequences);
-      db.prepare(
-        `INSERT INTO orchestration_command_receipts
-          (command_id, accepted_at, first_sequence, last_sequence, result_json)
-         VALUES (?, ?, ?, ?, ?)`,
-      ).run(
-        commandId,
-        new Date().toISOString(),
-        sequences[0] ?? 0,
-        sequences.at(-1) ?? 0,
-        JSON.stringify(result ?? null),
-      );
-      if (ownsTransaction) db.exec("COMMIT");
-      return result;
-    } catch (error) {
-      if (ownsTransaction && db.isTransaction) db.exec("ROLLBACK");
-      throw error;
-    }
+    return this.#core.dispatch(commandId, events, project);
   }
 
   commandResult(commandId: string): unknown | undefined {
-    const receipt = decodeReceiptRow(
-      this.connection
-        .prepare("SELECT last_sequence, result_json FROM orchestration_command_receipts WHERE command_id = ?")
-        .get(commandId),
-    );
-    return receipt ? JSON.parse(receipt.result_json) : undefined;
+    return this.#core.commandResult(commandId);
+  }
+
+  hasAggregateEvents(aggregateType: string, aggregateId: string): boolean {
+    return this.#core.hasAggregateEvents(aggregateType, aggregateId);
+  }
+
+  async backupLegacyFile(path: string): Promise<void> {
+    await this.#core.backupLegacyFile(path);
   }
 
   recordPendingHostedSiteTerminalEvent(event: PendingHostedSiteTerminalEvent): void {
@@ -324,21 +254,7 @@ export class OpenBotDatabase {
     status: Exclude<HostedSiteConversationEventStatus, "running">,
   ): void {
     const commandId = `hosted-site-terminal-pending:${botId}:${operationId}:${status}`;
-    this.#deleteEventsAndReceipt(commandId);
-  }
-
-  #deleteEventsAndReceipt(commandId: string): void {
-    const db = this.connection;
-    const ownsTransaction = !db.isTransaction;
-    if (ownsTransaction) db.exec("BEGIN IMMEDIATE");
-    try {
-      db.prepare("DELETE FROM orchestration_events WHERE command_id = ?").run(commandId);
-      db.prepare("DELETE FROM orchestration_command_receipts WHERE command_id = ?").run(commandId);
-      if (ownsTransaction) db.exec("COMMIT");
-    } catch (error) {
-      if (ownsTransaction && db.isTransaction) db.exec("ROLLBACK");
-      throw error;
-    }
+    this.#core.deleteEventsAndReceipt(commandId);
   }
 
   recordActiveHostedSiteConversationEvent(event: ActiveHostedSiteConversationEvent): void {
@@ -359,7 +275,7 @@ export class OpenBotDatabase {
   }
 
   deleteActiveHostedSiteConversationEvent(botId: string, operationId: string): void {
-    this.#deleteEventsAndReceipt(`hosted-site-active:${botId}:${operationId}`);
+    this.#core.deleteEventsAndReceipt(`hosted-site-active:${botId}:${operationId}`);
   }
 
   activeHostedSiteConversationEvents(): ActiveHostedSiteConversationEvent[] {
@@ -1783,31 +1699,6 @@ export class OpenBotDatabase {
     };
   }
 
-  async backupLegacyFile(path: string): Promise<void> {
-    try {
-      await readFile(path);
-    } catch (error) {
-      if (errorCode(error) === "ENOENT") return;
-      throw error;
-    }
-    await mkdir(this.#legacyBackupRoot, { recursive: true, mode: 0o700 });
-    const target = join(this.#legacyBackupRoot, basename(path));
-    try {
-      await copyFile(path, target, 1);
-    } catch (error) {
-      if (errorCode(error) !== "EEXIST") throw error;
-    }
-    await chmod(target, 0o600);
-  }
-
-  hasAggregateEvents(aggregateType: string, aggregateId: string): boolean {
-    return Boolean(
-      this.connection
-        .prepare("SELECT 1 FROM orchestration_events WHERE aggregate_type = ? AND aggregate_id = ? LIMIT 1")
-        .get(aggregateType, aggregateId),
-    );
-  }
-
   #ensureThreadProjection(db: DatabaseSync, agent: BotSummary, sequence: number): void {
     if (!agent.threadId) return;
     db.prepare(`
@@ -1827,10 +1718,6 @@ export class OpenBotDatabase {
       agent.updatedAt ?? new Date().toISOString(),
       sequence,
     );
-  }
-
-  #migrate(): void {
-    migrateOpenBotDatabase(this.connection);
   }
 }
 
@@ -1936,15 +1823,6 @@ function decodeSearchCursor(value: string): number {
 
 function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, (character) => `\\${character}`);
-}
-
-function decodeReceiptRow(value: unknown): ReceiptRow | null {
-  const row = databaseRow(value);
-  if (!row) return null;
-  return {
-    last_sequence: requiredNumberColumn(row, "last_sequence"),
-    result_json: requiredStringColumn(row, "result_json"),
-  };
 }
 
 function decodeSessionRow(value: unknown): SessionRow | null {
@@ -2138,14 +2016,6 @@ function pruneConversationSnapshots(db: DatabaseSync, threadId: string, retained
        AND json_type(payload_json, '$.snapshot') = 'object'`,
   ).run(threadId, retainedSequence);
   deleteOrphanReceipts(db);
-}
-
-function deleteOrphanReceipts(db: DatabaseSync): void {
-  db.exec(`DELETE FROM orchestration_command_receipts
-    WHERE NOT EXISTS (
-      SELECT 1 FROM orchestration_events
-      WHERE orchestration_events.command_id = orchestration_command_receipts.command_id
-    )`);
 }
 
 function validatePendingHostedSiteTerminalEvent(event: PendingHostedSiteTerminalEvent): void {
