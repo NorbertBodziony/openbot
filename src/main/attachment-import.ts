@@ -214,12 +214,6 @@ function assertSupportedEmailPart(name: string, headers: EmailHeaders): void {
   if (emailContentType(headers) === "message/rfc822") {
     throw new Error(`${name} contains a nested .eml message, which is not supported. Attach it separately.`);
   }
-  if (
-    /(?:^|;)\s*name\*(?:\d+\*?)?\s*=/iu.test(headers.contentType) ||
-    /(?:^|;)\s*filename\*(?:\d+\*?)?\s*=/iu.test(headers.contentDisposition)
-  ) {
-    throw new Error(`${name} uses an extended or continued attachment filename, which is not supported.`);
-  }
 }
 
 function matchEmailBoundary(
@@ -288,8 +282,10 @@ function emailDisposition(headers: EmailHeaders): string {
 }
 
 function hasEmailAttachmentName(headers: EmailHeaders): boolean {
-  const contentName = /(?:^|;)\s*name\s*=\s*(?:"((?:\\.|[^"])*)"|([^;\s]+))/iu.exec(headers.contentType);
-  const dispositionFilename = /(?:^|;)\s*filename\s*=\s*(?:"((?:\\.|[^"])*)"|([^;\s]+))/iu.exec(
+  const contentName = /(?:^|;)\s*name(?:\*(?:\d+\*?)?)?\s*=\s*(?:"((?:\\.|[^"])*)"|([^;\s]+))/iu.exec(
+    headers.contentType,
+  );
+  const dispositionFilename = /(?:^|;)\s*filename(?:\*(?:\d+\*?)?)?\s*=\s*(?:"((?:\\.|[^"])*)"|([^;\s]+))/iu.exec(
     headers.contentDisposition,
   );
   return [contentName, dispositionFilename].some((match) => {

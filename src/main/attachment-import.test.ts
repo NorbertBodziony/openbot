@@ -141,7 +141,7 @@ describe("EML attachment imports", () => {
       [
         "--openbot",
         "Malformed header without a colon",
-        `Content-Type: text/plain; name="file-${index}.txt"`,
+        `Content-Type: text/plain; name*0*=UTF-8''file-${index}.; name*1=txt`,
         "",
         String(index),
       ].join("\r\n"),
@@ -243,7 +243,10 @@ describe("EML attachment imports", () => {
     await expect(importEmail(email)).rejects.toThrow("too many MIME parts");
   });
 
-  it("rejects continued attachment filenames before parsing", async () => {
+  it.each([
+    ["filename*=UTF-8''r%C3%A9sum%C3%A9.pdf", "résumé.pdf"],
+    ["filename*0*=UTF-8''quarterly%20; filename*1=report.pdf", "quarterly report.pdf"],
+  ])("imports RFC 2231 attachment filenames (%s)", async (filename, expectedName) => {
     const email = ENCODER.encode(
       [
         "Subject: Continued filename",
@@ -251,7 +254,7 @@ describe("EML attachment imports", () => {
         "",
         "--openbot",
         "Content-Type: application/pdf",
-        "Content-Disposition: attachment; filename*0=report.; filename*1=pdf",
+        `Content-Disposition: attachment; ${filename}`,
         "Content-Transfer-Encoding: base64",
         "",
         "JVBERg==",
@@ -259,7 +262,9 @@ describe("EML attachment imports", () => {
       ].join("\r\n"),
     );
 
-    await expect(importEmail(email)).rejects.toThrow("extended or continued attachment filename");
+    await expect(importEmail(email)).resolves.toMatchObject({
+      data: [{ name: "message - email.txt" }, { name: `message - ${expectedName}` }],
+    });
   });
 
   it.each(["\u000b", "\u00a0"])("rejects nonstandard folded header whitespace %#", async (whitespace) => {
