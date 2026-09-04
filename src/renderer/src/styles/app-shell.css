@@ -3381,6 +3381,31 @@ textarea {
   text-align: right;
 }
 
+.account-dock-usage-loading {
+  display: inline-flex;
+  width: 4ch;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+.account-dock-usage-loading i {
+  width: 3px;
+  height: 3px;
+  border-radius: var(--openbot-radius-pill);
+  background: currentColor;
+  --typing-dot-travel: -1px;
+  animation: typing-dot-pulse 900ms ease-in-out infinite;
+}
+
+.account-dock-usage-loading i:nth-child(2) {
+  animation-delay: var(--openbot-duration-fast);
+}
+
+.account-dock-usage-loading i:nth-child(3) {
+  animation-delay: var(--openbot-duration-overlay);
+}
+
 .account-usage-popover {
   position: relative;
   z-index: 80;
@@ -3925,6 +3950,10 @@ textarea {
 
   .account-menu-icon-spinning {
     animation-duration: 1.6s;
+  }
+
+  .account-dock-usage-loading i {
+    animation: none;
   }
 }
 

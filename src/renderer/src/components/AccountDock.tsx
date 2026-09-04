@@ -9,6 +9,7 @@ import type {
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { presentUpdateStatus } from "../update-status";
 import { AccountUpdateIsland } from "./AccountUpdateIsland";
+import { TypingDots } from "./TypingDots";
 import {
   Badge,
   Button,
@@ -525,7 +526,12 @@ export function AccountDock(props: AccountDockProps) {
                 <span class="account-dock-usage-chip">
                   <Gauge aria-hidden="true" />
                   <strong>
-                    <AnimatedUsagePercentage value={weeklyUsageRemaining()} />
+                    <Show
+                      when={usageLoading() && weeklyUsageRemaining() === null}
+                      fallback={<AnimatedUsagePercentage value={weeklyUsageRemaining()} />}
+                    >
+                      <TypingDots class="account-dock-usage-loading" />
+                    </Show>
                   </strong>
                 </span>
               </Popover.Trigger>
