@@ -19,7 +19,9 @@ import { resolveDevelopmentAppDataRoot } from "./development-state-paths";
 
 export const DEVELOPMENT_SEED_MANIFEST_FILE = "openbot-dev-seed-v1.json";
 
-const TEAM_FILE = "openbot-team-server-v1.json";
+const TEAM_FILE = "openbot-team-server-v2.json";
+/** Read only, exactly as the app reads it: the file a build without accounts owns. */
+const LEGACY_TEAM_FILE = "openbot-team-server-v1.json";
 const SETUP_FILE = "openbot-setup-v2.json";
 const SEED_VERSION = 1;
 const SEEDED_AT = "2026-08-21T10:00:00.000Z";
@@ -602,7 +604,7 @@ async function seedAgentExchanges(mailbox: MailboxStore): Promise<void> {
 }
 
 async function seedTeam(profilePath: string, botStore: BotStore): Promise<void> {
-  const team = new TeamStore(join(profilePath, TEAM_FILE));
+  const team = new TeamStore(join(profilePath, TEAM_FILE), join(profilePath, LEGACY_TEAM_FILE));
   await team.initialize();
   const owner = {
     id: "openbot-dev-owner",
@@ -610,7 +612,7 @@ async function seedTeam(profilePath: string, botStore: BotStore): Promise<void> 
     name: "Dev Owner",
     avatarUrl: null,
   };
-  await team.configureWithAccount("OpenBot Dev Team", owner);
+  const teamIdentity = await team.configureWithAccount("OpenBot Dev Team", owner);
   const joined = [];
   for (const member of [
     { id: "openbot-dev-alice", email: "alice@example.com", name: "Alice Chen", role: "admin" as const },
@@ -629,7 +631,7 @@ async function seedTeam(profilePath: string, botStore: BotStore): Promise<void> 
   }
   await team.createInvite("member", "new-person@example.com");
   const ownerSession = await team.loginWithAccount(owner);
-  await team.setEnabledOnLaunch(true);
+  await team.setEnabledOnLaunch(teamIdentity.serverId, true);
 
   const [alice, jon, maya] = joined;
   if (!alice || !jon || !maya) throw new Error("The development team members could not be created.");

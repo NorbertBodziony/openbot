@@ -7,7 +7,8 @@ import {
   sign,
   timingSafeEqual,
 } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { avatarFileExtension, isAvatarMimeType, isValidAvatarImage } from "@openbot/contracts/avatar-images";
@@ -68,6 +69,29 @@ interface StoredTeam {
   sessions: StoredSession[];
 }
 
+/**
+ * The file holds one host per OpenBot account, so switching accounts cannot hand the
+ * new account the previous one's server. `hosts` is append-only - a host is never
+ * removed when its owner signs out, because this file is user data with no backup.
+ */
+interface StoredTeamFile {
+  version: 2;
+  /** The account whose host is active, so a restart activates it before the network answers. */
+  activeAccountId: string | null;
+  hosts: StoredTeam[];
+  /**
+   * The legacy record this file last took in. A build without accounts that has written its
+   * own file since leaves a different fingerprint, which is how its work is noticed.
+   */
+  legacyImport?: { fingerprint: string; record: StoredTeam };
+  /**
+   * The one legacy record a reconcile had no baseline for, so it could not be merged without
+   * dropping the work on one side. Never activated; replaced rather than accumulated, since
+   * a merged host needs no copy - the merge is what keeps both sides.
+   */
+  replacedHosts?: StoredTeam[];
+}
+
 export interface TeamIdentity {
   serverId: string;
   serverName: string;
@@ -109,27 +133,195 @@ export interface RemoteDirectoryMember {
 
 export class TeamStore {
   readonly #path: string;
+  /** Read once and never written: the file a build without this envelope still owns. */
+  readonly #legacyPath: string | null;
   readonly #logoRoot: string;
+  readonly #legacyLogoRoot: string | null;
+  #file: StoredTeamFile = { version: 2, activeAccountId: null, hosts: [] };
+  /** The host of the signed-in account. Every other method reads this one, never `#file.hosts`. */
   #state: StoredTeam | null = null;
   readonly #remoteSessions = new Map<
     string,
     { member: TeamMemberSummary; sessionId: string; createdAt: string; sessionExpiresAt: string }
   >();
   #writeChain = Promise.resolve();
+  /**
+   * The file exists but is neither a v2 envelope nor a v1 record - a file a newer build
+   * wrote, or a damaged one. `#file` is empty only because something else owns this path,
+   * so writing would destroy the user's only copy. Nothing here is backed up.
+   */
+  #unreadableFile = false;
 
-  constructor(path: string) {
+  /**
+   * `legacyPath` is the single-host file shipped builds read and write. This store never
+   * writes it, so downgrading finds the host it had rather than a file it cannot parse and
+   * would overwrite - there is no backup of any of this.
+   */
+  constructor(path: string, legacyPath: string | null = null) {
     this.#path = path;
+    this.#legacyPath = legacyPath;
+    // Each file owns its own assets. Sharing one directory would let either build delete a
+    // logo the other's record still points at, leaving it a host it cannot draw.
     this.#logoRoot = join(dirname(path), `${basename(path)}.assets`, "logo");
+    this.#legacyLogoRoot = legacyPath ? join(dirname(legacyPath), `${basename(legacyPath)}.assets`, "logo") : null;
   }
 
   async initialize(): Promise<void> {
+    let migrated = false;
+    let found = false;
     try {
       const parsed = JSON.parse(await readFile(this.#path, "utf8"));
-      this.#state = isStoredTeam(parsed) ? parsed : null;
-      if (this.#state) await this.#prune();
+      found = true;
+      if (isStoredTeamFile(parsed)) {
+        this.#file = parsed;
+      } else if (isStoredTeam(parsed)) {
+        this.#file = { version: 2, activeAccountId: ownerAccountId(parsed), hosts: [parsed] };
+        migrated = true;
+      } else {
+        this.#unreadableFile = true;
+      }
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
     }
+    // Copied into this store's own file rather than replaced in place. Anything else there
+    // belongs to a build that is not this one, and is left for it.
+    const legacy = this.#unreadableFile ? null : await this.#readLegacyRecord();
+    if (legacy && !found) {
+      this.#file = {
+        version: 2,
+        activeAccountId: ownerAccountId(legacy.record),
+        hosts: [legacy.record],
+        // A copy of its own: the host below is edited from here on, and the baseline a later
+        // reconcile compares against has to stay the record as it was imported.
+        legacyImport: { fingerprint: legacy.fingerprint, record: structuredClone(legacy.record) },
+      };
+      migrated = true;
+    } else if (legacy && legacy.fingerprint !== this.#file.legacyImport?.fingerprint) {
+      // The older build has been run since it was imported. Neither copy of the host is a
+      // backup of the other - each holds work the other never saw - so they are reconciled
+      // against the record as it was imported rather than one replacing the other.
+      const baseline = this.#file.legacyImport?.record;
+      const index = this.#file.hosts.findIndex((host) => host.serverId === legacy.record.serverId);
+      const mine = index < 0 ? undefined : this.#file.hosts[index];
+      if (mine && baseline && baseline.serverId === legacy.record.serverId) {
+        this.#file.hosts[index] = reconcileHost(baseline, mine, legacy.record);
+      } else if (mine) {
+        // No baseline to reconcile against - an upgrade that never recorded one. Keeping
+        // this build's host and filing the other copy is the only choice that drops
+        // nothing. One record, not a growing pile: every write clones and serializes the
+        // whole file, and the next one to land here comes from the same file this did.
+        this.#file.replacedHosts = [legacy.record];
+      } else {
+        this.#file.hosts.push(legacy.record);
+      }
+      this.#file.legacyImport = { fingerprint: legacy.fingerprint, record: structuredClone(legacy.record) };
+      migrated = true;
+    }
+    const imported = this.#file.legacyImport?.record.serverId;
+    const importedHost = imported === undefined ? undefined : this.#file.hosts.find((h) => h.serverId === imported);
+    // Every start, not only the one that took the record in: a copy that failed once would
+    // otherwise leave the host without its logo for good, with the file still sitting there.
+    if (importedHost) await this.#adoptLegacyLogo(importedHost);
+    const activeAccountId = this.#file.activeAccountId;
+    this.#state =
+      (activeAccountId === null
+        ? // A host that predates accounts, or one upgraded from a file where the owner
+          // account was never recorded. Activating it keeps an offline upgrade showing the
+          // host it showed yesterday. A host left behind by a sign-out has an owner account,
+          // so signing out still unbinds it.
+          this.#file.hosts.find((host) => ownerAccountId(host) === null)
+        : this.#file.hosts.find((host) => ownerAccountId(host) === activeAccountId)) ?? null;
+    if (migrated) await this.#persistFile();
+    if (this.#state) await this.#prune();
+  }
+
+  /**
+   * Binds the store to `user`'s own host, adopting a host whose owner predates account
+   * sign-in. An account with no host leaves the store unconfigured rather than borrowing
+   * another account's.
+   */
+  async activateAccount(user: CentralAuthUser): Promise<void> {
+    const email = normalizeEmail(user.email);
+    const hosts = this.#file.hosts;
+    const unbound = hosts.find((host) => {
+      const owner = hostOwner(host);
+      return owner !== undefined && !owner.accountId && !owner.email;
+    });
+    // Everything below mutates in memory and is committed by the single write at the end,
+    // so a failed write can put the whole file back rather than leave half a switch applied
+    // with the status naming one account and every write going to another.
+    const rollback = structuredClone(this.#file);
+    this.#state =
+      hosts.find((host) => ownerAccountId(host) === user.id) ??
+      hosts.find((host) => {
+        const owner = hostOwner(host);
+        // Only a host whose owner predates accounts is matched by address. An email can be
+        // released and taken by somebody else, and it must not hand them a host that is
+        // already bound to the account that made it.
+        if (!owner || owner.accountId) return false;
+        return owner.email ? normalizeEmail(owner.email) === email : false;
+      }) ??
+      unbound ??
+      null;
+    this.#file.activeAccountId = user.id;
+    // A host configured before accounts existed has no owner email to match on next time,
+    // so adopting it has to write the binding rather than rely on `syncAccount`.
+    if (this.#state && this.#state === unbound) {
+      const owner = hostOwner(this.#state);
+      if (owner) {
+        owner.accountId = user.id;
+        owner.email = email;
+      }
+    }
+    if (this.#state) {
+      this.#applyAccount(user);
+      this.#dropExpired(this.#state);
+    }
+    try {
+      await this.#recordActiveAccount();
+    } catch (error) {
+      // The file keeps what it had, so nothing is lost. Memory does not go back to the
+      // previous account, though: central authentication has already moved on, and leaving
+      // its host answerable is the failure this whole change exists to prevent. Unbound
+      // until an auth event or a restart records the switch.
+      this.#file = rollback;
+      this.#state = null;
+      throw error;
+    }
+  }
+
+  /**
+   * Stops answering for the active host without touching the file. The renderer learns about
+   * a new account before the awaited teardown that follows can finish, so there has to be a
+   * way to stop serving the previous one immediately; `activateAccount` records the switch.
+   */
+  unbindActiveHost(): void {
+    this.#state = null;
+  }
+
+  /** Signing out unbinds the host without removing it - signing back in restores it. */
+  async deactivate(): Promise<void> {
+    const previousState = this.#state;
+    const previousAccountId = this.#file.activeAccountId;
+    this.#state = null;
+    this.#file.activeAccountId = null;
+    try {
+      await this.#recordActiveAccount();
+    } catch (error) {
+      this.#state = previousState;
+      this.#file.activeAccountId = previousAccountId;
+      throw error;
+    }
+  }
+
+  /**
+   * A file with no host records nothing an activation could change, so there is nothing to
+   * write - which is also what keeps signing in from failing, or from overwriting a file
+   * this store could not read. Configuring a server still refuses that file outright.
+   */
+  async #recordActiveAccount(): Promise<void> {
+    if (this.#file.hosts.length === 0) return;
+    await this.#persistFile();
   }
 
   get configured(): boolean {
@@ -137,15 +329,7 @@ export class TeamStore {
   }
 
   getIdentity(): TeamIdentity | null {
-    if (!this.#state) return null;
-    return {
-      serverId: this.#state.serverId,
-      serverName: this.#state.serverName,
-      fingerprint: fingerprint(this.#state.publicKey),
-      publicKey: this.#state.publicKey,
-      enabledOnLaunch: this.#state.enabledOnLaunch,
-      logoVersion: this.#state.serverLogo?.version ?? null,
-    };
+    return this.#state ? identityOf(this.#state) : null;
   }
 
   getOwnerEmail(): string | null {
@@ -166,7 +350,12 @@ export class TeamStore {
     if (!owner?.email) {
       throw new TeamStoreError("This host is not linked to an OpenBot owner account.");
     }
-    if (normalizeEmail(user.email) !== normalizeEmail(owner.email)) {
+    // The account is the identity once one is recorded; the address is only what an owner
+    // from before accounts can be recognized by, and it can change hands.
+    const matches = owner.accountId
+      ? owner.accountId === user.id
+      : normalizeEmail(user.email) === normalizeEmail(owner.email);
+    if (!matches) {
       throw new TeamStoreError("Sign in with the OpenBot email that created this host.");
     }
   }
@@ -183,6 +372,12 @@ export class TeamStore {
     return sign(null, Buffer.from(transcript), this.#state.privateKey).toString("base64url");
   }
 
+  /**
+   * The password path, used by the development connection and by tests. It creates an
+   * owner-less host and deliberately leaves `activeAccountId` alone - no account owns it
+   * yet, and the first one to activate adopts it. `#assertNoHostFor` is what keeps a
+   * second owner-less host from being created beside it.
+   */
   async configure(serverName: string, username: string, password: string): Promise<TeamIdentity> {
     if (this.#state) throw new TeamStoreError("The team server is already configured.");
     validateServerName(serverName);
@@ -193,6 +388,8 @@ export class TeamStore {
       privateKeyEncoding: { type: "pkcs8", format: "pem" },
     });
     const credentials = await hashPassword(password);
+    // Hashing yields, so a second request could have configured a host meanwhile.
+    if (this.#state) throw new TeamStoreError("The team server is already configured.");
     this.#state = {
       version: 1,
       serverId: randomUUID(),
@@ -216,7 +413,14 @@ export class TeamStore {
       invites: [],
       sessions: [],
     };
-    await this.#persist();
+    this.#file.hosts.push(this.#state);
+    try {
+      await this.#persistFile();
+    } catch (error) {
+      this.#file.hosts.pop();
+      this.#state = null;
+      throw error;
+    }
     const identity = this.getIdentity();
     if (!identity) throw new Error("The team identity could not be created.");
     return identity;
@@ -227,15 +431,32 @@ export class TeamStore {
     user: CentralAuthUser,
     logo?: AvatarImageInput | null,
   ): Promise<TeamIdentity> {
-    if (this.#state) throw new TeamStoreError("The team server is already configured.");
-    validateServerName(serverName);
     const email = normalizeEmail(user.email);
+    this.#assertNoHostFor(user.id, email);
+    validateServerName(serverName);
+    // Both `activateAccount` and `deactivate` set this synchronously, so comparing it
+    // after the awaits below is a reliable answer to "is this still the account that
+    // asked?" - a configuration finishing under someone else's session would otherwise
+    // rebind the store to the account that has just signed out.
+    const activeAccountBefore = this.#file.activeAccountId;
     const { publicKey, privateKey } = generateKeyPairSync("ed25519", {
       publicKeyEncoding: { type: "spki", format: "pem" },
       privateKeyEncoding: { type: "pkcs8", format: "pem" },
     });
     const serverLogo = logo ? await this.#writeLogo(logo) : undefined;
-    this.#state = {
+    try {
+      // `#writeLogo` yields, so two concurrent requests could both have passed the guard
+      // above. Re-checking is what stops one account owning two stored hosts, where a
+      // restart would activate the one the status never showed.
+      this.#assertNoHostFor(user.id, email);
+      if (this.#file.activeAccountId !== activeAccountBefore) {
+        throw new TeamStoreError("The signed-in account changed while this server was being created.");
+      }
+    } catch (error) {
+      if (serverLogo) await this.#removeLogo(serverLogo).catch(() => undefined);
+      throw error;
+    }
+    const created: StoredTeam = {
       version: 1,
       serverId: randomUUID(),
       serverName: serverName.trim(),
@@ -259,16 +480,29 @@ export class TeamStore {
       invites: [],
       sessions: [],
     };
+    this.#file.hosts.push(created);
+    const previousState = this.#state;
+    const previousAccountId = this.#file.activeAccountId;
+    this.#state = created;
+    this.#file.activeAccountId = user.id;
     try {
-      await this.#persist();
+      await this.#persistFile();
     } catch (error) {
-      this.#state = null;
+      this.#file.hosts = this.#file.hosts.filter((host) => host !== created);
+      if (this.#state === created) {
+        this.#state = previousState;
+        this.#file.activeAccountId = previousAccountId;
+      }
       if (serverLogo) await this.#removeLogo(serverLogo).catch(() => undefined);
       throw error;
     }
-    const identity = this.getIdentity();
-    if (!identity) throw new Error("The team identity could not be created.");
-    return identity;
+    // Writing the file yields as well. The host stays - it is on disk and it belongs to the
+    // account that asked for it - but the caller must not go on to apply this configuration,
+    // its logo and its remote registration, to whichever host is active now.
+    if (this.#state !== created) {
+      throw new TeamStoreError("The signed-in account changed while this server was being created.");
+    }
+    return identityOf(created);
   }
 
   async updateIdentity(input: { serverName?: string; logo?: AvatarImageInput | null }): Promise<TeamIdentity> {
@@ -284,6 +518,15 @@ export class TeamStore {
     const previousLogo = state.serverLogo;
     const nextLogo =
       input.logo === undefined ? previousLogo : input.logo === null ? undefined : await this.#writeLogo(input.logo);
+    // Writing the logo can outlive this host. `#persist` only requires *some* active host, so
+    // without this the name and image asked for here would land on whichever host became
+    // active meanwhile - and the caller would be handed that other account's identity back.
+    if (this.#state !== state) {
+      if (nextLogo && nextLogo.version !== previousLogo?.version) {
+        await this.#removeLogo(nextLogo).catch(() => undefined);
+      }
+      throw new TeamStoreError("This server is no longer the active one for the signed-in account.");
+    }
     if (input.serverName !== undefined) state.serverName = input.serverName.trim();
     state.serverLogo = nextLogo;
     try {
@@ -299,9 +542,46 @@ export class TeamStore {
     if (previousLogo && previousLogo.version !== nextLogo?.version) {
       await this.#removeLogo(previousLogo).catch(() => undefined);
     }
-    const identity = this.getIdentity();
-    if (!identity) throw new Error("The team identity could not be updated.");
-    return identity;
+    // Writing the file yields as well. The change is on disk and belongs to the account that
+    // asked for it, but the caller must not go on to push it to the remote host under the
+    // authentication - and the owner membership - of whichever account is active now.
+    if (this.#state !== state) {
+      throw new TeamStoreError("This server is no longer the active one for the signed-in account.");
+    }
+    return identityOf(state);
+  }
+
+  /** The record a build without accounts owns, with the fingerprint that dates it. */
+  async #readLegacyRecord(): Promise<{ record: StoredTeam; fingerprint: string } | null> {
+    if (!this.#legacyPath) return null;
+    let raw: string;
+    try {
+      raw = await readFile(this.#legacyPath, "utf8");
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+      throw error;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+    if (!isStoredTeam(parsed)) return null;
+    return { record: parsed, fingerprint: createHash("sha256").update(raw).digest("hex") };
+  }
+
+  /** Copied, never moved: the record left behind still points at the older build's own file. */
+  async #adoptLegacyLogo(record: StoredTeam): Promise<void> {
+    const logo = record.serverLogo;
+    if (!logo || !this.#legacyLogoRoot) return;
+    const name = `${logo.version}.${avatarFileExtension(logo.mimeType)}`;
+    await mkdir(this.#logoRoot, { recursive: true, mode: 0o700 });
+    // Never over this build's own copy, and a failure is left for the next start to retry
+    // rather than leaving the host pointing at a logo it has no file for.
+    await copyFile(join(this.#legacyLogoRoot, name), join(this.#logoRoot, name), constants.COPYFILE_EXCL).catch(
+      () => undefined,
+    );
   }
 
   resolveLogo(): { path: string; mimeType: AvatarImageInput["mimeType"]; version: string } | null {
@@ -331,8 +611,16 @@ export class TeamStore {
     return rm(join(this.#logoRoot, `${logo.version}.${avatarFileExtension(logo.mimeType)}`), { force: true });
   }
 
-  async setEnabledOnLaunch(enabled: boolean): Promise<void> {
+  /**
+   * `serverId` names the host the caller decided this for. Publishing and unpublishing
+   * both span awaits an account switch can land in, and the launch preference of one
+   * account's host must never be written onto another's.
+   */
+  async setEnabledOnLaunch(serverId: string, enabled: boolean): Promise<void> {
     const state = this.#requireState();
+    if (state.serverId !== serverId) {
+      throw new TeamStoreError("This server is no longer the active one for the signed-in account.");
+    }
     state.enabledOnLaunch = enabled;
     await this.#persist();
   }
@@ -349,8 +637,16 @@ export class TeamStore {
     return members;
   }
 
-  async syncRemoteDirectory(remoteMembers: RemoteDirectoryMember[]): Promise<void> {
+  /**
+   * `serverId` names the host the caller loaded this directory for. Signing into another
+   * account swaps the active host, so a directory that was already in flight would
+   * otherwise rewrite the new account's owner membership and disable its members.
+   */
+  async syncRemoteDirectory(serverId: string, remoteMembers: RemoteDirectoryMember[]): Promise<void> {
     const state = this.#requireState();
+    if (state.serverId !== serverId) {
+      throw new TeamStoreError("This server is no longer the active one for the signed-in account.");
+    }
     const remoteOwner = remoteMembers.find((member) => member.role === "owner");
     const localOwner = state.members.find((member) => member.role === "owner");
     if (remoteOwner && localOwner && remoteOwner.membershipId !== localOwner.id) {
@@ -580,6 +876,7 @@ export class TeamStore {
       throw new TeamStoreError(`A host can have up to ${INPUT_LIMITS.teamMembers} members.`);
     }
     const credentials = await hashPassword(password);
+    this.#requireUnchangedState(state);
     const member: StoredMember = {
       id: randomUUID(),
       username: normalizedUsername,
@@ -606,6 +903,7 @@ export class TeamStore {
     if (!member || !(await verifyPassword(password, member))) {
       throw new TeamStoreError("The username or password is incorrect.");
     }
+    this.#requireUnchangedState(state);
     const result = this.#createSession(member);
     await this.#persist();
     return result;
@@ -647,7 +945,9 @@ export class TeamStore {
     if (!member || !(await verifyPassword(currentPassword, member))) {
       throw new TeamStoreError("The current password is incorrect.");
     }
-    Object.assign(member, await hashPassword(nextPassword));
+    const credentials = await hashPassword(nextPassword);
+    this.#requireUnchangedState(state);
+    Object.assign(member, credentials);
     state.sessions = state.sessions.filter((session) => session.memberId !== memberId);
     await this.#persist();
   }
@@ -696,9 +996,21 @@ export class TeamStore {
   }
 
   async syncAccount(user: CentralAuthUser): Promise<boolean> {
+    this.#requireState();
+    if (!this.#applyAccount(user)) return false;
+    await this.#persist();
+    return true;
+  }
+
+  /** The profile half of `syncAccount`, without its write. Reports whether anything moved. */
+  #applyAccount(user: CentralAuthUser): boolean {
     const state = this.#requireState();
     const email = normalizeEmail(user.email);
-    const member = state.members.find((candidate) => candidate.email === email || candidate.username === email);
+    // By account first, so changing the address on an account keeps it matched to its own
+    // member rather than locking it out of the host it owns.
+    const member =
+      state.members.find((candidate) => candidate.accountId === user.id) ??
+      state.members.find((candidate) => candidate.email === email || candidate.username === email);
     if (!member) return false;
     const name = normalizeName(user.name);
     const avatarUrl = normalizeAvatarUrl(user.avatarUrl);
@@ -716,7 +1028,6 @@ export class TeamStore {
     member.username = email;
     member.name = name;
     member.avatarUrl = avatarUrl;
-    await this.#persist();
     return true;
   }
 
@@ -756,18 +1067,70 @@ export class TeamStore {
     return this.#state;
   }
 
+  /**
+   * The host this request started on, still the one being served. Hashing a password takes
+   * long enough for an account switch to land in the middle of it, and the host captured
+   * before that await is still in the file: mutating it there would commit a change the
+   * caller is about to be told failed.
+   */
+  #requireUnchangedState(state: StoredTeam): void {
+    if (this.#state !== state) {
+      throw new TeamStoreError("The signed-in account changed while the request was in flight.");
+    }
+  }
+
+  /**
+   * Rejects a second host for one account, and a second host beside an owner-less one.
+   * The owner-less check spans every stored host, not just the active one: an inactive
+   * one is exactly what the next `activateAccount` adopts, so letting a second accumulate
+   * would make that adoption a coin toss.
+   */
+  #assertNoHostFor(accountId: string, email: string): void {
+    const ownerless = this.#file.hosts.some((host) => {
+      const owner = hostOwner(host);
+      return owner !== undefined && !owner.accountId && !owner.email;
+    });
+    if (this.#hostFor(accountId, email) || ownerless) {
+      throw new TeamStoreError("The team server is already configured.");
+    }
+  }
+
+  #hostFor(accountId: string, email: string): StoredTeam | undefined {
+    return this.#file.hosts.find((host) => {
+      const owner = hostOwner(host);
+      if (!owner) return false;
+      // The same rule as `activateAccount`: an owner bound to an account is that account's
+      // alone, so whoever holds its old address is free to configure a host of their own.
+      if (owner.accountId) return owner.accountId === accountId;
+      return owner.email ? normalizeEmail(owner.email) === email : false;
+    });
+  }
+
   async #prune(): Promise<void> {
     if (!this.#state) return;
-    const now = Date.now();
-    this.#state.sessions = this.#state.sessions.filter((session) => Date.parse(session.expiresAt) > now);
-    this.#state.invites = this.#state.invites.filter(
-      (invite) => invite.usedAt !== null || Date.parse(invite.expiresAt) > now,
-    );
+    this.#dropExpired(this.#state);
     await this.#persist();
   }
 
+  /** The expiry half of `#prune`, without its write. */
+  #dropExpired(host: StoredTeam): void {
+    const now = Date.now();
+    host.sessions = host.sessions.filter((session) => Date.parse(session.expiresAt) > now);
+    host.invites = host.invites.filter((invite) => invite.usedAt !== null || Date.parse(invite.expiresAt) > now);
+  }
+
   async #persist(): Promise<void> {
-    const snapshot = structuredClone(this.#requireState());
+    this.#requireState();
+    await this.#persistFile();
+  }
+
+  async #persistFile(): Promise<void> {
+    if (this.#unreadableFile) {
+      throw new TeamStoreError(
+        "This computer's team server file could not be read. Move it aside before configuring a server, so it is not overwritten.",
+      );
+    }
+    const snapshot = structuredClone(this.#file);
     const operation = this.#writeChain.then(async () => {
       const temporary = `${this.#path}.${randomUUID()}.tmp`;
       try {
@@ -872,6 +1235,124 @@ function validatePassword(value: string): void {
   if (value.length < 12 || value.length > 256) {
     throw new TeamStoreError("Password must contain 12 to 256 characters.");
   }
+}
+
+function identityOf(host: StoredTeam): TeamIdentity {
+  return {
+    serverId: host.serverId,
+    serverName: host.serverName,
+    fingerprint: fingerprint(host.publicKey),
+    publicKey: host.publicKey,
+    enabledOnLaunch: host.enabledOnLaunch,
+    logoVersion: host.serverLogo?.version ?? null,
+  };
+}
+
+function hostOwner(host: StoredTeam): StoredMember | undefined {
+  return host.members.find((member) => member.role === "owner");
+}
+
+function ownerAccountId(host: StoredTeam): string | null {
+  return hostOwner(host)?.accountId ?? null;
+}
+
+/**
+ * Merges the two copies of one host against the record both started from: what either side
+ * added is kept, what either side removed stays removed, and a field one side changed wins
+ * over the value neither touched. Nothing here can drop work the user did in either build.
+ */
+function reconcileHost(baseline: StoredTeam, mine: StoredTeam, theirs: StoredTeam): StoredTeam {
+  return {
+    ...mine,
+    serverName: pickChanged(baseline.serverName, mine.serverName, theirs.serverName),
+    enabledOnLaunch: pickChanged(baseline.enabledOnLaunch, mine.enabledOnLaunch, theirs.enabledOnLaunch),
+    serverLogo: pickChanged(baseline.serverLogo, mine.serverLogo, theirs.serverLogo),
+    members: reconcileMembers(baseline.members, mine.members, theirs.members),
+    invites: reconcileEntries(baseline.invites, mine.invites, theirs.invites),
+    // A session missing on either side was signed out there, and `reconcileEntries` keeps
+    // it that way rather than handing back a token the user has already revoked.
+    sessions: reconcileEntries(baseline.sessions, mine.sessions, theirs.sessions),
+  };
+}
+
+/**
+ * Members, with one field held back from the merge. The older build binds a member to an
+ * account by email alone, so an address that has changed hands makes it write a different
+ * account's id onto the same member - and taking that back would hand the host, and the
+ * ownership check with it, to whoever holds the address now. An id is only taken from there
+ * for a member this build knows no account for.
+ */
+function reconcileMembers(baseline: StoredMember[], mine: StoredMember[], theirs: StoredMember[]): StoredMember[] {
+  return reconcileEntries(baseline, mine, theirs).map((member) => {
+    const ours = mine.find((candidate) => candidate.id === member.id);
+    return ours?.accountId ? { ...member, accountId: ours.accountId } : member;
+  });
+}
+
+/** The side that moved, or this build's value when the other side stood still. */
+function pickChanged<T>(baseline: T, mine: T, theirs: T): T {
+  return sameValue(theirs, baseline) ? mine : theirs;
+}
+
+function reconcileEntries<T extends { id: string }>(baseline: T[], mine: T[], theirs: T[]): T[] {
+  const before = new Map(baseline.map((entry) => [entry.id, entry]));
+  const merged: T[] = [];
+  const seen = new Set<string>();
+  for (const entry of [...mine, ...theirs]) {
+    if (seen.has(entry.id)) continue;
+    seen.add(entry.id);
+    const ours = mine.find((candidate) => candidate.id === entry.id);
+    const other = theirs.find((candidate) => candidate.id === entry.id);
+    const known = before.get(entry.id);
+    // Known to both and gone from one of them: removed there, so it stays removed.
+    if (known && (!ours || !other)) continue;
+    if (!ours || !other || !known) {
+      merged.push(ours ?? other ?? entry);
+      continue;
+    }
+    // Both builds have it. Taking the other side's entry whole would undo a field this one
+    // changed - a disabled member handed back their access, say - so each field is decided
+    // on its own.
+    merged.push(reconcileFields(known, ours, other));
+  }
+  return merged;
+}
+
+/** The entry field by field: whichever side moved a field, and this build's when neither did. */
+function reconcileFields<T extends object>(baseline: T, mine: T, theirs: T): T {
+  const merged = { ...mine };
+  const before = new Map(Object.entries(baseline));
+  const ours = new Map(Object.entries(mine));
+  for (const [key, other] of Object.entries(theirs)) {
+    Reflect.set(merged, key, sameValue(other, before.get(key)) ? ours.get(key) : other);
+  }
+  for (const key of ours.keys()) {
+    // Dropped there, and this build never touched it, so it goes.
+    if (!(key in theirs) && before.has(key) && sameValue(ours.get(key), before.get(key))) {
+      Reflect.deleteProperty(merged, key);
+    }
+  }
+  return merged;
+}
+
+function sameValue(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+}
+
+function isStoredTeamFile(value: unknown): value is StoredTeamFile {
+  if (!isDynamicRecord(value)) return false;
+  return (
+    value.version === 2 &&
+    (value.activeAccountId === null || isString(value.activeAccountId)) &&
+    Array.isArray(value.hosts) &&
+    value.hosts.every((host) => isStoredTeam(host)) &&
+    (value.legacyImport === undefined ||
+      (isDynamicRecord(value.legacyImport) &&
+        isString(value.legacyImport.fingerprint) &&
+        isStoredTeam(value.legacyImport.record))) &&
+    (value.replacedHosts === undefined ||
+      (Array.isArray(value.replacedHosts) && value.replacedHosts.every((host) => isStoredTeam(host))))
+  );
 }
 
 function isStoredTeam(value: unknown): value is StoredTeam {
