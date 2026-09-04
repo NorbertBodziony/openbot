@@ -33,7 +33,6 @@ import type {
   RemoteDesktopSession,
   SendDirectMessageInput,
   ServerCompatibility,
-  ServerConnectionIssue,
   ServerSummary,
   SetTeamTypingInput,
   TeamInviteSummary,
@@ -57,7 +56,6 @@ import {
   highestCommonTeamProtocol,
   TEAM_APP_VERSION_HEADER,
   TEAM_CAPABILITIES_HEADER,
-  TEAM_PROTOCOL_V1,
   TEAM_PROTOCOL_V1_WEBSOCKET,
   TEAM_PROTOCOL_VERSION_HEADER,
   type TeamProtocolSupportV1,
@@ -67,7 +65,6 @@ import {
   decodeTeamProtocolV1CurrentEvent,
   decodeTeamProtocolV1CurrentHttpResponse,
 } from "@openbot/contracts/team-protocol/v1-adapter";
-import { TEAM_PROTOCOL_V3, TEAM_PROTOCOL_V3_CAPABILITIES } from "@openbot/contracts/team-protocol/v3";
 import {
   decodeBotSummaries,
   decodeBotSummary,
@@ -89,11 +86,19 @@ import {
 } from "./remote-conversation-decoding";
 import { decodeRemoteDesktopCapabilities, decodeRemoteDesktopSession } from "./remote-device-decoding";
 import { decodeVoid, type ResponseDecoder } from "./remote-host-decoding";
+import {
+  assumedCompatibility,
+  LOCAL_TEAM_PROTOCOL,
+  negotiatedCompatibility,
+  webRtcCompatibility,
+} from "./remote-server-connection-status";
+import { RemoteServerConnections } from "./remote-server-connections";
 import { RemoteProtocolError, RemoteRequestError } from "./remote-server-errors";
 import { remoteFetch, requestJson, throwRemoteResponseError, webRtcRequestBody } from "./remote-server-http";
 import { RemoteServerStore, type StoredRemoteServerView, type TokenCipher } from "./remote-server-store";
 import type { StoredRemoteServer } from "./remote-server-stored-shape";
-import { addRemotePreviewUrls, isLocalDevelopmentApi, pageQuery, remoteServerLogoUrl } from "./remote-server-urls";
+import { remoteServerSummaries } from "./remote-server-summaries";
+import { addRemotePreviewUrls, isLocalDevelopmentApi, pageQuery } from "./remote-server-urls";
 import {
   decodeIdentityProof,
   decodeInvitePreview,
@@ -157,18 +162,14 @@ const REMOTE_EVENT_PAYLOAD_LIMIT = 1024 * 1024;
 const REMOTE_EVENT_INITIAL_BUFFER_LIMIT = 1_000;
 const REMOTE_EVENT_PROTOCOL = "openbot-events";
 const REMOTE_EVENT_SNAPSHOT_PROTOCOL = "openbot-events-v2";
-const LOCAL_TEAM_PROTOCOL = { minimum: TEAM_PROTOCOL_V1, maximum: TEAM_PROTOCOL_V3 } as const;
 
 export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #store: RemoteServerStore;
+  readonly #connections: RemoteServerConnections;
   readonly #centralAccount: CentralAccountSession;
   readonly #allowLocalDevelopmentInvites: boolean;
   readonly #appVersion: string | null;
-  #states = new Map<string, ServerSummary["state"]>();
-  #compatibility = new Map<string, ServerCompatibility>();
-  #issues = new Map<string, ServerConnectionIssue>();
   #compatibilityRequests = new Map<string, Promise<ServerCompatibility>>();
-  #connectionSequences = new Map<string, number>();
   #eventControllers = new Map<string, AbortController>();
   #eventSockets = new Map<string, WebSocket>();
   #eventReconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -194,9 +195,16 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   ) {
     super();
     this.#store = new RemoteServerStore({ path, cipher });
+    this.#appVersion = options.appVersion ?? null;
+    this.#connections = new RemoteServerConnections({
+      appVersion: this.#appVersion,
+      onChanged: () => this.#emitChanged(),
+      // The registry never names the event stream. It reports that reconnecting is pointless and the
+      // manager decides what that costs -- which is what keeps the socket out of the error path.
+      onReconnectSuspended: (serverId) => this.#suspendEventReconnect(serverId),
+    });
     this.#centralAccount = centralAccount;
     this.#allowLocalDevelopmentInvites = options.allowLocalDevelopmentInvites ?? false;
-    this.#appVersion = options.appVersion ?? null;
     this.#webrtcTransport = options.webrtcTransport ?? null;
     this.#getLocalHostId = options.getLocalHostId ?? (() => null);
     this.#remoteViewerProxy = this.#webrtcTransport
@@ -210,10 +218,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       if (reconnectTimer) clearTimeout(reconnectTimer);
       this.#eventReconnectTimers.delete(serverId);
       this.#eventReconnectAttempts.delete(serverId);
-      this.#states.set(serverId, "online");
-      this.#compatibility.delete(serverId);
-      this.#issues.delete(serverId);
-      this.#connectionSequences.set(serverId, (this.#connectionSequences.get(serverId) ?? 0) + 1);
+      this.#connections.markConnected(serverId);
       this.#emitChanged();
       void this.#refreshWebRtcCompatibility(serverId).catch(() => undefined);
       const server = this.#store.find(serverId);
@@ -226,29 +231,14 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       }
     });
     this.#webrtcTransport?.on("disconnected", (serverId) => {
-      this.#states.set(serverId, "offline");
+      this.#connections.setState(serverId, "offline");
       this.#setPresenceOffline(serverId);
       this.#emitChanged();
       this.#scheduleEventReconnect(serverId);
     });
     this.#webrtcTransport?.on("event", (serverId, event) => this.#handleWebRtcEvent(serverId, event));
     this.#webrtcTransport?.on("error", (serverId, code, message) => {
-      const authenticationEnded = code === "session_revoked";
-      const reconnectPaused = code === "protocol_error" || authenticationEnded;
-      if (reconnectPaused) this.#eventAuthenticationPaused.add(serverId);
-      this.#states.set(serverId, code === "protocol_error" ? "incompatible" : "error");
-      this.#issues.set(serverId, {
-        code:
-          code === "protocol_error"
-            ? "protocol_error"
-            : authenticationEnded
-              ? "authentication_required"
-              : "network_unavailable",
-        message,
-        retryable: !reconnectPaused,
-      });
-      this.#emitChanged();
-      if (!reconnectPaused) this.#scheduleEventReconnect(serverId);
+      if (!this.#connections.reportTransportError(serverId, code, message)) this.#scheduleEventReconnect(serverId);
     });
   }
 
@@ -256,46 +246,19 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     await this.#store.load();
     if (this.#webrtcTransport) await this.#syncWebRtcHosts().catch(() => undefined);
     for (const server of this.#store.servers) {
-      this.#states.set(server.id, "offline");
-      if (server.transport === "webrtc-v2") this.#compatibility.set(server.id, this.#checkingCompatibility());
+      this.#connections.setState(server.id, "offline");
+      if (server.transport === "webrtc-v2") this.#connections.startCheckingCompatibility(server.id);
     }
   }
 
   list(): ServerSummary[] {
-    return [
-      {
-        id: LOCAL_SERVER_ID,
-        name: "Local",
-        kind: "local",
-        state: "online",
-        apiUrl: null,
-        remoteDesktopAvailable: false,
-        logoUrl: null,
-        role: null,
-        active: this.#store.activeServerId === LOCAL_SERVER_ID,
-        compatibility: null,
-        issue: null,
-      },
-      ...this.#store.servers.map((server) => ({
-        id: server.id,
-        name: server.name,
-        kind: "remote" as const,
-        state: this.#states.get(server.id) ?? "offline",
-        apiUrl: server.transport === "webrtc-v2" ? null : server.apiUrl,
-        remoteDesktopAvailable: server.remoteDesktopAvailable ?? false,
-        logoUrl: server.logoVersion ? remoteServerLogoUrl(server.id, server.logoVersion) : null,
-        role: server.role,
-        active: this.#store.activeServerId === server.id,
-        compatibility: this.#compatibility.get(server.id) ?? this.#checkingCompatibility(),
-        issue: this.#issues.get(server.id) ?? null,
-        connectionSequence: this.#connectionSequences.get(server.id) ?? 0,
-      })),
-    ];
+    return remoteServerSummaries(this.#store.servers, this.#store.activeServerId, (serverId) =>
+      this.#connections.statusFor(serverId),
+    );
   }
 
   async syncRemoteHosts(): Promise<ServerSummary[]> {
     await this.#syncWebRtcHosts();
-    for (const server of this.#store.servers) this.#states.set(server.id, this.#states.get(server.id) ?? "offline");
     if (this.#eventsEnabled) this.startEventConnections();
     this.#emitChanged();
     return this.list();
@@ -381,7 +344,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         throw new Error("The invitation host identity changed while it was accepted.");
       }
       this.#store.setActiveServerId(accepted.hostId);
-      this.#states.set(accepted.hostId, "connecting");
+      this.#connections.setState(accepted.hostId, "connecting");
       await this.#store.persist();
       await this.#webrtcTransport.connect(accepted.hostId);
       this.#emitChanged();
@@ -409,9 +372,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       logoVersion: verifiedIdentity.logoVersion,
       role: result.member.role,
     };
-    this.#compatibility.set(stored.id, verifiedIdentity.compatibility);
-    this.#issues.delete(stored.id);
-    this.#states.set(stored.id, "online");
+    this.#connections.setCompatibility(stored.id, verifiedIdentity.compatibility);
+    this.#connections.clearIssue(stored.id);
+    this.#connections.setState(stored.id, "online");
     // Probed before the server is stored, not after: a probe that fails outright now leaves the list
     // as it was, instead of an entry that is in memory but was never written.
     stored.remoteDesktopAvailable = await this.#probeRemoteDesktop(stored);
@@ -439,9 +402,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       logoVersion: verifiedIdentity.logoVersion,
       role: "member",
     };
-    this.#compatibility.set(stored.id, verifiedIdentity.compatibility);
-    this.#issues.delete(stored.id);
-    this.#states.set(stored.id, "online");
+    this.#connections.setCompatibility(stored.id, verifiedIdentity.compatibility);
+    this.#connections.clearIssue(stored.id);
+    this.#connections.setState(stored.id, "online");
     // Probed before the server is stored, not after: a probe that fails outright now leaves the list
     // as it was, instead of an entry that is in memory but was never written.
     stored.remoteDesktopAvailable = await this.#probeRemoteDesktop(stored);
@@ -487,7 +450,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   async login(input: LoginServerInput): Promise<ServerSummary> {
     const server = this.#store.require(input.serverId);
-    this.#states.set(server.id, "connecting");
+    this.#connections.setState(server.id, "connecting");
     this.#emitChanged();
     try {
       const identity = await this.#verifyIdentity(server.apiUrl, server.id, server.fingerprint);
@@ -497,8 +460,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         body: { accountTicket },
         ...this.#requestProtocol(identity.compatibility),
       });
-      this.#compatibility.set(server.id, identity.compatibility);
-      this.#issues.delete(server.id);
+      this.#connections.setCompatibility(server.id, identity.compatibility);
+      this.#connections.clearIssue(server.id);
       const signedIn = await this.#store.update(server.id, {
         username: this.#centralAccount.getEmail().trim().toLowerCase(),
         role: result.member.role,
@@ -506,7 +469,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         name: identity.serverName,
         logoVersion: identity.logoVersion,
       });
-      this.#states.set(server.id, "online");
+      this.#connections.setState(server.id, "online");
       // The probe authenticates with the session token this sign-in just replaced, so it has to run
       // against the stored server rather than the one `login` was handed.
       if (signedIn) {
@@ -514,7 +477,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       }
       this.#restartEventConnection(server.id, true);
     } catch (error) {
-      this.#applyConnectionError(server.id, error, "error");
+      this.#connections.reportError(server.id, error, "error");
       throw error;
     }
     this.#emitChanged();
@@ -523,21 +486,23 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   async retryConnection(serverId: string): Promise<ServerSummary> {
     const server = this.#store.require(serverId);
-    const blockedState = this.#issues.has(serverId) ? (this.#states.get(serverId) ?? "error") : "error";
+    const blockedState = this.#connections.hasIssue(serverId)
+      ? (this.#connections.stateFor(serverId) ?? "error")
+      : "error";
     try {
       if (server.transport === "webrtc-v2") {
         if (!this.#webrtcTransport) throw new Error("The WebRTC transport is unavailable.");
-        this.#states.set(serverId, "connecting");
+        this.#connections.setState(serverId, "connecting");
         this.#emitChanged();
         await this.#webrtcTransport.connect(serverId);
         return requiredServerSummary(this.list(), serverId);
       }
       await this.#ensureCompatibility(server, true);
-      this.#states.set(serverId, "connecting");
+      this.#connections.setState(serverId, "connecting");
       this.#emitChanged();
       this.#restartEventConnection(serverId, true);
     } catch (error) {
-      this.#applyConnectionError(serverId, error, blockedState);
+      this.#connections.reportError(serverId, error, blockedState);
       throw error;
     }
     return requiredServerSummary(this.list(), serverId);
@@ -575,11 +540,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     for (const key of this.#queueRefreshRequests.keys()) {
       if (key.startsWith(`${serverId}\0`)) this.#queueRefreshRequests.delete(key);
     }
-    this.#states.delete(serverId);
-    this.#compatibility.delete(serverId);
-    this.#issues.delete(serverId);
+    this.#connections.forget(serverId);
     this.#compatibilityRequests.delete(serverId);
-    this.#connectionSequences.delete(serverId);
     this.#eventSockets.delete(serverId);
     this.#presence.delete(serverId);
   }
@@ -616,7 +578,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       });
       return addRemotePreviewUrls(value, server.id);
     } catch (error) {
-      this.#applyConnectionError(server.id, error);
+      this.#connections.reportError(server.id, error);
       throw error;
     }
   }
@@ -716,15 +678,15 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     const server = this.#store.require(serverId);
     if (server.transport === "webrtc-v2" && this.#webrtcTransport) {
       await this.#syncWebRtcHosts();
-      this.#compatibility.delete(serverId);
+      this.#connections.clearCompatibility(serverId);
       await this.#ensureCompatibility(server, true);
-      this.#issues.delete(serverId);
+      this.#connections.clearIssue(serverId);
       this.#emitChanged();
       return requiredServerSummary(this.list(), serverId);
     }
     const identity = await this.#verifyIdentity(server.apiUrl, server.id, server.fingerprint);
-    this.#compatibility.set(server.id, identity.compatibility);
-    this.#issues.delete(server.id);
+    this.#connections.setCompatibility(server.id, identity.compatibility);
+    this.#connections.clearIssue(server.id);
     await this.#store.update(server.id, { name: identity.serverName, logoVersion: identity.logoVersion });
     this.#emitChanged();
     return requiredServerSummary(this.list(), server.id);
@@ -1157,30 +1119,15 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     await this.#store.replaceServers(servers);
   }
 
-  #webrtcCompatibility(host: TeamProtocolSupportV1): ServerCompatibility {
-    return {
-      localAppVersion: this.#appVersion ?? "0.0.0",
-      hostAppVersion: host.appVersion,
-      localProtocol: LOCAL_TEAM_PROTOCOL,
-      hostProtocol: { minimum: 2, maximum: 2 },
-      negotiatedProtocol: 2,
-      capabilities: host.capabilities,
-    };
-  }
-
   async #refreshWebRtcCompatibility(serverId: string): Promise<void> {
     if (!this.#webrtcTransport) return;
     const host = decodeTeamProtocolSupportV1(
       await this.#webrtcTransport.request(serverId, TEAM_API_ROUTES.compatibility),
     );
-    this.#compatibility.set(serverId, {
-      localAppVersion: this.#appVersion ?? "0.0.0",
-      hostAppVersion: host.appVersion,
-      localProtocol: LOCAL_TEAM_PROTOCOL,
-      hostProtocol: host.protocol,
-      negotiatedProtocol: highestCommonTeamProtocol(LOCAL_TEAM_PROTOCOL, host.protocol),
-      capabilities: host.capabilities,
-    });
+    this.#connections.setCompatibility(
+      serverId,
+      negotiatedCompatibility(this.#appVersion, host, highestCommonTeamProtocol(LOCAL_TEAM_PROTOCOL, host.protocol)),
+    );
     this.#emitChanged();
   }
 
@@ -1195,17 +1142,6 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     } else if (event.type === "team-direct-message") this.emit("directMessage", serverId, event);
     else if (event.type === "team-direct-typing") this.emit("directTyping", serverId, event);
     else this.#forwardAgentEvent(serverId, event);
-  }
-
-  #checkingCompatibility(): ServerCompatibility {
-    return {
-      localAppVersion: this.#appVersion ?? "0.0.0",
-      hostAppVersion: null,
-      localProtocol: LOCAL_TEAM_PROTOCOL,
-      hostProtocol: null,
-      negotiatedProtocol: null,
-      capabilities: [],
-    };
   }
 
   #requestProtocol(compatibility: ServerCompatibility): {
@@ -1275,14 +1211,14 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       }
       return response;
     } catch (error) {
-      if (affectsConnection) this.#applyConnectionError(server.id, error);
+      if (affectsConnection) this.#connections.reportError(server.id, error);
       throw error;
     }
   }
 
   async #ensureCompatibility(server: StoredRemoteServerView, refresh = false): Promise<ServerCompatibility> {
-    const current = this.#compatibility.get(server.id);
-    const issue = this.#issues.get(server.id);
+    const current = this.#connections.compatibilityFor(server.id);
+    const issue = this.#connections.issueFor(server.id);
     if (
       !refresh &&
       (issue?.code === "client_update_required" ||
@@ -1302,8 +1238,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       );
     }
     if (!this.#appVersion) {
-      const compatibility = this.#assumedCompatibility();
-      this.#compatibility.set(server.id, compatibility);
+      const compatibility = assumedCompatibility(this.#appVersion);
+      this.#connections.setCompatibility(server.id, compatibility);
       return compatibility;
     }
     if (!refresh && current?.negotiatedProtocol) return current;
@@ -1315,8 +1251,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         : this.#negotiateCompatibility(server.apiUrl)
     )
       .then((compatibility) => {
-        this.#compatibility.set(server.id, compatibility);
-        this.#issues.delete(server.id);
+        this.#connections.setCompatibility(server.id, compatibility);
+        this.#connections.clearIssue(server.id);
         return compatibility;
       })
       .finally(() => {
@@ -1329,11 +1265,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   async #negotiateWebRtcCompatibility(serverId: string): Promise<ServerCompatibility> {
     if (!this.#webrtcTransport) throw new Error("The WebRTC transport is unavailable.");
     const value = await this.#webrtcTransport.request(serverId, TEAM_API_ROUTES.compatibility);
-    return this.#webrtcCompatibility(decodeTeamProtocolSupportV1(value));
+    return webRtcCompatibility(this.#appVersion, decodeTeamProtocolSupportV1(value));
   }
 
   async #negotiateCompatibility(apiUrl: string): Promise<ServerCompatibility> {
-    if (!this.#appVersion) return this.#assumedCompatibility();
+    if (!this.#appVersion) return assumedCompatibility(this.#appVersion);
     let host: TeamProtocolSupportV1;
     try {
       host = await requestJson(apiUrl, TEAM_API_ROUTES.compatibility, decodeTeamProtocolSupportV1);
@@ -1357,74 +1293,16 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       }
       throw new RemoteProtocolError("host_update_required", "Update OpenBot on the host before connecting.", host);
     }
-    return {
-      localAppVersion: this.#appVersion ?? "0.0.0",
-      hostAppVersion: host.appVersion,
-      localProtocol: LOCAL_TEAM_PROTOCOL,
-      hostProtocol: host.protocol,
-      negotiatedProtocol,
-      capabilities: host.capabilities,
-    };
+    return negotiatedCompatibility(this.#appVersion, host, negotiatedProtocol);
   }
 
-  #assumedCompatibility(): ServerCompatibility {
-    return {
-      ...this.#checkingCompatibility(),
-      hostAppVersion: "0.0.0",
-      hostProtocol: LOCAL_TEAM_PROTOCOL,
-      negotiatedProtocol: TEAM_PROTOCOL_V1,
-      capabilities: [...TEAM_PROTOCOL_V3_CAPABILITIES],
-    };
-  }
-
-  #applyConnectionError(serverId: string, error: unknown, fallbackState: ServerSummary["state"] | null = null): void {
-    let issue: ServerConnectionIssue | null = null;
-    let state: ServerSummary["state"] | null = null;
-    let pauseReconnect = false;
-    if (error instanceof RemoteProtocolError) {
-      if (error.support) {
-        this.#compatibility.set(serverId, {
-          ...this.#checkingCompatibility(),
-          hostAppVersion: error.support.appVersion,
-          hostProtocol: error.support.protocol,
-          capabilities: error.support.capabilities,
-        });
-      }
-      issue = { code: error.code, message: error.message, retryable: true };
-      state = error.code === "protocol_error" ? "error" : "incompatible";
-      pauseReconnect = true;
-    } else if (error instanceof RemoteRequestError) {
-      if (error.code === "client_update_required" || error.code === "host_update_required") {
-        issue = { code: error.code, message: error.message, retryable: true };
-        state = "incompatible";
-        pauseReconnect = true;
-      } else if (error.code === "protocol_error") {
-        issue = { code: "protocol_error", message: error.message, retryable: true };
-        state = "error";
-        pauseReconnect = true;
-      } else if (error.status === 401) {
-        issue = { code: "authentication_required", message: "Sign in to this host again.", retryable: true };
-        state = "error";
-        pauseReconnect = true;
-      }
-    } else if (error instanceof SyntaxError) {
-      issue = { code: "protocol_error", message: "The host returned invalid data.", retryable: true };
-      state = "error";
-      pauseReconnect = true;
-    } else if (error instanceof TypeError) {
-      issue = { code: "network_unavailable", message: "The host is not reachable.", retryable: true };
-      state = "offline";
-    }
-    state ??= fallbackState;
-    if (issue) this.#issues.set(serverId, issue);
-    if (state) this.#states.set(serverId, state);
-    if (pauseReconnect) {
-      this.#eventAuthenticationPaused.add(serverId);
-      this.#eventControllers.get(serverId)?.abort();
-      this.#eventControllers.delete(serverId);
-      this.#eventSockets.delete(serverId);
-    }
-    this.#emitChanged();
+  // What a suspended reconnect costs the event stream. The registry decides that a failure is not
+  // worth retrying; this is the only place that knows there is a socket to tear down for it.
+  #suspendEventReconnect(serverId: string): void {
+    this.#eventAuthenticationPaused.add(serverId);
+    this.#eventControllers.get(serverId)?.abort();
+    this.#eventControllers.delete(serverId);
+    this.#eventSockets.delete(serverId);
   }
 
   async #verifyIdentity(
@@ -1527,11 +1405,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
             openedAt = Date.now();
             this.#eventSockets.set(serverId, socket);
             this.#sendEventScope(serverId, socket);
-            this.#compatibility.set(serverId, compatibility);
-            this.#issues.delete(serverId);
+            this.#connections.markConnected(serverId);
+            this.#connections.setCompatibility(serverId, compatibility);
             this.#eventAuthenticationPaused.delete(serverId);
-            this.#connectionSequences.set(serverId, (this.#connectionSequences.get(serverId) ?? 0) + 1);
-            this.#states.set(serverId, "online");
             this.#emitChanged();
             if (this.#supportsRuntimeSnapshots(serverId, socket)) {
               agentEventsReady = true;
@@ -1551,7 +1427,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         socket.addEventListener("message", (message) => {
           if (!isString(message.data)) {
             protocolFailed = true;
-            this.#applyConnectionError(
+            this.#connections.reportError(
               serverId,
               new RemoteProtocolError("protocol_error", "The host sent a binary event."),
             );
@@ -1560,7 +1436,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           }
           if (Buffer.byteLength(message.data) > REMOTE_EVENT_PAYLOAD_LIMIT) {
             protocolFailed = true;
-            this.#applyConnectionError(
+            this.#connections.reportError(
               serverId,
               new RemoteProtocolError("protocol_error", "The host event was too large."),
             );
@@ -1572,7 +1448,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
             if (decoded.kind === "unknown") return;
             if (decoded.kind === "invalid") {
               protocolFailed = true;
-              this.#applyConnectionError(
+              this.#connections.reportError(
                 serverId,
                 new RemoteProtocolError("protocol_error", "The host returned an invalid known event."),
               );
@@ -1604,7 +1480,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
             }
           } catch {
             protocolFailed = true;
-            this.#applyConnectionError(
+            this.#connections.reportError(
               serverId,
               new RemoteProtocolError("protocol_error", "The host returned invalid JSON."),
             );
@@ -1631,7 +1507,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         );
       });
       if (!controller.signal.aborted && !protocolFailed) {
-        this.#states.set(serverId, "offline");
+        this.#connections.setState(serverId, "offline");
         this.#setPresenceOffline(serverId);
         this.#emitChanged();
       }
@@ -1639,18 +1515,13 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       if (!controller.signal.aborted) {
         if (error instanceof RemoteProtocolError) {
           protocolFailed = true;
-          this.#applyConnectionError(serverId, error);
+          this.#connections.reportError(serverId, error);
         } else {
           authenticationFailed = !opened && (await this.#hasRejectedEventCredentials(server));
           if (authenticationFailed) {
-            this.#applyConnectionError(serverId, new RemoteRequestError(401, "Sign in again."));
+            this.#connections.reportError(serverId, new RemoteRequestError(401, "Sign in again."));
           } else {
-            this.#states.set(serverId, "offline");
-            this.#issues.set(serverId, {
-              code: "network_unavailable",
-              message: "The host is not reachable.",
-              retryable: true,
-            });
+            this.#connections.reportUnreachable(serverId);
             this.#setPresenceOffline(serverId);
             this.#emitChanged();
           }
@@ -1764,7 +1635,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   #supportsCapability(serverId: string, capability: TeamCurrentCapability): boolean {
-    return this.#compatibility.get(serverId)?.capabilities.includes(capability) ?? false;
+    return this.#connections.compatibilityFor(serverId)?.capabilities.includes(capability) ?? false;
   }
 
   #supportsRuntimeSnapshots(serverId: string, socket: WebSocket): boolean {
