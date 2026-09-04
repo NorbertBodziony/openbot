@@ -255,6 +255,11 @@ export class HostService extends EventEmitter<HostEvents> {
     if (await this.#options.store.syncAccount(user)) this.#api.refreshPresence();
   }
 
+  getMobileConnectHost(): { hostId: string; fingerprint: string } | null {
+    const identity = this.#options.store.getIdentity();
+    return identity ? { hostId: identity.serverId, fingerprint: identity.fingerprint } : null;
+  }
+
   async configure(input: ConfigureHostInput): Promise<HostStatus> {
     const identity = await this.#options.store.configureWithAccount(
       input.serverName,

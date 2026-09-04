@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createHostedMobileConnect } from "./mobile-connect-host";
 
+const binding = { hostId: "host-a", fingerprint: "a".repeat(43) };
+
 describe("createHostedMobileConnect", () => {
   it("creates and starts a local server before issuing the pairing code", async () => {
     const operations: string[] = [];
@@ -10,12 +12,14 @@ describe("createHostedMobileConnect", () => {
     await expect(
       createHostedMobileConnect({
         centralAuth: {
-          createMobileConnect: async () => {
+          createMobileConnect: async (host) => {
+            expect(host).toEqual(binding);
             operations.push("ticket");
             return ticket;
           },
         },
         host: {
+          getMobileConnectHost: () => binding,
           getStatus: () => ({ configured: false }),
           configure: async () => {
             operations.push("configure");
@@ -24,6 +28,7 @@ describe("createHostedMobileConnect", () => {
           start: async () => {
             operations.push("start");
             return {
+              serverId: binding.hostId,
               apiOnline: true,
               apiUrl: "wss://signal.openbot.run/v1/signal",
               message: null,
@@ -47,6 +52,7 @@ describe("createHostedMobileConnect", () => {
         },
       },
       host: {
+        getMobileConnectHost: () => binding,
         getStatus: () => ({ configured: true }),
         configure: async () => {
           operations.push("configure");
@@ -55,6 +61,7 @@ describe("createHostedMobileConnect", () => {
         start: async () => {
           operations.push("start");
           return {
+            serverId: binding.hostId,
             apiOnline: true,
             apiUrl: "wss://signal.openbot.run/v1/signal",
             message: null,
@@ -74,9 +81,11 @@ describe("createHostedMobileConnect", () => {
       createHostedMobileConnect({
         centralAuth: { createMobileConnect },
         host: {
+          getMobileConnectHost: () => binding,
           getStatus: () => ({ configured: true }),
           configure: async () => ({ configured: true }),
           start: async () => ({
+            serverId: binding.hostId,
             apiOnline: true,
             apiUrl: "http://localhost:49231",
             message: "Local development host is ready.",

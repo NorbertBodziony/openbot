@@ -2,7 +2,6 @@ import { router, Stack, useLocalSearchParams, usePreventZoomTransitionDismissal 
 import { Typography } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
 import { ArrowLeft } from "lucide-react-native";
-import { useEffect } from "react";
 import { Pressable, View } from "react-native";
 
 import { MobileChatView } from "@/features/chat/components/chat-view";
@@ -12,16 +11,12 @@ export function BotChatScreen() {
   usePreventZoomTransitionDismissal();
 
   const { avatarTransition, botId } = useLocalSearchParams<{ avatarTransition?: string; botId: string }>();
-  const { bots, markBotRead } = useMobileWorkspace();
+  const { bots } = useMobileWorkspace();
   const foreground = useThemeColor("foreground");
   const resolvedBotId = Array.isArray(botId) ? botId[0] : botId;
   const resolvedAvatarTransition = Array.isArray(avatarTransition) ? avatarTransition[0] : avatarTransition;
   const animateAvatarOnExit = resolvedAvatarTransition === "search";
   const bot = bots.find((candidate) => candidate.id === resolvedBotId);
-
-  useEffect(() => {
-    if (resolvedBotId) markBotRead(resolvedBotId);
-  }, [markBotRead, resolvedBotId]);
 
   if (bot) {
     return (

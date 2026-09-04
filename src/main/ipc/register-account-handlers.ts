@@ -12,7 +12,7 @@ import { stringPayload } from "./validation";
 
 export interface AccountIpcDependencies {
   centralAuth: CentralAuthManager;
-  host: Pick<HostService, "configure" | "getStatus" | "start">;
+  host: Pick<HostService, "configure" | "getStatus" | "start" | "getMobileConnectHost">;
 }
 
 export function registerAccountIpcHandlers({ centralAuth, host }: AccountIpcDependencies): void {

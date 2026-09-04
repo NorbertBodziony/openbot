@@ -1,9 +1,15 @@
 import { isLiquidGlassAvailable } from "expo-glass-effect";
 import * as Haptics from "expo-haptics";
-import { router } from "expo-router";
+import { router, useIsFocused } from "expo-router";
 import { useThemeColor } from "heroui-native/hooks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { KeyboardAvoidingView, type ScrollView } from "react-native";
+import {
+  AppState,
+  KeyboardAvoidingView,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+  type ScrollView,
+} from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { scheduleOnRN } from "react-native-worklets";
@@ -30,6 +36,9 @@ function leaveConversation(): void {
 }
 
 export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatViewProps) {
+  const isFocused = useIsFocused();
+  const [appActive, setAppActive] = useState(AppState.currentState === "active");
+  const [atLatest, setAtLatest] = useState(false);
   const insets = useSafeAreaInsets();
   const { leaveBotChatAnimated } = useBotPinTransition();
   const scrollViewRef = useRef<ScrollView>(null);
@@ -45,7 +54,7 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
   ]);
   const [draft, setDraft] = useState("");
   const [showStarter, setShowStarter] = useState(true);
-  const { conversations, loadConversation, servers, sendMessage: sendTeamMessage } = useMobileWorkspace();
+  const { conversations, loadConversation, markBotRead, servers, sendMessage: sendTeamMessage } = useMobileWorkspace();
   const conversation = conversations[bot.id];
   const conversationRef = useRef(conversation);
   conversationRef.current = conversation;
@@ -61,10 +70,28 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
     [conversation],
   );
   const liquidGlassAvailable = isLiquidGlassAvailable();
+  const latestMessage = conversation?.messages.findLast(
+    (message) => message.author !== "system" && message.text.trim().length > 0,
+  );
+  const readBoundary = latestMessage?.id;
+  const readBoundaryStatus = latestMessage?.status;
+  const serverOnline = servers.find((server) => server.id === bot.serverId)?.state === "online";
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => setAppActive(state === "active"));
+    return () => subscription.remove();
+  }, []);
+
+  useEffect(() => {
+    if (isFocused && appActive && atLatest && serverOnline && readBoundary && readBoundaryStatus) {
+      markBotRead(bot.id, readBoundary);
+    }
+  }, [isFocused, appActive, atLatest, serverOnline, readBoundary, readBoundaryStatus, bot.id, markBotRead]);
 
   useEffect(() => {
     let active = true;
     const revisionBeforeLoad = conversationRef.current?.revision ?? null;
+    setAtLatest(false);
     initialScrollBotIdRef.current = bot.id;
     void loadConversation(bot.id)
       .then((snapshot) => {
@@ -79,10 +106,16 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
   }, [bot.id, loadConversation]);
 
   const handleContentSizeChange = useCallback(() => {
-    if (!conversation || initialScrollBotIdRef.current !== bot.id) return;
+    if (!conversation || (initialScrollBotIdRef.current !== bot.id && !atLatest)) return;
     initialScrollBotIdRef.current = null;
     scrollViewRef.current?.scrollToEnd({ animated: false });
-  }, [bot.id, conversation]);
+    setAtLatest(true);
+  }, [atLatest, bot.id, conversation]);
+
+  const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    setAtLatest(contentOffset.y + layoutMeasurement.height >= contentSize.height - 24);
+  }, []);
 
   const handleLeaveConversation = useCallback(() => {
     if (animateAvatarOnExit) leaveBotChatAnimated(bot.id);
@@ -109,7 +142,7 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setDraft("");
     setShowStarter(false);
-    void sendTeamMessage(bot.id, body).catch(() => setDraft(body));
+    void sendTeamMessage(bot.id, body).catch(() => setDraft((current) => current || body));
     requestAnimationFrame(() => scrollViewRef.current?.scrollToEnd({ animated: true }));
   }
 
@@ -139,6 +172,7 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
           showStarter={showStarter && messages.length === 0}
           topInset={insets.top}
           onContentSizeChange={handleContentSizeChange}
+          onScroll={handleScroll}
           onDismissStarter={() => setShowStarter(false)}
           onSelectStarter={sendMessage}
         />

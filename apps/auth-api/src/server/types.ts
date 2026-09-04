@@ -77,6 +77,12 @@ export function requireWorkerBindings(value: unknown): WorkerBindings {
   return value;
 }
 
+export interface MobileAuthSessionResult {
+  sessionToken: string;
+  user: AuthUser;
+  host?: import("@openbot/contracts/mobile-connect").MobileConnectHostBinding;
+}
+
 export interface AuthUser {
   id: string;
   email: string;
@@ -169,6 +175,7 @@ export interface AuthRepository {
     expiresAt: number;
   }): Promise<void>;
   replaceMobileAuthTicket(input: {
+    host?: import("@openbot/contracts/mobile-connect").MobileConnectHostBinding;
     ticketHash: string;
     userId: string;
     serverId: string;
@@ -182,7 +189,7 @@ export interface AuthRepository {
     now: number;
     session: { id: string; token: string; expiresAt: number };
     device: MobileAuthDeviceIdentity;
-  }): Promise<{ sessionToken: string; user: AuthUser } | null>;
+  }): Promise<MobileAuthSessionResult | null>;
   authenticateMobileSession(sessionToken: string, now: number): Promise<AuthUser | null>;
   listMobileAuthDevices(userId: string, now: number): Promise<MobileAuthDevice[]>;
   revokeMobileAuthDevice(userId: string, sessionId: string, now: number): Promise<boolean>;

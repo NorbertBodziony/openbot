@@ -24,6 +24,80 @@ const PREVIEW = {
 const ACCEPTED = { hostId: HOST_ID, membershipId: "membership-1", role: "member" };
 
 describe("RemoteTeamDirectoryClient", () => {
+  it("pins the QR's exact host even when another owned desktop is first", async () => {
+    const pinned = new Map<string, string>();
+    const client = new RemoteTeamDirectoryClient({
+      apiUrl: API_URL,
+      token: "mobile-session",
+      pairedHost: { hostId: HOST_ID, fingerprint: HOST_FINGERPRINT },
+      hostKeys: {
+        get: async (id) => pinned.get(id) ?? null,
+        set: async (id, key) => {
+          pinned.set(id, key);
+        },
+      },
+      fetch: async () =>
+        Response.json({
+          hosts: [
+            {
+              hostId: "other-desktop",
+              name: "A Desktop",
+              logoKey: null,
+              devicePublicKey: "other-key",
+              membershipId: "other-membership",
+              role: "owner",
+            },
+            {
+              hostId: HOST_ID,
+              name: "Z Desktop",
+              logoKey: null,
+              devicePublicKey: HOST_KEY,
+              membershipId: "paired-membership",
+              role: "owner",
+            },
+          ],
+        }),
+    });
+    await client.listHosts();
+    expect(pinned.get(HOST_ID)).toBe(HOST_KEY);
+    expect(pinned.has("other-desktop")).toBe(false);
+  });
+
+  it("rejects directory substitution of a scanned host key", async () => {
+    const client = new RemoteTeamDirectoryClient({
+      apiUrl: API_URL,
+      token: "mobile-session",
+      pairedHost: { hostId: HOST_ID, fingerprint: HOST_FINGERPRINT },
+      fetch: async () =>
+        Response.json({
+          hosts: [
+            {
+              hostId: HOST_ID,
+              name: "Desktop",
+              logoKey: null,
+              devicePublicKey: "substituted",
+              membershipId: "paired-membership",
+              role: "owner",
+            },
+          ],
+        }),
+    });
+    await expect(client.listHosts()).rejects.toThrow("paired desktop identity");
+  });
+
+  it("leaves the exact membership without removing the trusted key", async () => {
+    const requests: Array<{ url: string; method: string | undefined }> = [];
+    const client = new RemoteTeamDirectoryClient({
+      apiUrl: API_URL,
+      token: "mobile-session",
+      fetch: async (input, init) => {
+        requests.push({ url: input.toString(), method: init?.method });
+        return new Response(null, { status: 204 });
+      },
+    });
+    await client.leaveHost(HOST_ID, "membership-1");
+    expect(requests).toEqual([{ url: `${API_URL}/v2/remote/hosts/${HOST_ID}/members/membership-1`, method: "DELETE" }]);
+  });
   it("returns only connectable hosts and authenticates the directory request", async () => {
     const requests: Array<{ authorization: string | null; url: string }> = [];
     const client = new RemoteTeamDirectoryClient({

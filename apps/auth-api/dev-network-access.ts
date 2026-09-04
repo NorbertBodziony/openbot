@@ -13,6 +13,16 @@ export function developmentNetworkRequestAllowed(remoteAddress: string | undefin
   const pathname = new URL(requestUrl, "http://openbot.local").pathname;
   if (MOBILE_LAN_PATHS.has(pathname)) return true;
   const segments = pathname.split("/").filter(Boolean);
+  if (
+    segments.length === 6 &&
+    segments[0] === "v2" &&
+    segments[1] === "remote" &&
+    segments[2] === "hosts" &&
+    segments[3] &&
+    segments[4] === "members" &&
+    segments[5]
+  )
+    return true;
   return (
     segments.length === 5 &&
     segments[0] === "v2" &&

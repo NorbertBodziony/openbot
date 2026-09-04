@@ -1,11 +1,11 @@
+import type { MobileConnectHostBinding } from "@openbot/contracts/mobile-connect";
 import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { importJWK, type JWK, SignJWT } from "jose";
+import { PERSISTENT_SESSION_EXPIRES_AT } from "./session-policy";
 import type { AuthUser, WorkerBindings } from "./types";
 
 const TICKET_AUDIENCE = "openbot-remote";
 const TICKET_TTL_SECONDS = 180;
-const SESSION_TTL_SECONDS = 24 * 60 * 60;
-const HOST_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 const LEGACY_SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/u;
 const AUTH_EVENT_RETRY_MS = 60_000;
 const MAX_OUTSTANDING_INVITES_PER_HOST = 50;
@@ -616,6 +616,22 @@ export class RemoteControlPlane {
     await this.#flushAuthEvents();
   }
 
+  async validateMobileConnectHost(userId: string, binding: MobileConnectHostBinding): Promise<void> {
+    const host = await this.#host(binding.hostId);
+    if (
+      !host ||
+      host.owner_user_id !== userId ||
+      !host.device_public_key ||
+      (await sha256(host.device_public_key)) !== binding.fingerprint
+    ) {
+      throw new RemoteControlPlaneError(
+        409,
+        "mobile_host_mismatch",
+        "The Mobile Connect host identity does not match.",
+      );
+    }
+  }
+
   async startSession(userId: string, hostId: string, authSessionHash: string) {
     const membership = await this.#requireRole(hostId, userId, ["owner", "admin", "member"]);
     const now = this.#now();
@@ -639,7 +655,7 @@ export class RemoteControlPlane {
       .first<{ session_id: string; expires_at: number }>();
     if (existing) return { sessionId: existing.session_id, hostId, expiresAt: existing.expires_at };
     const sessionId = crypto.randomUUID();
-    const expiresAt = now + SESSION_TTL_SECONDS * 1_000;
+    const expiresAt = PERSISTENT_SESSION_EXPIRES_AT;
     await this.#database
       .prepare(
         `INSERT OR IGNORE INTO remote_sessions(session_id, host_id, user_id, membership_id, started_at, expires_at)
@@ -811,7 +827,7 @@ export class RemoteControlPlane {
       membershipId: `${hostId}:host`,
       role: "host",
       authEpoch: host.auth_epoch,
-      sessionExpiresAt: this.#now() + HOST_SESSION_TTL_SECONDS * 1_000,
+      sessionExpiresAt: PERSISTENT_SESSION_EXPIRES_AT,
       now: this.#now(),
     });
   }

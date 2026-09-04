@@ -1,8 +1,10 @@
 import { createHmac } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { exportJWK, generateKeyPair, importJWK, jwtVerify } from "jose";
 import { describe, expect, it } from "vitest";
+import { sha256 } from "../src/server/crypto";
+import { D1AuthRepository } from "../src/server/d1-auth-repository";
 import {
   deliverPendingRemoteAuthEvents,
   RemoteControlPlane,
@@ -138,6 +140,89 @@ describe("Remote service authentication", () => {
 });
 
 describe("RemoteControlPlane", () => {
+  it("binds mobile tickets and delivers device revocation for an already connected phone", async () => {
+    const database = new DatabaseSync(":memory:");
+    try {
+      database.exec("PRAGMA foreign_keys = ON");
+      const migrations = new URL("../migrations/", import.meta.url);
+      for (const name of readdirSync(migrations)
+        .filter((name) => name.endsWith(".sql"))
+        .sort()) {
+        database.exec(readFileSync(new URL(name, migrations), "utf8"));
+      }
+      const db = sqliteD1(database);
+      const repository = new D1AuthRepository(db);
+      database.exec(`
+        INSERT INTO users(id, identity_key, email, created_at, updated_at) VALUES ('owner', 'email:owner@example.com', 'owner@example.com', 1, 1);
+        INSERT INTO remote_hosts(host_id, owner_user_id, name, device_public_key, auth_epoch, created_at, updated_at) VALUES ('host-a', 'owner', 'Desktop A', 'public-key-a', 1, 1, 1);
+        INSERT INTO remote_memberships(membership_id, host_id, user_id, role, status, created_at, updated_at) VALUES ('owner-member', 'host-a', 'owner', 'owner', 'active', 1, 1);
+      `);
+      const host = { hostId: "host-a", fingerprint: await sha256("public-key-a") };
+      const ticket = {
+        ticketHash: "ticket-a",
+        userId: "owner",
+        serverId: "mobile",
+        createdAt: 1000,
+        expiresAt: 2000,
+        host,
+      };
+      const redemption = {
+        ticketHash: ticket.ticketHash,
+        serverId: ticket.serverId,
+        now: 1001,
+        session: { id: "phone", token: "phone-token", expiresAt: 8_640_000_000_000_000 },
+        device: { id: "phone-device", name: "Phone", platform: "ios" as const },
+      };
+      await repository.replaceMobileAuthTicket(ticket);
+      database.exec("UPDATE remote_hosts SET device_public_key = 'substituted-key' WHERE host_id = 'host-a'");
+      await expect(repository.redeemMobileAuthTicket(redemption)).resolves.toBeNull();
+      database.exec("UPDATE remote_hosts SET device_public_key = 'public-key-a' WHERE host_id = 'host-a'");
+      await expect(repository.redeemMobileAuthTicket(redemption)).resolves.toMatchObject({
+        host,
+        sessionToken: "phone-token",
+      });
+      await expect(repository.authenticateMobileSession("phone-token", 10_000_000_000_000)).resolves.toMatchObject({
+        id: "owner",
+      });
+      database.exec(`INSERT INTO remote_sessions(session_id, host_id, user_id, membership_id, started_at, expires_at)
+        VALUES ('live-phone', 'host-a', 'owner', 'owner-member', 1001, 8640000000000000)`);
+      await expect(repository.revokeMobileAuthDevice("other-user", "phone", 1002)).resolves.toBe(false);
+      expect(database.prepare("SELECT ended_at FROM remote_sessions").get()).toEqual({ ended_at: null });
+      await expect(repository.revokeMobileAuthDevice("owner", "phone", 1003)).resolves.toBe(true);
+      await expect(repository.authenticateMobileSession("phone-token", 1004)).resolves.toBeNull();
+      expect(database.prepare("SELECT ended_at FROM remote_sessions").get()).toEqual({ ended_at: 1003 });
+      const delivered: unknown[] = [];
+      await deliverPendingRemoteAuthEvents(
+        {
+          DB: db,
+          REMOTE_AUTH_WEBHOOK_URL: "https://signal.example.test/internal/auth-events",
+          REMOTE_AUTH_WEBHOOK_SECRET: "s".repeat(32),
+        },
+        1004,
+        async (_url, init) => {
+          delivered.push(JSON.parse(String(init?.body)));
+          return new Response(null, { status: 204 });
+        },
+      );
+      expect(delivered).toEqual([{ type: "remote-session-ended", hostId: "host-a", sessionId: "live-phone" }]);
+      expect(database.prepare("SELECT COUNT(*) AS count FROM remote_auth_events").get()).toEqual({ count: 0 });
+      await repository.replaceMobileAuthTicket({ ...ticket, ticketHash: "ticket-b" });
+      await repository.redeemMobileAuthTicket({
+        ...redemption,
+        ticketHash: "ticket-b",
+        session: { ...redemption.session, id: "phone-2", token: "phone-token-2" },
+      });
+      database.exec(`INSERT INTO remote_sessions(session_id, host_id, user_id, membership_id, started_at, expires_at)
+        VALUES ('live-phone-2', 'host-a', 'owner', 'owner-member', 1001, 8640000000000000)`);
+      await expect(repository.revokeMobileSession("phone-token-2", 1005)).resolves.toBe(true);
+      expect(database.prepare("SELECT ended_at FROM remote_sessions WHERE session_id = 'live-phone-2'").get()).toEqual({
+        ended_at: 1005,
+      });
+    } finally {
+      database.close();
+    }
+  });
+
   it("returns the existing membership ID and ends live sessions when a member accepts a new invite", async () => {
     const database = new DatabaseSync(":memory:");
     database.exec("PRAGMA foreign_keys = ON");
@@ -280,12 +365,14 @@ describe("RemoteControlPlane", () => {
       hostId: "host-1",
       name: "Studio Mac",
       ownerMembershipId: "local-owner",
+      devicePublicKey: "public-key-a",
       rotateCredential: false,
     });
     const registration = await controlPlane.registerHost(owner, {
       hostId: "host-1",
       name: "Studio Mac",
       ownerMembershipId: "local-owner",
+      devicePublicKey: "public-key-a",
     });
     if (!firstRegistration.machineToken || !registration.machineToken) {
       throw new Error("The rotated host credential is missing.");
@@ -295,10 +382,19 @@ describe("RemoteControlPlane", () => {
       hostId: "host-1",
       name: "Renamed Studio Mac",
       ownerMembershipId: "local-owner",
+      devicePublicKey: "public-key-a",
       rotateCredential: false,
       machineToken: registration.machineToken,
     });
     expect(metadataUpdate).toMatchObject({ authEpoch: registration.authEpoch, machineToken: null });
+    const mobileHost = { hostId: "host-1", fingerprint: await sha256("public-key-a") };
+    await expect(controlPlane.validateMobileConnectHost(owner.id, mobileHost)).resolves.toBeUndefined();
+    await expect(controlPlane.validateMobileConnectHost("another-owner", mobileHost)).rejects.toMatchObject({
+      code: "mobile_host_mismatch",
+    });
+    await expect(
+      controlPlane.validateMobileConnectHost(owner.id, { ...mobileHost, fingerprint: await sha256("another-key") }),
+    ).rejects.toMatchObject({ code: "mobile_host_mismatch" });
     await expect(controlPlane.issueHostTicket("host-1", registration.machineToken)).resolves.toMatchObject({
       ticket: expect.any(String),
     });

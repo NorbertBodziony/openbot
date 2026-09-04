@@ -13,6 +13,7 @@ export interface MobileServer {
   address: string | null;
   accent: string;
   publicKey: string;
+  membershipId: string;
 }
 
 export interface MobileBot {
@@ -47,6 +48,7 @@ export interface MobileWorkspaceContextValue {
   unreadBotIds: string[];
   conversations: Record<string, ConversationSnapshot>;
   selectServer: (serverId: string) => void;
+  leaveServer: (serverId: string) => Promise<void>;
   refreshServers: () => Promise<void>;
   addRemoteServer: (input: AddRemoteServerInput) => Promise<void>;
   createBot: (input: CreateBotInput) => Promise<void>;
@@ -57,7 +59,7 @@ export interface MobileWorkspaceContextValue {
   sendMessage: (botId: string, text: string) => Promise<void>;
   hideBot: (botId: string) => void;
   unhideBot: (botId: string) => void;
-  markBotRead: (botId: string) => void;
+  markBotRead: (botId: string, throughMessageId?: string) => void;
   markBotUnread: (botId: string) => void;
   toggleBotPin: (botId: string) => ToggleBotPinResult;
 }

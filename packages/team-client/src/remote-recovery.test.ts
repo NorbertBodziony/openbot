@@ -1,10 +1,23 @@
 import type { ConversationSnapshot } from "@openbot/contracts/ipc";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createRemoteConnectionRecovery, remoteRecoveryMessage, resyncRemoteConversations } from "./remote-recovery";
+import {
+  createRemoteConnectionRecovery,
+  mergeRemoteUnreadIds,
+  remoteRecoveryMessage,
+  resyncRemoteConversations,
+} from "./remote-recovery";
 
 afterEach(() => vi.useRealTimers());
 
 describe("remote connection recovery", () => {
+  it("applies live unread changes without erasing another server's unread agents", () => {
+    expect(
+      mergeRemoteUnreadIds(["other-server", "read-now"], {
+        "read-now": { unreadCount: 0 },
+        "new-reply": { unreadCount: 1 },
+      }),
+    ).toEqual(["other-server", "new-reply"]);
+  });
   it("shows five attempts ten seconds apart, then a two-minute cooldown before restarting at one", async () => {
     vi.useFakeTimers();
     let desktopOnline = false;
@@ -29,7 +42,7 @@ describe("remote connection recovery", () => {
     recovery.setActive(true);
     await vi.advanceTimersByTimeAsync(0);
     expect(attempts).toBe(1);
-    expect(messages.at(-1)).toBe("Reconnecting 1/5 · Next attempt in 10s");
+    expect(messages.at(-1)).toBe("Connection attempt failed. Retrying in 10s.");
     await vi.advanceTimersByTimeAsync(9_999);
     expect(attempts).toBe(1);
     await vi.advanceTimersByTimeAsync(1);
@@ -64,8 +77,11 @@ describe("remote connection recovery", () => {
     expect(attempts).toBe(6);
     connected = false;
     recovery.offline();
+    expect(messages.at(-1)).toBe("Connection lost. Retrying in 10s.");
+    const attemptsBeforeRetry = connecting.length;
     await vi.advanceTimersByTimeAsync(10_000);
     expect(connected).toBe(true);
+    expect(connecting.slice(attemptsBeforeRetry)).toEqual(["Reconnecting 1/5"]);
     expect(connecting.at(-1)).toBe("Reconnecting 1/5");
     expect(errors).toHaveLength(5);
     recovery.dispose();
@@ -92,14 +108,54 @@ describe("remote connection recovery", () => {
     await vi.advanceTimersByTimeAsync(180_000);
     expect(attempts).toBe(1);
     resolve();
-    await vi.advanceTimersByTimeAsync(9_999);
-    expect(attempts).toBe(1);
-    await vi.advanceTimersByTimeAsync(1);
+    // The retry deadline already elapsed, but no new work starts until the old work settles.
+    await vi.advanceTimersByTimeAsync(0);
     expect(attempts).toBe(2);
     recovery.offline();
     recovery.dispose();
     await vi.advanceTimersByTimeAsync(180_000);
     expect(attempts).toBe(2);
+  });
+
+  it("shows cooldown as soon as the fifth attempt reports offline, without waiting for command cleanup", async () => {
+    vi.useFakeTimers();
+    let rejectFifth = (_error: Error) => {};
+    let attempts = 0;
+    let message: string | null = null;
+    const recovery = createRemoteConnectionRecovery(
+      async () => {
+        attempts += 1;
+        if (attempts < 5) throw new Error("Offline");
+        if (attempts === 5) {
+          await new Promise<void>((_resolve, reject) => {
+            rejectFifth = reject;
+          });
+        }
+      },
+      () => {},
+      (status) => {
+        message = remoteRecoveryMessage(status);
+      },
+    );
+    recovery.setActive(true);
+    await vi.advanceTimersByTimeAsync(40_000);
+    expect(attempts).toBe(5);
+    expect(message).toBe("Reconnecting 5/5");
+    recovery.offline();
+    expect(message).toBe("Connection failed after 5 attempts. Retrying in 2:00.");
+    recovery.offline();
+    recovery.refresh();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(message).toBe("Connection failed after 5 attempts. Retrying in 1:59.");
+    rejectFifth(new Error("Connection command finished cleaning up"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(message).toBe("Connection failed after 5 attempts. Retrying in 1:59.");
+    await vi.advanceTimersByTimeAsync(118_999);
+    expect(attempts).toBe(5);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(attempts).toBe(6);
+    expect(message).toBeNull();
+    recovery.dispose();
   });
 
   it("does no work in the background and starts only one attempt after an expired cooldown", async () => {

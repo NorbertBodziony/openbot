@@ -83,7 +83,7 @@ the avatar without an account session.
 Cloudflare runs a maintenance task once each day. The task removes:
 
 - sign-in challenges after they expire or are consumed;
-- account sessions after they expire or are revoked;
+- account sessions after they are revoked (older already-expired sessions are also removed);
 - team authentication tickets after they expire or are consumed;
 - rate-limit records after their 15-minute window ends.
 
@@ -92,7 +92,10 @@ maintenance run can keep them until a later successful run. The task logs only a
 counts. It does not log account IDs, email addresses, IP addresses, tokens, or ticket values.
 
 Replacing or deleting an account avatar or host logo removes the previous R2 object on a best-effort
-basis. An abandoned logical remote session expires without a heartbeat.
+basis. Account/device sessions and logical remote sessions deliberately have no time-based expiration.
+Logout or device revocation ends access; removing a team membership ends access to that team.
+Revoking an account/device credential also disconnects the user's active remote sessions. Other
+authorized devices can reconnect. Short-lived QR codes and connection tickets still expire.
 
 ## Email delivery and infrastructure providers
 

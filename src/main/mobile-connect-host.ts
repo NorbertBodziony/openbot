@@ -1,4 +1,4 @@
-import type { MobileConnectTicket } from "@openbot/contracts/mobile-connect";
+import type { MobileConnectHostBinding, MobileConnectTicket } from "@openbot/contracts/mobile-connect";
 import type { CentralAuthManager } from "./central-auth-manager";
 
 interface MobileConnectHostDependencies {
@@ -6,7 +6,9 @@ interface MobileConnectHostDependencies {
   host: {
     configure(input: { serverName: string }): Promise<unknown>;
     getStatus(): { configured: boolean };
+    getMobileConnectHost(): MobileConnectHostBinding | null;
     start(): Promise<{
+      serverId: string | null;
       phase: string;
       apiOnline: boolean;
       apiUrl: string | null;
@@ -24,7 +26,9 @@ export async function createHostedMobileConnect({
   if (!isPublishedHost(status)) {
     throw new Error(status.message ?? "This OpenBot could not be published for Mobile Connect.");
   }
-  return centralAuth.createMobileConnect();
+  const binding = host.getMobileConnectHost();
+  if (!binding || binding.hostId !== status.serverId) throw new Error("The Mobile Connect host changed. Try again.");
+  return centralAuth.createMobileConnect(binding);
 }
 
 function isPublishedHost(status: { phase: string; apiOnline: boolean; apiUrl: string | null }): boolean {

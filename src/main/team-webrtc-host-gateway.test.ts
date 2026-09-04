@@ -75,7 +75,8 @@ describe("TeamWebRtcHostGateway", () => {
       publicKeyEncoding: { type: "spki", format: "pem" },
       privateKeyEncoding: { type: "pkcs8", format: "pem" },
     });
-    const sessionExpiresAt = Math.floor(Date.now() / 1_000) + 60;
+    // Persistent sessions must not overflow Node's 32-bit setTimeout delay and disconnect immediately.
+    const sessionExpiresAt = 8_640_000_000_000;
     const eventScopes: Array<
       Extract<ReturnType<typeof decodeTeamProtocolV1ClientEvent>, { type: "agent-event-scope" }>
     > = [];

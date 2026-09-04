@@ -224,7 +224,22 @@ export class TeamWebRtcHostGateway {
     const session = this.#store.openRemoteSession({ ...connection, expiresAt });
     this.#localSessionToken = session.sessionToken;
     this.#localSessionId = connection.sessionId;
-    this.#sessionExpirationTimer = setTimeout(() => this.#closeLocalSession(), expiresAt - Date.now());
+    this.#scheduleSessionExpiration(expiresAt);
+  }
+
+  #scheduleSessionExpiration(expiresAt: number): void {
+    const remaining = expiresAt - Date.now();
+    if (remaining <= 0) {
+      this.#closeLocalSession();
+      return;
+    }
+    // Persistent sessions exceed Node's signed 32-bit timer range. Recheck in
+    // bounded intervals instead of overflowing to an immediate disconnect.
+    this.#sessionExpirationTimer = setTimeout(
+      () => this.#scheduleSessionExpiration(expiresAt),
+      Math.min(remaining, 2_147_483_647),
+    );
+    this.#sessionExpirationTimer.unref?.();
   }
 
   readonly #onData = (

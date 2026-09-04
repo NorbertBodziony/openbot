@@ -30,6 +30,36 @@ afterEach(async () => {
 });
 
 describe.sequential("AgentService: restart", () => {
+  it("notifies other devices when a member reads a reply without clearing another member's unread state", async () => {
+    const { store, mailbox } = stores(root);
+    service = new AgentService(
+      store,
+      mailbox,
+      fakeBrowser(),
+      30_000,
+      "codex",
+      (provider) => new FakeAgentClient(provider),
+    );
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Reply to this" });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "completed");
+    const snapshot = await service.readConversation("chief");
+    const boundary = snapshot.messages.at(-1)?.id;
+    if (!boundary) throw new Error("The reply is missing");
+    const unread = service.listConversationReads("member-other").chief;
+    expect(unread?.unreadCount).toBeGreaterThan(0);
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => {
+      if (event.type === "conversation-invalidated") events.push(event);
+    });
+    await service.markConversationRead("chief", "member-owner", boundary);
+    expect(events).toEqual([{ type: "conversation-invalidated", botId: "chief", revision: snapshot.revision }]);
+    expect(service.listConversationReads("member-owner").chief?.unreadCount).toBe(0);
+    expect(service.listConversationReads("member-other").chief).toEqual(unread);
+    await service.markConversationRead("chief", "member-owner", boundary);
+    expect(events).toHaveLength(1);
+  });
+
   it("resumes stored threads and does not replay an uncertain running delivery", async () => {
     const { store, mailbox } = stores(root);
     service = new AgentService(store, mailbox, fakeBrowser());

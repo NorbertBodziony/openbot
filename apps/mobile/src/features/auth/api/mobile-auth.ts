@@ -1,5 +1,11 @@
 import type { CentralAuthUser } from "@openbot/contracts/ipc";
-import { isMobileConnectDevelopmentHost, parseMobileConnectUrl } from "@openbot/contracts/mobile-connect";
+import {
+  isMobileConnectDevelopmentHost,
+  isMobileConnectHostBinding,
+  type MobileConnectHostBinding,
+  parseMobileConnectUrl,
+  validateMobileConnectHostBinding,
+} from "@openbot/contracts/mobile-connect";
 import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { fetch } from "expo/fetch";
 import * as Crypto from "expo-crypto";
@@ -18,6 +24,7 @@ export interface MobileSession {
   apiUrl: string;
   sessionToken: string;
   user: CentralAuthUser;
+  host?: MobileConnectHostBinding;
 }
 
 export async function redeemMobileConnectUrl(value: string): Promise<MobileSession> {
@@ -25,6 +32,7 @@ export async function redeemMobileConnectUrl(value: string): Promise<MobileSessi
   if (!payload) {
     throw new Error("This is not a valid OpenBot Mobile Connect code.");
   }
+  if (!payload.host) throw new Error("Generate a new Mobile Connect code in an updated desktop app.");
 
   let response: Response;
   let body: unknown;
@@ -58,6 +66,7 @@ export async function redeemMobileConnectUrl(value: string): Promise<MobileSessi
   }
 
   const session = decodeMobileSession(body, payload.apiUrl);
+  session.host = validateMobileConnectHostBinding(payload.host, session.host);
   await saveMobileSession(session);
   return session;
 }
@@ -197,7 +206,14 @@ function decodeMobileSession(value: unknown, apiUrl: string): MobileSession {
   if (!isDynamicRecord(value) || !isString(value.sessionToken) || value.sessionToken.length > 512) {
     throw new Error("The account service returned an invalid mobile session.");
   }
-  return { apiUrl, sessionToken: value.sessionToken, user: decodeUser(value.user) };
+  if (value.host !== undefined && !isMobileConnectHostBinding(value.host))
+    throw new Error("The mobile session host is invalid.");
+  return {
+    apiUrl,
+    sessionToken: value.sessionToken,
+    user: decodeUser(value.user),
+    ...(isMobileConnectHostBinding(value.host) ? { host: value.host } : {}),
+  };
 }
 
 function decodeStoredMobileSession(value: unknown): MobileSession {

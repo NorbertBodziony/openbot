@@ -19,6 +19,7 @@ describe("development Auth API LAN access", () => {
       "/v2/remote/sessions/session-1/end",
       "/v2/remote/invites/preview",
       "/v2/remote/invites/accept",
+      "/v2/remote/hosts/host-1/members/member-1",
     ]) {
       expect(developmentNetworkRequestAllowed("192.168.1.20", path)).toBe(true);
     }

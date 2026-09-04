@@ -770,13 +770,18 @@ describe("remote event connections", () => {
     }> = [];
     let queueRequests = 0;
     let rejectQueue: ((error: Error) => void) | undefined;
-    const conversationPage = (revision: number) =>
+    const conversationPage = (revision: number, unreadCount = 1) =>
       new Response(
         JSON.stringify({
           botId: "chief",
           threadId: "thread-chief",
           activeTurnId: null,
           revision,
+          readState: {
+            unreadCount,
+            firstUnreadMessageId: unreadCount ? `reply-${revision}` : null,
+            throughMessageId: unreadCount ? null : `reply-${revision}`,
+          },
           messages: [
             {
               id: `reply-${revision}`,
@@ -882,6 +887,30 @@ describe("remote event connections", () => {
         expect(agentEvent).toHaveBeenCalledWith(
           "server-2",
           expect.objectContaining({ type: "conversation-page", page: expect.objectContaining({ revision: 4 }) }),
+        ),
+      );
+      sockets[1]?.dispatchEvent(
+        new MessageEvent("message", {
+          data: JSON.stringify({ type: "conversation-invalidated", botId: "chief", revision: 4 }),
+        }),
+      );
+      await vi.waitFor(() => expect(conversationRequests).toHaveLength(4));
+      // A read on another device has the same content revision as the in-flight page.
+      sockets[1]?.dispatchEvent(
+        new MessageEvent("message", {
+          data: JSON.stringify({ type: "conversation-invalidated", botId: "chief", revision: 4 }),
+        }),
+      );
+      conversationRequests[3]?.resolve(conversationPage(4));
+      await vi.waitFor(() => expect(conversationRequests).toHaveLength(5));
+      conversationRequests[4]?.resolve(conversationPage(4, 0));
+      await vi.waitFor(() =>
+        expect(agentEvent).toHaveBeenCalledWith(
+          "server-2",
+          expect.objectContaining({
+            type: "conversation-page",
+            page: expect.objectContaining({ readState: expect.objectContaining({ unreadCount: 0 }) }),
+          }),
         ),
       );
       sockets[1]?.dispatchEvent(

@@ -237,7 +237,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   #eventReconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
   #eventReconnectAttempts = new Map<string, number>();
   #webrtcConnectionAttempts = new Set<string>();
-  #conversationRefreshRequests = new Map<string, { revision: number }>();
+  #conversationRefreshRequests = new Map<string, { revision: number; sequence: number }>();
   #queueRefreshRequests = new Map<string, { dirty: boolean }>();
   #duplicateOperationIds = new Map<string, string>();
   #eventAuthenticationPaused = new Set<string>();
@@ -1953,21 +1953,25 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     const key = `${serverId}\0${botId}`;
     const pending = this.#conversationRefreshRequests.get(key);
     if (pending) {
+      if (pending.revision === revision) pending.sequence += 1;
       pending.revision = Math.max(pending.revision, revision);
       return;
     }
-    const request = { revision };
+    const request = { revision, sequence: 0 };
     this.#conversationRefreshRequests.set(key, request);
     try {
       while (this.#state.servers.some((server) => server.id === serverId)) {
         const requestedRevision = request.revision;
+        const requestedSequence = request.sequence;
         let page: ConversationPage;
         try {
           page = await this.readAgentConversationPage(botId, { type: "latest" }, 50, serverId);
         } catch {
-          if (request.revision !== requestedRevision) continue;
+          if (request.sequence !== requestedSequence || request.revision !== requestedRevision) continue;
           return;
         }
+        // A read cursor can change without changing the conversation's revision.
+        if (request.sequence !== requestedSequence) continue;
         if (page.revision >= request.revision) {
           this.emit("agent", serverId, { type: "conversation-page", page });
           return;

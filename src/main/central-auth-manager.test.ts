@@ -143,9 +143,9 @@ describe("CentralAuthManager", () => {
     expect(await manager.redeemTeamAuthTicket("one-time-ticket", serverId)).toMatchObject({
       email: "person@example.com",
     });
-    expect(await manager.createMobileConnect()).toMatchObject({
+    expect(await manager.createMobileConnect({ hostId: serverId, fingerprint: "a".repeat(43) })).toMatchObject({
       qrData: expect.stringMatching(
-        /^openbot:\/\/mobile-connect\?api=http%3A%2F%2F192\.168\.1\.143%3A3100&ticket=mobile-ticket_1234567890abcdefghijklmnop$/u,
+        /^openbot:\/\/mobile-connect\?api=http%3A%2F%2F192\.168\.1\.143%3A3100&ticket=mobile-ticket_1234567890abcdefghijklmnop&host=00000000-0000-4000-8000-000000000000&fingerprint=a{43}$/u,
       ),
     });
     expect(await manager.listMobileConnectedDevices()).toEqual([

@@ -71,6 +71,7 @@ export function ConnectedScreen() {
   const [foreground, muted] = useThemeColor(["foreground", "muted"]);
   const iconColor = String(foreground);
   const mutedColor = String(muted);
+  const hasSelectedServer = servers.some((server) => server.id === activeServer.id);
   const pinnedBots = pinnedBotIds
     .map((botId) => activeBots.find((bot) => bot.id === botId))
     .filter((bot): bot is (typeof activeBots)[number] => Boolean(bot));
@@ -95,7 +96,7 @@ export function ConnectedScreen() {
         ListHeaderComponent={
           <>
             <PinnedBotsStrip bots={pinnedBots} />
-            {servers.length > 0 ? <ConnectionStatus server={activeServer} /> : null}
+            {hasSelectedServer ? <ConnectionStatus server={activeServer} /> : null}
           </>
         }
         ListEmptyComponent={
@@ -130,6 +131,13 @@ export function ConnectedScreen() {
                   Connect the desktop app again or join a remote server.
                 </Typography.Paragraph>
               </View>
+            </View>
+          ) : !hasSelectedServer ? (
+            <View className="flex-1 items-center justify-center gap-5 px-8 py-16">
+              <Typography.Heading type="h4">Choose a server</Typography.Heading>
+              <Button size="md" variant="secondary" onPress={openDrawer}>
+                <Button.Label>Open servers</Button.Label>
+              </Button>
             </View>
           ) : activeBots.length === 0 ? (
             <View className="flex-1 items-center justify-center gap-5 px-8 py-16">

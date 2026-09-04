@@ -94,6 +94,17 @@ module or development build is required.
 The persisted hosting preference is restored on startup in both the normal desktop and the
 development host. Starting the development HTTP API alone does not publish WebRTC; Mobile Connect
 needs the published host. The separate development test-client role never auto-publishes.
+Mobile Connect tickets and QR codes bind the started host ID and SHA-256 public-key fingerprint.
+Mobile verifies that binding at redemption and against the directory, pins the key, and selects
+that host rather than the first account-owned desktop. Legacy unbound QR codes require regeneration.
+Conversation read cursors belong to a team member and are shared across that member's devices.
+Advancing a cursor emits a conversation invalidation without the reader's identity or cursor;
+clients reload their own read state even when the conversation content revision is unchanged.
+Mobile acknowledges rendered replies only in the foreground, focused chat at the latest messages.
+Account/device and logical remote sessions deliberately have no time-based expiration; a finite
+maximum Date deadline preserves existing numeric wire contracts. Pairing codes, connection tickets,
+and Signal resume credentials remain short-lived. An atomic D1 revocation trigger ends the user's
+remote sessions and queues disconnects on logout/device revoke; other authorized clients may reconnect.
 Cloudflare issues short ES256 connection tickets and stores the logical session. Signal issues a
 10-minute resume token, so a short Signal update does not end an active WebRTC connection. Signal
 validates a trusted, non-expired resume token locally. After a Signal restart, the first use of a token

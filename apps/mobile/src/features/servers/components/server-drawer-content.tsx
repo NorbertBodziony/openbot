@@ -1,7 +1,9 @@
+import { MenuView } from "@expo/ui/community/menu";
 import type { Href } from "expo-router";
 import { Typography } from "heroui-native";
 import { Monitor, Plus, Server, Settings } from "lucide-react-native";
-import { Pressable, ScrollView, View, type ViewStyle } from "react-native";
+import { useRef } from "react";
+import { Alert, Pressable, ScrollView, View, type ViewStyle } from "react-native";
 
 import type { MobileSession } from "@/features/auth/api/mobile-auth";
 import type { MobileServer } from "@/features/workspace/context/mobile-workspace-context";
@@ -21,6 +23,7 @@ interface ServerDrawerContentProps {
   topInset: number;
   onNavigate: (href: Href) => void;
   onSelectServer: (serverId: string) => void;
+  onLeaveServer: (serverId: string) => Promise<void>;
 }
 
 export function ServerDrawerContent({
@@ -34,7 +37,29 @@ export function ServerDrawerContent({
   topInset,
   onNavigate,
   onSelectServer,
+  onLeaveServer,
 }: ServerDrawerContentProps) {
+  const leaving = useRef(false);
+  function confirmLeave(server: MobileServer): void {
+    Alert.alert(`Leave ${server.name}?`, "You will need another invitation to join again.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Leave server",
+        style: "destructive",
+        onPress: () => {
+          if (leaving.current) return;
+          leaving.current = true;
+          void onLeaveServer(server.id)
+            .catch((error) => {
+              Alert.alert("Could not leave server", error instanceof Error ? error.message : "Please try again.");
+            })
+            .finally(() => {
+              leaving.current = false;
+            });
+        },
+      },
+    ]);
+  }
   const emailSeparatorIndex = session.user.email.indexOf("@");
   const displayName = emailSeparatorIndex > 0 ? session.user.email.slice(0, emailSeparatorIndex) : session.user.email;
   const mutedColor = String(muted);
@@ -53,12 +78,18 @@ export function ServerDrawerContent({
           const ServerIcon = serverItem.kind === "local" ? Monitor : Server;
           const serverLabel = serverItem.kind === "local" ? "Local" : "Remote";
 
-          return (
+          const row = (
             <Pressable
               key={serverItem.id}
               accessibilityRole="button"
               accessibilityState={{ selected }}
               accessibilityLabel={`${serverItem.name}, ${serverLabel}`}
+              accessibilityActions={
+                serverItem.kind === "remote" ? [{ name: "leave", label: "Leave server" }] : undefined
+              }
+              onAccessibilityAction={(event) => {
+                if (event.nativeEvent.actionName === "leave" && serverItem.kind === "remote") confirmLeave(serverItem);
+              }}
               className="min-h-16 flex-row items-center gap-3 rounded-2xl px-3 py-2"
               onPress={() => onSelectServer(serverItem.id)}
               style={({ pressed }) => ({ opacity: pressed ? 0.58 : 1 })}
@@ -91,6 +122,27 @@ export function ServerDrawerContent({
                 </Typography.Paragraph>
               </View>
             </Pressable>
+          );
+          return serverItem.kind === "remote" ? (
+            <MenuView
+              key={serverItem.id}
+              shouldOpenOnLongPress
+              actions={[
+                {
+                  id: "leave",
+                  title: "Leave server",
+                  attributes: { destructive: true },
+                  image: "rectangle.portrait.and.arrow.right",
+                },
+              ]}
+              onPressAction={(event) => {
+                if (event.nativeEvent.event === "leave") confirmLeave(serverItem);
+              }}
+            >
+              {row}
+            </MenuView>
+          ) : (
+            row
           );
         })}
       </ScrollView>

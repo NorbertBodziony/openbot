@@ -1,6 +1,6 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { parseInviteUrl } from "@openbot/contracts/invite-links";
-import { isMobileConnectDevelopmentHost } from "@openbot/contracts/mobile-connect";
+import { isMobileConnectDevelopmentHost, type MobileConnectHostBinding } from "@openbot/contracts/mobile-connect";
 import { isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 
 import type { TeamClientFetch } from "./index";
@@ -57,12 +57,20 @@ export class RemoteTeamDirectoryClient {
   readonly #token: string;
   readonly #fetch: TeamClientFetch;
   readonly #hostKeys: RemoteHostKeyStore;
+  readonly #pairedHost: MobileConnectHostBinding | undefined;
   #pinTail: Promise<void> = Promise.resolve();
 
-  constructor(input: { apiUrl: string; token: string; fetch: TeamClientFetch; hostKeys?: RemoteHostKeyStore }) {
+  constructor(input: {
+    apiUrl: string;
+    token: string;
+    fetch: TeamClientFetch;
+    hostKeys?: RemoteHostKeyStore;
+    pairedHost?: MobileConnectHostBinding;
+  }) {
     this.#apiUrl = input.apiUrl;
     this.#token = input.token;
     this.#fetch = input.fetch;
+    this.#pairedHost = input.pairedHost;
     const keys = new Map<string, string>();
     this.#hostKeys = input.hostKeys ?? {
       get: async (hostId) => keys.get(hostId) ?? null,
@@ -104,7 +112,22 @@ export class RemoteTeamDirectoryClient {
         ];
       }),
     );
-    return hosts.flat();
+    const directory = hosts.flat();
+    if (this.#pairedHost) {
+      const paired = directory.find((host) => host.hostId === this.#pairedHost?.hostId);
+      if (!paired || remoteHostFingerprint(paired.devicePublicKey) !== this.#pairedHost.fingerprint) {
+        throw new Error("The paired desktop identity is missing or changed. Scan a new code from that desktop.");
+      }
+      await this.#pinHostKey(paired.hostId, paired.devicePublicKey);
+    }
+    return directory;
+  }
+
+  async leaveHost(hostId: string, membershipId: string): Promise<void> {
+    await this.#request(`/v2/remote/hosts/${encodeURIComponent(hostId)}/members/${encodeURIComponent(membershipId)}`, {
+      method: "DELETE",
+    });
+    // Keep the identity pin: leaving a team must not silently trust a substituted key on rejoin.
   }
 
   async createBootstrap(hostId: string, clientPublicKey: string): Promise<RemoteTeamBootstrap> {

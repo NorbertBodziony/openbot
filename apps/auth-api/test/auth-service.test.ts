@@ -358,6 +358,9 @@ describe("email one-time codes", () => {
     expect(await service.redeemMobileAuthTicket(crossPurposeTeamTicket.ticket, device, "203.0.113.5")).toBeNull();
     expect(await service.redeemMobileAuthTicket(replacedMobileTicket.ticket, device, "203.0.113.5")).toBeNull();
     const mobileSession = await service.redeemMobileAuthTicket(mobileTicket.ticket, device, "203.0.113.5");
+    await expect(
+      repository.authenticateMobileSession(mobileSession?.sessionToken ?? "missing", 10_000_000_000_000),
+    ).resolves.toMatchObject({ id: session.user.id });
     expect(mobileSession).toMatchObject({ user: { id: session.user.id, name: "Nörbert Bot" } });
     expect(await service.authenticateMobileSession(mobileSession?.sessionToken ?? "missing")).toMatchObject({
       id: session.user.id,

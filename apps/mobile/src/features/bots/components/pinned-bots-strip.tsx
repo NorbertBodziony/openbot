@@ -57,12 +57,11 @@ export function PinnedBotsStrip({ bots }: { bots: MobileBot[] }) {
 
 function PinnedBotItem({ bot }: { bot: MobileBot }) {
   const [background, accent] = useThemeColor(["background", "accent"]);
-  const { markBotRead, unreadBotIds } = useMobileWorkspace();
+  const { unreadBotIds } = useMobileWorkspace();
   const botContextMenu = useBotContextMenu(bot);
   const isUnread = unreadBotIds.includes(bot.id);
 
   const handleOpen = () => {
-    markBotRead(bot.id);
     if (isIOS) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
   };
 
