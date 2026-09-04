@@ -449,11 +449,14 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       });
       this.#connections.setState(server.id, "online");
       // The probe authenticates with the session token this sign-in just replaced, so it has to run
-      // against the stored server rather than the one `login` was handed.
+      // against the stored server rather than the one `login` was handed. It is also the one step
+      // here that may not fail the sign-in: the credentials are already on disk and the user is
+      // signed in, so letting a screen-sharing probe reject `login` would report a failure that did
+      // not happen and leave the server in `error` with a working token. The flag keeps its previous
+      // value and `#refreshRemoteDesktop` corrects it later.
       if (signedIn) {
-        await this.#store.update(server.id, {
-          remoteDesktopAvailable: await this.#client.probeRemoteDesktop(signedIn),
-        });
+        const remoteDesktopAvailable = await this.#client.probeRemoteDesktop(signedIn).catch(() => null);
+        if (remoteDesktopAvailable !== null) await this.#store.update(server.id, { remoteDesktopAvailable });
       }
       this.#events.restart(server.id, true);
     } catch (error) {

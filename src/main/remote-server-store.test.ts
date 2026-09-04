@@ -61,24 +61,48 @@ describe("remote server store", () => {
     expect(JSON.parse(await readFile(path, "utf8"))).toEqual(written);
   });
 
-  it("writes back the servers it kept when one entry could not be read", async () => {
+  it("writes back the servers it kept and the entry it could not read", async () => {
+    // Intact identity and token, one field this build does not accept. Dropping it would be the same
+    // data loss as dropping the file, one write later -- and the build that understands
+    // `remoteDesktopAvailable: "false"` would never get the chance to repair it.
+    const broken = { ...storedServer("broken"), remoteDesktopAvailable: "false" };
     const path = await storePath({
       version: 1,
       activeServerId: "beta",
-      servers: [storedServer("alpha"), { id: "broken" }, storedServer("beta")],
+      servers: [storedServer("alpha"), broken, storedServer("beta")],
       hiddenHostIds: ["host-1"],
     });
     const store = newStore(path);
     await store.load();
 
+    expect(store.servers.map((server) => server.id)).toEqual(["alpha", "beta"]);
     store.setActiveServerId(LOCAL_SERVER_ID);
     await store.persist();
 
     expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({
       version: 3,
       activeServerId: LOCAL_SERVER_ID,
-      servers: [{ id: "alpha" }, { id: "beta" }],
+      servers: [{ id: "alpha" }, { id: "beta" }, broken],
       hiddenHostIds: ["host-1"],
     });
+  });
+
+  it("drops a preserved entry once a real server takes its id", async () => {
+    const broken = { ...storedServer("beta"), role: "overlord" };
+    const path = await storePath({
+      version: 3,
+      activeServerId: LOCAL_SERVER_ID,
+      servers: [broken],
+      hiddenHostIds: [],
+    });
+    const store = newStore(path);
+    await store.load();
+
+    await store.adopt(storedServer("beta", { name: "Rejoined" }));
+
+    // Joining the server replaces the broken entry. Keeping both would leave the file holding two
+    // servers with one id, and every later read picking whichever it happened to see first.
+    const written = JSON.parse(await readFile(path, "utf8"));
+    expect(written.servers).toEqual([expect.objectContaining({ id: "beta", name: "Rejoined" })]);
   });
 });

@@ -22,6 +22,7 @@ import {
   readStoredRemoteServers,
   type StoredRemoteServer,
   type StoredRemoteServers,
+  serializeStoredRemoteServers,
 } from "./remote-server-stored-shape";
 
 export interface TokenCipher {
@@ -206,7 +207,7 @@ export class RemoteServerStore implements RemoteServerDirectory {
     const operation = this.#writeChain.then(async () => {
       const temporary = `${this.#path}.${randomUUID()}.tmp`;
       try {
-        await writeFile(temporary, `${JSON.stringify(snapshot)}\n`, {
+        await writeFile(temporary, `${JSON.stringify(serializeStoredRemoteServers(snapshot))}\n`, {
           encoding: "utf8",
           mode: 0o600,
         });

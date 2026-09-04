@@ -6,10 +6,12 @@ import { RemoteEventRefresh } from "./remote-server-event-refresh";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((settle) => {
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((settle, fail) => {
     resolve = settle;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 function conversationPage(revision: number) {
@@ -28,6 +30,10 @@ function invalidated(botId: string, revision: number): AgentEvent {
   return { type: "conversation-invalidated", botId, revision };
 }
 
+function queueInvalidated(botId: string): AgentEvent {
+  return { type: "queue-invalidated", botId };
+}
+
 /**
  * Every request is left hanging until the test answers it, so the test decides the interleaving.
  * `nextRequest` and `nextEmit` are the two observable things this class does; waiting on either is
@@ -35,7 +41,7 @@ function invalidated(botId: string, revision: number): AgentEvent {
  */
 function harness() {
   const paths: string[] = [];
-  const replies: { resolve: (value: unknown) => void }[] = [];
+  const replies: { resolve: (value: unknown) => void; reject: (error: Error) => void }[] = [];
   const emitted: { serverId: string; event: AgentEvent; bufferedLive?: boolean }[] = [];
   const requestWaiters: (() => void)[] = [];
   const emitWaiters: (() => void)[] = [];
@@ -105,6 +111,49 @@ describe("RemoteEventRefresh", () => {
     await shown;
 
     expect(emitted.map((entry) => entry.event)).toEqual([{ type: "conversation-page", page: conversationPage(9) }]);
+  });
+
+  it("retries a failed refetch for the revision announced while it was away", async () => {
+    const { refresh, paths, replies, emitted, nextRequest, nextEmit } = harness();
+
+    refresh.forward("server", invalidated("research", 7));
+    refresh.forward("server", invalidated("research", 9));
+    const retried = nextRequest();
+    replies[0]?.reject(new Error("Refresh failed"));
+    await retried;
+
+    // The retry is for revision 9, not the 7 that failed. A refetch that fails with nothing newer
+    // announced stops instead, which is why the retry has to be tied to the revision and not to the
+    // failure.
+    expect(paths).toHaveLength(2);
+
+    const shown = nextEmit();
+    replies[1]?.resolve(conversationPage(9));
+    await shown;
+
+    expect(emitted.map((entry) => entry.event)).toEqual([{ type: "conversation-page", page: conversationPage(9) }]);
+  });
+
+  it("answers a burst of queue invalidations with one fetch and retries when one is waiting", async () => {
+    const { refresh, paths, replies, emitted, nextRequest, nextEmit } = harness();
+    const snapshot = { botId: "research", deliveries: [] };
+
+    // The queue carries no revision, so "changed again" is the only thing a second event can say --
+    // which makes coalescing and retrying the same question here, unlike a conversation page.
+    refresh.forward("server", queueInvalidated("research"));
+    refresh.forward("server", queueInvalidated("research"));
+    expect(paths).toHaveLength(1);
+
+    const retried = nextRequest();
+    replies[0]?.reject(new Error("Refresh failed"));
+    await retried;
+    expect(paths).toEqual(["/v1/agents/research/queue", "/v1/agents/research/queue"]);
+
+    const shown = nextEmit();
+    replies[1]?.resolve(snapshot);
+    await shown;
+
+    expect(emitted.map((entry) => entry.event)).toEqual([{ type: "queue-changed", snapshot }]);
   });
 
   it("drops a fallback load that a later one has already replaced", async () => {

@@ -24,25 +24,6 @@ const REMOTE_EVENT_RECONNECT_TEST_MS = 1_250;
 
 const agentScope = (includeConversations: boolean) => ({ type: "agent-event-scope", includeConversations });
 
-const conversationPage = (revision: number) =>
-  Response.json({
-    botId: "chief",
-    threadId: "thread-chief",
-    activeTurnId: null,
-    revision,
-    messages: [
-      {
-        id: `reply-${revision}`,
-        author: "assistant",
-        text: "Fresh remote reply",
-        createdAt: "2026-08-30T02:00:00.000Z",
-        status: "completed",
-      },
-    ],
-    references: {},
-    pageInfo: { hasOlder: true, olderCursor: "older" },
-  });
-
 afterEach(async () => {
   await stopRemoteFixtures();
   vi.useRealTimers();
@@ -95,72 +76,6 @@ describe("remote event connections", () => {
     expect(sockets.every((socket) => socket.close.mock.calls.length === 0)).toBe(true);
     expect(sockets[0]?.sent.at(-1)).toEqual(agentScope(false));
     expect(sockets[1]?.sent.at(-1)).toEqual(agentScope(true));
-  });
-
-  it("answers repeated invalidations with one refetch and retries a refetch that failed", async () => {
-    const conversationRequests: Array<{ resolve: (response: Response) => void; reject: (error: Error) => void }> = [];
-    let rejectQueue: ((error: Error) => void) | undefined;
-    const stub = stubTeamFetch({
-      routes: {
-        "/v1/agents/chief/queue": async () => {
-          if (rejectQueue) return Response.json({ botId: "chief", deliveries: [] });
-          return await new Promise<Response>((_resolve, reject) => {
-            rejectQueue = reject;
-          });
-        },
-        "/v1/agents/chief/conversation-page": async () =>
-          await new Promise<Response>((resolve, reject) => {
-            conversationRequests.push({ resolve, reject });
-          }),
-      },
-    });
-    const { sockets } = stubEventSockets();
-    const fixture = await createRemoteManager({ servers: [storedHttpsServer("refetch")] });
-    const agentEvent = vi.fn();
-    fixture.manager.on("agent", agentEvent);
-
-    fixture.manager.startEventConnections();
-    await vi.waitFor(() => expect(sockets).toHaveLength(1));
-    const socket = sockets[0];
-
-    socket?.emit({ type: "conversation-invalidated", botId: "chief", revision: 1 });
-    await vi.waitFor(() => expect(conversationRequests).toHaveLength(1));
-    socket?.emit({ type: "conversation-invalidated", botId: "chief", revision: 2 });
-    conversationRequests[0]?.resolve(conversationPage(2));
-    await vi.waitFor(() =>
-      expect(agentEvent).toHaveBeenCalledWith(
-        "refetch",
-        expect.objectContaining({ type: "conversation-page", page: expect.objectContaining({ revision: 2 }) }),
-      ),
-    );
-    // The second invalidation arrived while the first refetch was in flight and its answer was
-    // already newer, so it costs no request.
-    expect(stub.requests("/v1/agents/chief/conversation-page")).toHaveLength(1);
-
-    socket?.emit({ type: "conversation-invalidated", botId: "chief", revision: 3 });
-    await vi.waitFor(() => expect(conversationRequests).toHaveLength(2));
-    socket?.emit({ type: "conversation-invalidated", botId: "chief", revision: 4 });
-    conversationRequests[1]?.reject(new Error("Refresh failed"));
-    await vi.waitFor(() => expect(conversationRequests).toHaveLength(3));
-    conversationRequests[2]?.resolve(conversationPage(4));
-    await vi.waitFor(() =>
-      expect(agentEvent).toHaveBeenCalledWith(
-        "refetch",
-        expect.objectContaining({ type: "conversation-page", page: expect.objectContaining({ revision: 4 }) }),
-      ),
-    );
-
-    socket?.emit({ type: "queue-invalidated", botId: "chief" });
-    await vi.waitFor(() => expect(rejectQueue).toBeDefined());
-    socket?.emit({ type: "queue-invalidated", botId: "chief" });
-    rejectQueue?.(new Error("Refresh failed"));
-    await vi.waitFor(() =>
-      expect(agentEvent).toHaveBeenCalledWith(
-        "refetch",
-        expect.objectContaining({ type: "queue-changed", snapshot: { botId: "chief", deliveries: [] } }),
-      ),
-    );
-    expect(stub.requests("/v1/agents/chief/queue")).toHaveLength(2);
   });
 
   it("reconnects one host without disturbing the other", async () => {

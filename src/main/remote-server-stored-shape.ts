@@ -5,13 +5,20 @@
 // everything else rather than nothing -- see `readStoredRemoteServers`. `src/backend/AGENTS.md` states
 // the same rule for the database; the reasoning is identical and the file is smaller.
 //
+// "Everything else" includes the part it could not read. An entry this build rejects is carried in
+// `unreadableServers` and written back into `servers` untouched, so the file keeps every entry it
+// arrived with. Dropping one would be the same data loss one step later: a server with an intact
+// token and a single field this build does not recognise -- written by a newer build, or by a hand
+// edit -- would vanish on the next write, and the build that understands it would never see it
+// again. This build refuses to *use* such an entry. It does not get to delete it.
+//
 // Versions 1 and 2 differ from 3 only in fields this reader already treats as optional, so an upgrade
 // is a re-tag. A version this build does not know is refused outright: it was written by a newer
 // OpenBot, and guessing at it would replace a file that build can still read.
 
 import type { TeamRole } from "@openbot/contracts/ipc";
 import { LOCAL_SERVER_ID } from "@openbot/contracts/ipc";
-import { isBoolean, isDynamicRecord, isOneOf, isString } from "@openbot/contracts/runtime-values";
+import { type DynamicRecord, isBoolean, isDynamicRecord, isOneOf, isString } from "@openbot/contracts/runtime-values";
 
 export interface StoredRemoteServer {
   id: string;
@@ -32,24 +39,31 @@ export interface StoredRemoteServers {
   activeServerId: string;
   servers: StoredRemoteServer[];
   hiddenHostIds: string[];
+  // Entries kept verbatim for whoever can read them. In memory only: `serializeStoredRemoteServers`
+  // puts them back in `servers`, because a key of its own would be invisible to the older build that
+  // is the whole reason for keeping them.
+  unreadableServers: DynamicRecord[];
 }
 
 // A function, not a shared constant: the caller owns the result and writes through it.
 export function emptyStoredRemoteServers(): StoredRemoteServers {
-  return { version: 3, activeServerId: LOCAL_SERVER_ID, servers: [], hiddenHostIds: [] };
+  return { version: 3, activeServerId: LOCAL_SERVER_ID, servers: [], hiddenHostIds: [], unreadableServers: [] };
 }
 
-// One unreadable entry costs the user that entry, not the file. Returning null here -- which this did
-// until 2026-09 -- left the manager on its empty default, and its next write replaced every server
-// the user had joined with an empty list. A server that fails to parse cannot be connected to
-// anyway, so dropping it loses nothing that keeping it would have saved.
+// One unreadable entry costs the user the use of that entry, not the file and not the entry. Returning
+// null here -- which this did until 2026-09 -- left the manager on its empty default, and its next
+// write replaced every server the user had joined with an empty list. Null is now reserved for a file
+// whose top level makes no sense, which `RemoteServerStore.load` turns into a refusal to touch it.
 export function readStoredRemoteServers(value: unknown): StoredRemoteServers | null {
   if (!isDynamicRecord(value) || !isString(value.activeServerId) || !Array.isArray(value.servers)) return null;
   if (value.version !== 1 && value.version !== 2 && value.version !== 3) return null;
   const servers: StoredRemoteServer[] = [];
+  const unreadableServers: DynamicRecord[] = [];
   for (const serverValue of value.servers) {
     const server = readStoredRemoteServer(serverValue);
     if (server) servers.push(server);
+    // A non-record entry carries no token and no identity, so there is nothing in it to preserve.
+    else if (isDynamicRecord(serverValue)) unreadableServers.push(serverValue);
   }
   const hiddenHostIds = Array.isArray(value.hiddenHostIds)
     ? value.hiddenHostIds.filter((hostId): hostId is string => isString(hostId))
@@ -60,7 +74,26 @@ export function readStoredRemoteServers(value: unknown): StoredRemoteServers | n
     value.activeServerId === LOCAL_SERVER_ID || servers.some((server) => server.id === value.activeServerId)
       ? value.activeServerId
       : LOCAL_SERVER_ID;
-  return { version: 3, activeServerId, servers, hiddenHostIds };
+  return { version: 3, activeServerId, servers, hiddenHostIds, unreadableServers };
+}
+
+// The on-disk object. Unreadable entries rejoin `servers` at the end, minus any whose `id` a real
+// server has since taken -- joining a server the user had a broken entry for replaces it, and two
+// entries sharing an id would leave the file disagreeing with itself forever.
+export function serializeStoredRemoteServers(state: StoredRemoteServers): {
+  version: 3;
+  activeServerId: string;
+  servers: (StoredRemoteServer | DynamicRecord)[];
+  hiddenHostIds: string[];
+} {
+  const claimed = new Set(state.servers.map((server) => server.id));
+  const preserved = state.unreadableServers.filter((entry) => !(isString(entry.id) && claimed.has(entry.id)));
+  return {
+    version: state.version,
+    activeServerId: state.activeServerId,
+    servers: [...state.servers, ...preserved],
+    hiddenHostIds: state.hiddenHostIds,
+  };
 }
 
 export function readStoredRemoteServer(value: unknown): StoredRemoteServer | null {

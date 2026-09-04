@@ -18,16 +18,20 @@ function storedServer(overrides: Partial<StoredRemoteServer> & { id: string }): 
 }
 
 describe("stored remote servers", () => {
-  it("keeps every joined server when one entry cannot be read", () => {
+  it("keeps every joined server when one entry cannot be read, and the entry itself", () => {
+    const corrupt = { id: "corrupt", encryptedToken: "dG9rZW4=" };
     const stored = readStoredRemoteServers({
       version: 3,
       activeServerId: "beta",
-      servers: [storedServer({ id: "alpha" }), { id: "corrupt" }, storedServer({ id: "beta" })],
+      servers: [storedServer({ id: "alpha" }), corrupt, storedServer({ id: "beta" })],
       hiddenHostIds: [],
     });
 
     expect(stored?.servers.map((server) => server.id)).toEqual(["alpha", "beta"]);
     expect(stored?.activeServerId).toBe("beta");
+    // Unusable by this build, and still nobody's to delete: a build that understands it has to find
+    // it here after this one has written the file.
+    expect(stored?.unreadableServers).toEqual([corrupt]);
   });
 
   it("selects the local server when the active one was dropped", () => {
