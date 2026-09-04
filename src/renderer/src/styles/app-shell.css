@@ -2097,6 +2097,11 @@ textarea {
   will-change: transform;
 }
 
+.bot-list[data-sidebar-dragging="agent"] .sidebar-agent-item {
+  transition: none;
+  will-change: transform;
+}
+
 .bot-list[data-sidebar-dragging="person"] .sidebar-person-item {
   will-change: transform;
 }

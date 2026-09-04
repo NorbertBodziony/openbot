@@ -534,8 +534,7 @@ export const DragStress: Story = {
 
     await expect(list).toHaveAttribute("data-sidebar-dragging", "agent");
     for (const row of canvasElement.querySelectorAll<HTMLElement>("[data-agent-id]")) {
-      await expect(getComputedStyle(row).transitionProperty).toBe("transform");
-      await expect(getComputedStyle(row).transitionDuration).not.toBe("0s");
+      await expect(getComputedStyle(row).transitionDuration).toBe("0s");
     }
 
     fireEvent.dragEnd(source, { dataTransfer });
