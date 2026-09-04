@@ -61,7 +61,9 @@ export function ConnectionHeaderStatus({ server }: { server: MobileServer | unde
   return (
     // Keep this native toolbar slot mounted: removing it would cut off the exit animation.
     <View className="justify-center" style={{ width: 164, height: 44 }}>
-      <ConnectionStatusReveal value={server && server.state !== "online" ? server : null}>
+      <ConnectionStatusReveal
+        value={server && !server.initialConnectionPending && server.state !== "online" ? server : null}
+      >
         {(displayed) => <StatusText server={displayed} />}
       </ConnectionStatusReveal>
     </View>

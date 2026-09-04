@@ -69,6 +69,7 @@ const EMPTY_SERVER: MobileServer = {
   name: "OpenBot",
   kind: "local",
   state: "connecting",
+  initialConnectionPending: true,
   connectionMessage: null,
   address: null,
   accent: SERVER_ACCENTS[0],
@@ -129,6 +130,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
           name: host.name,
           kind: host.role === "owner" ? "local" : "remote",
           state: previous?.state ?? "offline",
+          initialConnectionPending: previous?.initialConnectionPending ?? true,
           connectionMessage: previous?.connectionMessage ?? null,
           recoveryStatus: previous?.recoveryStatus,
           address: null,
@@ -215,7 +217,9 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
       if (currentGeneration !== loadGeneration.current) return;
       setServers((current) =>
         current.map((candidate) =>
-          candidate.id === server.id ? { ...candidate, state: "online", connectionMessage: null } : candidate,
+          candidate.id === server.id
+            ? { ...candidate, state: "online", initialConnectionPending: false, connectionMessage: null }
+            : candidate,
         ),
       );
     },
@@ -232,7 +236,9 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
         const connectionMessage = error instanceof Error ? error.message : "The server connection failed.";
         setServers((current) =>
           current.map((candidate) =>
-            candidate.id === server.id ? { ...candidate, state: "offline", connectionMessage } : candidate,
+            candidate.id === server.id
+              ? { ...candidate, state: "offline", initialConnectionPending: false, connectionMessage }
+              : candidate,
           ),
         );
       },
@@ -246,6 +252,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
                     status.phase === "online" ? "online" : status.phase === "connecting" ? "connecting" : "offline",
                   connectionMessage: remoteRecoveryMessage(status),
                   recoveryStatus: status,
+                  initialConnectionPending: candidate.initialConnectionPending && status.phase === "connecting",
                 }
               : candidate,
           ),
@@ -429,6 +436,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
             name: host.name,
             kind: "remote",
             state: "offline",
+            initialConnectionPending: true,
             connectionMessage: null,
             address: null,
             accent: SERVER_ACCENTS[0],

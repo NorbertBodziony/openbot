@@ -10,6 +10,7 @@ export interface MobileServer {
   name: string;
   kind: MobileServerKind;
   state: MobileServerState;
+  initialConnectionPending: boolean;
   connectionMessage: string | null;
   recoveryStatus?: RemoteRecoveryStatus;
   address: string | null;

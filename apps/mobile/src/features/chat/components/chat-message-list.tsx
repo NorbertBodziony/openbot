@@ -1,3 +1,4 @@
+import { useIsFocused } from "expo-router";
 import { Button, Typography } from "heroui-native";
 import { X } from "lucide-react-native";
 import { forwardRef } from "react";
@@ -14,6 +15,7 @@ import Animated, { useAnimatedStyle } from "react-native-reanimated";
 import { getBloubAvatarColor } from "@/features/bots/components/bloub-avatar";
 import { useConnectionAppearance } from "@/features/workspace/components/use-connection-appearance";
 import type { MobileBot } from "@/features/workspace/context/mobile-workspace-context";
+import { BloubLoader } from "@/shared/components/bloub-loader";
 
 export interface ChatMessage {
   id: string;
@@ -33,7 +35,7 @@ interface ChatMessageListProps {
   canSend: boolean;
   fieldBackground: ViewStyle["backgroundColor"];
   foreground: ViewStyle["backgroundColor"];
-  historyState: "ready" | "waiting" | "loading" | "error";
+  historyState: "ready" | "connecting" | "waiting" | "loading" | "error";
   messages: ChatMessage[];
   muted: ViewStyle["backgroundColor"];
   raised: ViewStyle["backgroundColor"];
@@ -67,6 +69,7 @@ export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(func
   },
   ref,
 ) {
+  const isFocused = useIsFocused();
   const userBubbleColor = getBloubAvatarColor(bot.avatarSeed, bot.avatarHue);
   const appearance = useConnectionAppearance(!canSend);
   const red = Number.parseInt(userBubbleColor.slice(1, 3), 16);
@@ -103,14 +106,17 @@ export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(func
       scrollEventThrottle={16}
       showsVerticalScrollIndicator={false}
     >
-      {historyState !== "ready" ? (
+      {historyState === "connecting" || historyState === "loading" ? (
+        <View className="flex-1 items-center justify-center">
+          <BloubLoader
+            active={isFocused}
+            label={historyState === "connecting" ? "Connecting to server" : "Loading chat history"}
+          />
+        </View>
+      ) : historyState !== "ready" ? (
         <View className="flex-1 items-center justify-center gap-2">
           <Typography.Paragraph align="center" className="text-text-secondary">
-            {historyState === "waiting"
-              ? "Waiting for connection"
-              : historyState === "error"
-                ? "Could not load chat history"
-                : "Loading chat history…"}
+            {historyState === "waiting" ? "Waiting for connection" : "Could not load chat history"}
           </Typography.Paragraph>
           {historyState === "waiting" ? (
             <Typography.Paragraph type="body-xs" align="center" className="text-text-dim">

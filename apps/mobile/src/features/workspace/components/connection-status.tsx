@@ -49,7 +49,10 @@ function ConnectionStatusText({ server }: { server: MobileServer }) {
 
 export function ConnectionStatus({ server }: { server: MobileServer | undefined }) {
   return (
-    <ConnectionStatusReveal value={server && server.state !== "online" ? server : null} collapseOnHide>
+    <ConnectionStatusReveal
+      value={server && !server.initialConnectionPending && server.state !== "online" ? server : null}
+      collapseOnHide
+    >
       {(displayed) => <ConnectionStatusText server={displayed} />}
     </ConnectionStatusReveal>
   );

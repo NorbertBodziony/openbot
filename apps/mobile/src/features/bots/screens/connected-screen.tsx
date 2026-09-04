@@ -1,10 +1,10 @@
 import { type MenuAction, MenuView } from "@expo/ui/community/menu";
-import { router, Stack } from "expo-router";
+import { router, Stack, useIsFocused } from "expo-router";
 import { Button, Typography } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
 import { Bot, Ellipsis, Layers3, Plus, Search, WifiOff } from "lucide-react-native";
-import { useMemo } from "react";
-import { ActivityIndicator, FlatList, Pressable, View } from "react-native";
+import { useLayoutEffect, useMemo } from "react";
+import { FlatList, Pressable, View } from "react-native";
 import Animated, { Easing, FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 
 import { BotListRow } from "@/features/bots/components/bot-list-row";
@@ -13,12 +13,14 @@ import { PinnedBotsStrip } from "@/features/bots/components/pinned-bots-strip";
 import { useAppDrawer } from "@/features/servers/components/app-drawer-shell";
 import { ConnectionHeaderStatus } from "@/features/workspace/components/connection-header-status";
 import { type MobileBot, useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
+import { useAppLoadingOverlay } from "@/shared/components/app-loading-overlay";
 import { isAndroid, isIOS } from "@/shared/lib/platform";
 
 const EASE_OUT = Easing.bezier(0.23, 1, 0.32, 1);
 const EASE_IN_OUT = Easing.bezier(0.77, 0, 0.175, 1);
 const ROW_ENTER = FadeIn.duration(180).easing(EASE_IN_OUT).reduceMotion(ReduceMotion.System);
 const ROW_EXIT = FadeOut.duration(120).easing(EASE_OUT).reduceMotion(ReduceMotion.System);
+const LIST_ENTER = FadeIn.duration(220).easing(EASE_OUT).reduceMotion(ReduceMotion.System);
 // Bot search is not available in the current mobile release, so keep its entry points hidden until it is ready.
 const IS_BOT_SEARCH_ENABLED = false;
 
@@ -57,6 +59,8 @@ function HeaderIconButton({
 }
 
 export function ConnectedScreen() {
+  const isFocused = useIsFocused();
+  const { setLoadingLabel, isLoaderPresent } = useAppLoadingOverlay();
   const { openDrawer } = useAppDrawer();
   const {
     activeBots,
@@ -72,6 +76,14 @@ export function ConnectedScreen() {
   const iconColor = String(foreground);
   const mutedColor = String(muted);
   const hasSelectedServer = servers.some((server) => server.id === activeServer.id);
+  const showLoader =
+    (serverDirectoryState === "loading" && servers.length === 0) ||
+    (hasSelectedServer && activeServer.initialConnectionPending);
+  useLayoutEffect(() => {
+    if (!isFocused) return;
+    setLoadingLabel(showLoader ? (hasSelectedServer ? "Connecting to server" : "Loading your servers") : null);
+    return () => setLoadingLabel(null);
+  }, [hasSelectedServer, isFocused, setLoadingLabel, showLoader]);
   const pinnedBots = pinnedBotIds
     .map((botId) => activeBots.find((bot) => bot.id === botId))
     .filter((bot): bot is (typeof activeBots)[number] => Boolean(bot));
@@ -85,84 +97,83 @@ export function ConnectedScreen() {
   );
 
   return (
-    <>
-      <FlatList
-        className="flex-1 bg-background"
-        contentContainerClassName="grow pb-safe-offset-8 pt-3"
-        contentInsetAdjustmentBehavior="automatic"
-        data={unpinnedBots}
-        keyExtractor={(bot) => bot.id}
-        renderItem={({ item }) => <TransitioningBotRow bot={item} />}
-        ListHeaderComponent={<PinnedBotsStrip bots={pinnedBots} />}
-        ListEmptyComponent={
-          serverDirectoryState === "loading" && servers.length === 0 ? (
-            <View className="flex-1 items-center justify-center gap-4 px-8 py-16">
-              <ActivityIndicator color={mutedColor} />
-              <Typography.Paragraph className="text-text-secondary">Loading your servers…</Typography.Paragraph>
-            </View>
-          ) : serverDirectoryState === "error" && servers.length === 0 ? (
-            <View className="flex-1 items-center justify-center gap-5 px-8 py-16">
-              <View className="size-16 items-center justify-center rounded-3xl bg-control">
-                <WifiOff color={mutedColor} size={28} strokeWidth={1.6} />
-              </View>
-              <View className="items-center gap-1.5">
-                <Typography.Heading type="h4">Couldn’t load your servers</Typography.Heading>
-                <Typography.Paragraph align="center" className="text-text-secondary">
-                  {serverDirectoryError ?? "Check that the desktop app is running and try again."}
-                </Typography.Paragraph>
-              </View>
-              <Button size="md" variant="secondary" onPress={() => void refreshServers().catch(() => undefined)}>
-                <Button.Label>Try again</Button.Label>
-              </Button>
-            </View>
-          ) : servers.length === 0 ? (
-            <View className="flex-1 items-center justify-center gap-5 px-8 py-16">
-              <View className="size-16 items-center justify-center rounded-3xl bg-control">
-                <Layers3 color={mutedColor} size={28} strokeWidth={1.6} />
-              </View>
-              <View className="items-center gap-1.5">
-                <Typography.Heading type="h4">No servers available</Typography.Heading>
-                <Typography.Paragraph align="center" className="text-text-secondary">
-                  Connect the desktop app again or join a remote server.
-                </Typography.Paragraph>
-              </View>
-            </View>
-          ) : !hasSelectedServer ? (
-            <View className="flex-1 items-center justify-center gap-5 px-8 py-16">
-              <Typography.Heading type="h4">Choose a server</Typography.Heading>
-              <Button size="md" variant="secondary" onPress={openDrawer}>
-                <Button.Label>Open servers</Button.Label>
-              </Button>
-            </View>
-          ) : activeBots.length === 0 && activeServer.state !== "online" ? (
-            <View className="flex-1 items-center justify-center gap-5 px-8 py-16">
-              <WifiOff color={mutedColor} size={28} strokeWidth={1.6} />
-              <View className="items-center gap-1.5">
-                <Typography.Heading type="h4">Waiting for connection</Typography.Heading>
-                <Typography.Paragraph align="center" className="text-text-secondary">
-                  The bot list will load once this server is connected.
-                </Typography.Paragraph>
-              </View>
-            </View>
-          ) : activeBots.length === 0 ? (
-            <View className="flex-1 items-center justify-center gap-5 px-8 py-16">
-              <View className="size-16 items-center justify-center rounded-3xl bg-control">
-                <Bot color={mutedColor} size={30} strokeWidth={1.6} />
-              </View>
-              <View className="items-center gap-1.5">
-                <Typography.Heading type="h4">No bots on this server</Typography.Heading>
-                <Typography.Paragraph align="center" className="text-text-secondary">
-                  Add a bot to start working from your phone.
-                </Typography.Paragraph>
-              </View>
-              <Button size="md" variant="secondary" onPress={() => router.push("/add-bot")}>
-                <Plus color={iconColor} size={18} strokeWidth={2} />
-                <Button.Label>Add bot</Button.Label>
-              </Button>
-            </View>
-          ) : null
-        }
-      />
+    <View className="flex-1 bg-background">
+      {!showLoader && !isLoaderPresent ? (
+        <Animated.View className="flex-1" entering={LIST_ENTER}>
+          <FlatList
+            className="flex-1 bg-background"
+            contentContainerClassName="grow pb-safe-offset-8 pt-3"
+            contentInsetAdjustmentBehavior="automatic"
+            data={unpinnedBots}
+            keyExtractor={(bot) => bot.id}
+            renderItem={({ item }) => <TransitioningBotRow bot={item} />}
+            ListHeaderComponent={<PinnedBotsStrip bots={pinnedBots} />}
+            ListEmptyComponent={
+              serverDirectoryState === "error" && servers.length === 0 ? (
+                <View className="flex-1 items-center justify-center gap-5 px-8 py-16">
+                  <View className="size-16 items-center justify-center rounded-3xl bg-control">
+                    <WifiOff color={mutedColor} size={28} strokeWidth={1.6} />
+                  </View>
+                  <View className="items-center gap-1.5">
+                    <Typography.Heading type="h4">Couldn’t load your servers</Typography.Heading>
+                    <Typography.Paragraph align="center" className="text-text-secondary">
+                      {serverDirectoryError ?? "Check that the desktop app is running and try again."}
+                    </Typography.Paragraph>
+                  </View>
+                  <Button size="md" variant="secondary" onPress={() => void refreshServers().catch(() => undefined)}>
+                    <Button.Label>Try again</Button.Label>
+                  </Button>
+                </View>
+              ) : servers.length === 0 ? (
+                <View className="flex-1 items-center justify-center gap-5 px-8 py-16">
+                  <View className="size-16 items-center justify-center rounded-3xl bg-control">
+                    <Layers3 color={mutedColor} size={28} strokeWidth={1.6} />
+                  </View>
+                  <View className="items-center gap-1.5">
+                    <Typography.Heading type="h4">No servers available</Typography.Heading>
+                    <Typography.Paragraph align="center" className="text-text-secondary">
+                      Connect the desktop app again or join a remote server.
+                    </Typography.Paragraph>
+                  </View>
+                </View>
+              ) : !hasSelectedServer ? (
+                <View className="flex-1 items-center justify-center gap-5 px-8 py-16">
+                  <Typography.Heading type="h4">Choose a server</Typography.Heading>
+                  <Button size="md" variant="secondary" onPress={openDrawer}>
+                    <Button.Label>Open servers</Button.Label>
+                  </Button>
+                </View>
+              ) : activeBots.length === 0 && activeServer.state !== "online" ? (
+                <View className="flex-1 items-center justify-center gap-5 px-8 py-16">
+                  <WifiOff color={mutedColor} size={28} strokeWidth={1.6} />
+                  <View className="items-center gap-1.5">
+                    <Typography.Heading type="h4">Waiting for connection</Typography.Heading>
+                    <Typography.Paragraph align="center" className="text-text-secondary">
+                      The bot list will load once this server is connected.
+                    </Typography.Paragraph>
+                  </View>
+                </View>
+              ) : activeBots.length === 0 ? (
+                <View className="flex-1 items-center justify-center gap-5 px-8 py-16">
+                  <View className="size-16 items-center justify-center rounded-3xl bg-control">
+                    <Bot color={mutedColor} size={30} strokeWidth={1.6} />
+                  </View>
+                  <View className="items-center gap-1.5">
+                    <Typography.Heading type="h4">No bots on this server</Typography.Heading>
+                    <Typography.Paragraph align="center" className="text-text-secondary">
+                      Add a bot to start working from your phone.
+                    </Typography.Paragraph>
+                  </View>
+                  <Button size="md" variant="secondary" onPress={() => router.push("/add-bot")}>
+                    <Plus color={iconColor} size={18} strokeWidth={2} />
+                    <Button.Label>Add bot</Button.Label>
+                  </Button>
+                </View>
+              ) : null
+            }
+          />
+        </Animated.View>
+      ) : null}
 
       <Stack.Screen
         options={{
@@ -234,6 +245,6 @@ export function ConnectedScreen() {
           </Stack.Toolbar>
         </>
       ) : null}
-    </>
+    </View>
   );
 }

@@ -77,7 +77,8 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
   );
   const readBoundary = latestMessage?.id;
   const readBoundaryStatus = latestMessage?.status;
-  const serverOnline = servers.find((server) => server.id === bot.serverId)?.state === "online";
+  const server = servers.find((server) => server.id === bot.serverId);
+  const serverOnline = server?.state === "online";
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => setAppActive(state === "active"));
@@ -174,7 +175,17 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
             bot={bot}
             bottomInset={composerHeight}
             canSend={serverOnline}
-            historyState={conversation ? "ready" : !serverOnline ? "waiting" : historyLoadFailed ? "error" : "loading"}
+            historyState={
+              conversation
+                ? "ready"
+                : server?.initialConnectionPending
+                  ? "connecting"
+                  : !serverOnline
+                    ? "waiting"
+                    : historyLoadFailed
+                      ? "error"
+                      : "loading"
+            }
             fieldBackground={fieldBackground}
             foreground={foreground}
             messages={messages}
@@ -193,7 +204,7 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
             pointerEvents="box-none"
             onLayout={({ nativeEvent: { layout } }) => setComposerHeight(layout.height)}
           >
-            <ConnectionStatus server={servers.find((server) => server.id === bot.serverId)} />
+            <ConnectionStatus server={server} />
             <ChatComposer
               action={action}
               actionForeground={actionForeground}
