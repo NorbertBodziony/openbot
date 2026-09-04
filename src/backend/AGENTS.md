@@ -74,8 +74,13 @@ doc comment saying what the class **owns** and that it never imports the facade.
 
 Two rules those controllers depend on and a reader cannot infer. They hold the core object and read
 `.connection` at each use — a cached handle survives `initialize()` and then silently addresses a
-closed database after `close()`. And none of them opens a transaction: `dispatch` opens one only if
-it finds none open, which is what lets a projector nest another dispatch inside the caller's.
+closed database after `close()`. And a projection controller does not open a transaction of its own.
+Four places do, and each is load-bearing: `dispatch` and `deleteEventsAndReceipt` open one only if
+they find none open, which is what lets a projector nest another dispatch inside the caller's, and
+`ThreadReplay.rebuildThreadProjection` and the facade's `persistConversationAndMailbox` open one
+unconditionally, which is what makes the dispatch inside each of them skip its own. Adding a fourth
+gets a nested `BEGIN` that SQLite rejects; removing one of these four silently drops the atomicity
+the replay and the mailbox write depend on.
 
 Do not add a new concern to the biggest file you can see; extract one when a change gives you the
 excuse.
