@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import type { RemoteHostSummary } from "./central-auth-manager";
 import { reconcileWebRtcHosts } from "./remote-server-host-directory";
+import type { PreservedHostIdentity } from "./remote-server-store";
 import type { StoredRemoteServer } from "./remote-server-stored-shape";
 import { fingerprint } from "./team-store";
 
@@ -39,12 +40,14 @@ function reconcile(input: {
   hosts?: RemoteHostSummary[];
   servers?: StoredRemoteServer[];
   localHostId?: string | null;
+  preservedIdentities?: PreservedHostIdentity[];
   hidden?: string[];
   keepOtherTransports?: boolean;
 }) {
   return reconcileWebRtcHosts({
     hosts: input.hosts ?? [],
     servers: input.servers ?? [],
+    preservedIdentities: input.preservedIdentities ?? [],
     localHostId: input.localHostId ?? null,
     isHiddenHost: (hostId) => (input.hidden ?? []).includes(hostId),
     username: "person@example.com",
@@ -61,6 +64,20 @@ describe("reconcileWebRtcHosts", () => {
 
     expect(result.servers.map((server) => server.id)).toEqual(["third", "first", "second"]);
     expect(result.removedHostIds).toEqual([]);
+  });
+
+  // The entry is on disk and holds the fingerprint, but this build could not decode it, so it is
+  // absent from `servers` and the host looks new. Accepting the advertised key here would let a
+  // compromised account service re-key a machine the user pinned -- the whole point of the pin.
+  it("refuses an advertised key that disagrees with a pin it could not read", () => {
+    const result = reconcile({
+      hosts: [listedHost("host", { devicePublicKey: "attacker-key" })],
+      preservedIdentities: [{ hostId: "host", publicKey: null, fingerprint: fingerprint("trusted-key") }],
+    });
+
+    expect(result.servers[0]).toMatchObject({ id: "host", fingerprint: fingerprint("trusted-key") });
+    expect(result.servers[0]).not.toHaveProperty("publicKey");
+    expect(result.pinnedKeys).toEqual([]);
   });
 
   it("refuses an advertised key that disagrees with a fingerprint the user already trusts", () => {

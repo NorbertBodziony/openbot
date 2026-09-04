@@ -106,8 +106,8 @@ describe("remote server store", () => {
 
     await store.replaceServers([storedServer("beta", { name: "Advertised" })]);
     expect(JSON.parse(await readFile(path, "utf8")).servers).toEqual([
-      broken,
       expect.objectContaining({ id: "beta", name: "Advertised" }),
+      broken,
     ]);
 
     // Joining verifies the host's identity, so it does supersede the old entry. The WebRTC join
@@ -129,6 +129,24 @@ describe("remote server store", () => {
     expect(JSON.parse(await readFile(path, "utf8")).servers).toEqual([
       expect.objectContaining({ id: "beta", name: "Rejoined" }),
     ]);
+  });
+
+  it("keeps a preserved entry in front of the server it preceded, even after that list changes", async () => {
+    const broken = { ...storedServer("middle"), role: "overlord" };
+    const path = await storePath({
+      version: 3,
+      activeServerId: LOCAL_SERVER_ID,
+      servers: [storedServer("alpha"), broken, storedServer("beta")],
+      hiddenHostIds: [],
+    });
+    const store = newStore(path);
+    await store.load();
+
+    // The slot is the entry that followed it, not a number: removing the server in front of it must
+    // not push it past the one behind it, which is what a saved index would have done.
+    await store.remove("alpha");
+
+    expect(JSON.parse(await readFile(path, "utf8")).servers).toEqual([broken, expect.objectContaining({ id: "beta" })]);
   });
 
   it("keeps naming the active server it could not read until the user picks another", async () => {

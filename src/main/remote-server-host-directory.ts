@@ -9,7 +9,10 @@
 //     `publicKey`, that key wins over whatever the directory advertises now. Otherwise the
 //     advertised key is accepted only when it agrees with the stored fingerprint, or when there is
 //     no stored fingerprint to disagree with. This is what makes an account-service compromise
-//     insufficient to silently re-key a host the user already trusts.
+//     insufficient to silently re-key a host the user already trusts. It holds for an entry the
+//     store could not decode as well -- those are absent from `servers`, so `preservedIdentities`
+//     carries their key and fingerprint here. Reading an entry and honouring its pin are separate
+//     questions, and the second one has to answer yes either way.
 //   - **The directory owns the list.** A stored WebRTC host missing from the directory is dropped,
 //     and so is every non-WebRTC server unless `keepOtherTransports` is set. That flag is on only
 //     in development builds, which is why a released build treats the account directory as the
@@ -19,7 +22,7 @@
 // user has not seen before are appended in directory order. The user drags this list.
 
 import type { RemoteHostSummary } from "./central-auth-manager";
-import type { StoredRemoteServerView } from "./remote-server-store";
+import type { PreservedHostIdentity, StoredRemoteServerView } from "./remote-server-store";
 import type { StoredRemoteServer } from "./remote-server-stored-shape";
 import { fingerprint } from "./team-store";
 
@@ -42,6 +45,8 @@ export interface WebRtcHostReconciliationInput {
   readonly hosts: readonly RemoteHostSummary[];
   /** What is on disk today. */
   readonly servers: readonly StoredRemoteServerView[];
+  /** Identity from entries on disk that the store could not decode. They pin like any other. */
+  readonly preservedIdentities: readonly PreservedHostIdentity[];
   /** This computer's own host id, when it is also hosting. Never listed as a remote server. */
   readonly localHostId: string | null;
   /** Hosts the user removed by hand. They stay out until an explicit rejoin unhides them. */
@@ -57,7 +62,7 @@ export function reconcileWebRtcHosts(input: WebRtcHostReconciliationInput): WebR
   const listed = input.hosts
     .filter((host) => host.hostId !== input.localHostId && !input.isHiddenHost(host.hostId))
     .map<StoredRemoteServer>((host) => {
-      const existing = input.servers.find((server) => server.id === host.hostId);
+      const existing = pinnedIdentity(input, host.hostId);
       const publicKey = resolveHostKey(existing, host.devicePublicKey);
       if (publicKey) pinnedKeys.push({ hostId: host.hostId, publicKey });
       return {
@@ -100,18 +105,38 @@ export function reconcileWebRtcHosts(input: WebRtcHostReconciliationInput): WebR
 }
 
 /**
+ * What this computer already believes about a host, from a stored entry or from one it could not
+ * read. A preserved entry is trusted for identity alone: it is on disk, so the user put it there,
+ * and no field the reader rejected is consulted here.
+ */
+function pinnedIdentity(input: WebRtcHostReconciliationInput, hostId: string): PinnedIdentity | undefined {
+  const stored = input.servers.find((server) => server.id === hostId);
+  if (stored) {
+    return stored.transport === "webrtc-v2"
+      ? { publicKey: stored.publicKey ?? null, fingerprint: stored.fingerprint }
+      : { publicKey: null, fingerprint: "" };
+  }
+  return input.preservedIdentities.find((identity) => identity.hostId === hostId);
+}
+
+interface PinnedIdentity {
+  readonly publicKey: string | null;
+  readonly fingerprint: string;
+}
+
+/**
  * A key we already pinned is never replaced by an advertised one. An unpinned host accepts the
  * advertisement only when nothing on disk contradicts it.
  */
-function resolveHostKey(existing: StoredRemoteServerView | undefined, advertised: string | null): string | null {
-  if (existing?.transport === "webrtc-v2" && existing.publicKey) return existing.publicKey;
+function resolveHostKey(existing: PinnedIdentity | undefined, advertised: string | null): string | null {
+  if (existing?.publicKey) return existing.publicKey;
   const pinned = pinnedFingerprint(existing);
   if (pinned && pinned !== advertisedFingerprint(advertised)) return null;
   return advertised;
 }
 
-function pinnedFingerprint(existing: StoredRemoteServerView | undefined): string {
-  return existing?.transport === "webrtc-v2" ? existing.fingerprint : "";
+function pinnedFingerprint(existing: PinnedIdentity | undefined): string {
+  return existing?.fingerprint ?? "";
 }
 
 function advertisedFingerprint(devicePublicKey: string | null): string {

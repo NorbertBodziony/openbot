@@ -40,9 +40,12 @@ export interface StoredRemoteServer {
   transport?: "webrtc-v2";
 }
 
-// An entry this build cannot read, and where it sat in `servers`.
+// An entry this build cannot read, and where it sat in `servers`. The slot is named by the entry
+// that followed it, not by an index: a list the user removes a server from renumbers, and an index
+// taken before the removal would move the preserved entry past the servers it used to sit behind.
+// Null means it was last.
 export interface PreservedRemoteServer {
-  index: number;
+  beforeId: string | null;
   entry: DynamicRecord;
 }
 
@@ -83,11 +86,17 @@ export function readStoredRemoteServers(value: unknown): StoredRemoteServers | n
   if (value.version !== 1 && value.version !== 2 && value.version !== 3) return null;
   const servers: StoredRemoteServer[] = [];
   const unreadableServers: PreservedRemoteServer[] = [];
-  for (const [index, serverValue] of value.servers.entries()) {
+  // Backwards, so each unreadable entry already knows the readable one that follows it.
+  let following: string | null = null;
+  for (const serverValue of [...value.servers].reverse()) {
     const server = readStoredRemoteServer(serverValue);
-    if (server) servers.push(server);
-    // A non-record entry carries no token and no identity, so there is nothing in it to preserve.
-    else if (isDynamicRecord(serverValue)) unreadableServers.push({ index, entry: serverValue });
+    if (server) {
+      servers.unshift(server);
+      following = server.id;
+      // A non-record entry carries no token and no identity, so there is nothing in it to preserve.
+    } else if (isDynamicRecord(serverValue)) {
+      unreadableServers.unshift({ beforeId: following, entry: serverValue });
+    }
   }
   const hiddenHostIds = Array.isArray(value.hiddenHostIds)
     ? value.hiddenHostIds.filter((hostId): hostId is string => isString(hostId))
@@ -124,11 +133,12 @@ export function serializeStoredRemoteServers(state: StoredRemoteServers): {
   hiddenHostIds: string[];
 } {
   const servers: (StoredRemoteServer | DynamicRecord)[] = [...state.servers];
-  // Ascending, so each insertion lands before the next one is placed. An index past the end of a
-  // list that has since shrunk clamps to the end -- the entry keeps its place relative to the
-  // servers that outlived it, which is the most the original slot can still mean.
-  for (const preserved of [...state.unreadableServers].sort((left, right) => left.index - right.index)) {
-    servers.splice(Math.min(preserved.index, servers.length), 0, preserved.entry);
+  // In their original order, each one just before the server it used to precede. Two that shared a
+  // successor stay in sequence, because the first is already in place when the second is inserted.
+  // A successor that is gone leaves the entry at the end, which is the most its slot can still mean.
+  for (const preserved of state.unreadableServers) {
+    const at = servers.findIndex((server) => "id" in server && server.id === preserved.beforeId);
+    servers.splice(at === -1 ? servers.length : at, 0, preserved.entry);
   }
   return {
     version: state.version,

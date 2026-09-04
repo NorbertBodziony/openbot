@@ -17,6 +17,7 @@ import { randomUUID } from "node:crypto";
 import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import type { TeamRole } from "@openbot/contracts/ipc";
 import { LOCAL_SERVER_ID } from "@openbot/contracts/ipc";
+import { isString } from "@openbot/contracts/runtime-values";
 import {
   emptyStoredRemoteServers,
   readStoredRemoteServers,
@@ -31,6 +32,14 @@ export interface TokenCipher {
 }
 
 export type StoredRemoteServerView = Readonly<StoredRemoteServer>;
+
+// What an entry this build cannot read still says about a host's identity. Empty strings and nulls
+// mean the entry did not carry that field, not that the host has none.
+export interface PreservedHostIdentity {
+  readonly hostId: string;
+  readonly publicKey: string | null;
+  readonly fingerprint: string;
+}
 
 // Which server is selected -- both halves of it. `unreadableActiveServerId` is the id the file keeps
 // naming while this build runs somewhere else, so a caller putting a failed selection back has to
@@ -112,6 +121,24 @@ export class RemoteServerStore implements RemoteServerDirectory {
       activeServerId: this.#state.activeServerId,
       unreadableActiveServerId: this.#state.unreadableActiveServerId,
     };
+  }
+
+  // Identity from the entries the reader could not decode. Reconciliation needs these: a pin this
+  // build cannot use is still a pin, and without them a host whose entry is unreadable looks new, so
+  // the account service's advertised key would be accepted for a machine the user already trusts --
+  // exactly what `remote-server-host-directory.ts` exists to prevent.
+  get preservedIdentities(): readonly PreservedHostIdentity[] {
+    return this.#state.unreadableServers.flatMap((preserved) =>
+      isString(preserved.entry.id)
+        ? [
+            {
+              hostId: preserved.entry.id,
+              publicKey: isString(preserved.entry.publicKey) ? preserved.entry.publicKey : null,
+              fingerprint: isString(preserved.entry.fingerprint) ? preserved.entry.fingerprint : "",
+            },
+          ]
+        : [],
+    );
   }
 
   get servers(): readonly StoredRemoteServerView[] {

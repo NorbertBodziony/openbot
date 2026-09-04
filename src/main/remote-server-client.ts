@@ -139,16 +139,22 @@ export class RemoteServerClient {
     try {
       if (server.transport === "webrtc-v2") {
         const transport = this.#requireTransport();
+        let value: unknown;
         try {
           const compatibility = await this.ensureCompatibility(server);
-          const value = await transport.request(server.id, path, {
+          value = await transport.request(server.id, path, {
             ...init,
             preserveSemanticTags: supportsTeamSemanticTags(compatibility.capabilities),
           });
-          return addRemotePreviewUrls(decoder(value), server.id);
         } catch (error) {
           rethrowAsRemoteRequestError(error);
         }
+        // Decoding is outside the transport's catch on purpose. A frame that arrived intact and then
+        // failed its route decoder is a protocol failure, not a request that happened to fail, and
+        // only `RemoteProtocolError` makes the classifier stop reconnecting to a host talking
+        // nonsense. `requestJson` draws the same line for the HTTPS arm; a plain error here left
+        // the server looking healthy.
+        return addRemotePreviewUrls(decodeOrProtocolError(decoder, value), server.id);
       }
       const compatibility = await this.ensureCompatibility(server);
       const value = await requestJson(server.apiUrl, path, decoder, {
@@ -426,6 +432,21 @@ export class RemoteServerClient {
   #requireTransport(): RemoteHostRequestTransport {
     if (!this.#transport) throw new Error("The WebRTC transport is unavailable.");
     return this.#transport;
+  }
+}
+
+function decodeOrProtocolError<T>(decoder: ResponseDecoder<T>, value: unknown): T {
+  try {
+    return decoder(value);
+  } catch (error) {
+    throw new RemoteProtocolError(
+      "protocol_error",
+      "The host returned data that this app could not safely use.",
+      null,
+      {
+        cause: error,
+      },
+    );
   }
 }
 

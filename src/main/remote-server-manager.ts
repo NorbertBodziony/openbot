@@ -893,6 +893,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     const { servers, removedHostIds, pinnedKeys } = reconcileWebRtcHosts({
       hosts: await transport.listHosts(),
       servers: this.#store.servers,
+      preservedIdentities: this.#store.preservedIdentities,
       localHostId: this.#getLocalHostId(),
       isHiddenHost: (hostId) => this.#store.isHiddenHost(hostId),
       username: this.#centralAccount.getEmail().trim().toLowerCase(),

@@ -10,6 +10,8 @@
 
 import { TEAM_CAPABILITIES_HEADER } from "@openbot/contracts/team-protocol/v1";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { RemoteServerClient } from "./remote-server-client";
+import { RemoteServerConnections } from "./remote-server-connections";
 import {
   createRemoteManager,
   stopRemoteFixtures,
@@ -245,5 +247,40 @@ describe("Team API compatibility negotiation", () => {
       "Administrator access is required.",
     );
     expect(fixture.server()).toMatchObject({ state: "offline", issue: null });
+  });
+});
+
+describe("WebRTC request decoding", () => {
+  // The HTTPS arm turns a route decoder that throws into a `protocol_error`, and that is what stops
+  // the app talking to a host answering with nonsense. The WebRTC arm let the decoder's own error
+  // through, where the classifier ignored it: the request failed and the server stayed healthy.
+  it("fails a host closed when its framed response does not decode", async () => {
+    const server = storedHttpsServer("host", { transport: "webrtc-v2", apiUrl: "webrtc://host" });
+    const connections = new RemoteServerConnections({
+      appVersion: null,
+      onChanged: () => undefined,
+      onReconnectSuspended: () => undefined,
+    });
+    const client = new RemoteServerClient({
+      appVersion: null,
+      servers: { require: () => server, token: () => "token" },
+      connections,
+      transport: {
+        request: async () => ({ unexpected: true }),
+        requestResponse: async () => {
+          throw new Error("unused");
+        },
+      },
+    });
+
+    await expect(
+      client.request("host", "/api/team/agents", () => {
+        throw new Error("Unexpected agent payload.");
+      }),
+    ).rejects.toThrow("could not safely use");
+
+    const status = connections.statusFor("host");
+    expect(status.state).toBe("error");
+    expect(status.issue?.code).toBe("protocol_error");
   });
 });
