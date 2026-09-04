@@ -4,6 +4,7 @@ import { useThemeColor } from "heroui-native/hooks";
 import { marked, type Token, type Tokens } from "marked";
 import { Fragment, memo, type ReactNode, useMemo } from "react";
 import { Alert, type ColorValue, ScrollView, type TextStyle, View } from "react-native";
+import { ChatLinkIcon } from "@/features/chat/components/chat-link-icon";
 import { StreamingTailText } from "@/features/chat/components/streaming-tail-text";
 import { useStreamingText } from "@/features/chat/components/use-streaming-text";
 
@@ -121,11 +122,17 @@ function inline(tokens: Token[], parentPresentation: TextPresentation): ReactNod
             )
           }
         >
+          {tokenIs(token, "link") ? (
+            <>
+              <ChatLinkIcon url={url} color={presentation.style.color} compact={presentation.type === "body-sm"} />
+              {"\u00a0"}
+            </>
+          ) : null}
           {label}
         </Typography>
       );
     }
-    // HTML remains inert text; remote images are opened only after an explicit tap.
+    // HTML remains inert text; Markdown images are opened only after an explicit tap.
     return token.raw;
   });
 }

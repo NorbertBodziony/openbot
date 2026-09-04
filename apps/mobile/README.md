@@ -54,6 +54,10 @@ WebRTC peers are discarded and authenticated again. Recovery reloads cached conv
 as agents and unread counts, including after an event-buffer reset. An interruption of Signal alone
 can resume sooner while the authenticated WebRTC connection is still healthy, without a new ticket.
 
+Chat web links show the site's `/favicon.ico`, cached on the phone, with a local link icon while
+loading or when unavailable. Compact thought-process text uses a smaller icon. Markdown images
+still open only on tap; website icon requests are described in `PRIVACY.md`.
+
 When no bots have loaded and the selected server is connecting or offline, the bot list shows
 `Waiting for connection`. The empty-server prompt appears only once the server is online; bots
 already loaded remain visible during reconnection.
