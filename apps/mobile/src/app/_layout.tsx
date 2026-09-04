@@ -9,6 +9,7 @@ import { HeroUINativeProvider } from "heroui-native/provider";
 import { useLayoutEffect } from "react";
 import { useColorScheme, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { KeyboardProvider } from "react-native-keyboard-controller";
 import { withUniwind } from "uniwind";
 
 import { MobileSessionProvider, useMobileSession } from "@/features/auth/context/mobile-session-context";
@@ -62,20 +63,22 @@ export default function RootLayout() {
 
   return (
     <UniwindGestureHandlerRootView className="flex-1">
-      <QueryClientProvider client={queryClient}>
-        <HeroUINativeProvider>
-          <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
-            <StatusBar style="auto" />
-            <BloubAnimationProvider>
-              <MobileSessionProvider>
-                <AppLoadingOverlayProvider>
-                  <RootNavigator />
-                </AppLoadingOverlayProvider>
-              </MobileSessionProvider>
-            </BloubAnimationProvider>
-          </ThemeProvider>
-        </HeroUINativeProvider>
-      </QueryClientProvider>
+      <KeyboardProvider preload={false}>
+        <QueryClientProvider client={queryClient}>
+          <HeroUINativeProvider>
+            <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
+              <StatusBar style="auto" />
+              <BloubAnimationProvider>
+                <MobileSessionProvider>
+                  <AppLoadingOverlayProvider>
+                    <RootNavigator />
+                  </AppLoadingOverlayProvider>
+                </MobileSessionProvider>
+              </BloubAnimationProvider>
+            </ThemeProvider>
+          </HeroUINativeProvider>
+        </QueryClientProvider>
+      </KeyboardProvider>
     </UniwindGestureHandlerRootView>
   );
 }

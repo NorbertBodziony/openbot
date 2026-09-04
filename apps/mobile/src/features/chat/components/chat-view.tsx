@@ -2,16 +2,10 @@ import { isLiquidGlassAvailable } from "expo-glass-effect";
 import * as Haptics from "expo-haptics";
 import { router, useIsFocused } from "expo-router";
 import { useThemeColor } from "heroui-native/hooks";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  AppState,
-  KeyboardAvoidingView,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
-  type ScrollView,
-  View,
-} from "react-native";
+import { type ComponentRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AppState, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import { KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { scheduleOnRN } from "react-native-worklets";
 
@@ -44,8 +38,9 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
   const [atLatest, setAtLatest] = useState(false);
   const [composerHeight, setComposerHeight] = useState(0);
   const insets = useSafeAreaInsets();
+  const keyboardOffset = Math.max(insets.bottom, 10) - 10;
   const { leaveBotChatAnimated } = useBotPinTransition();
-  const scrollViewRef = useRef<ScrollView>(null);
+  const scrollViewRef = useRef<ComponentRef<typeof ChatMessageList>>(null);
   const initialScrollBotIdRef = useRef<string | null>(bot.id);
   const [foreground, muted, fieldBackground, raised, action, actionForeground, background] = useThemeColor([
     "foreground",
@@ -124,11 +119,6 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
     setAtLatest(true);
   }, [atLatest, bot.id, conversation]);
 
-  const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-    setAtLatest(contentOffset.y + layoutMeasurement.height >= contentSize.height - 24);
-  }, []);
-
   const handleLeaveConversation = useCallback(() => {
     if (animateAvatarOnExit) leaveBotChatAnimated(bot.id);
     else leaveConversation();
@@ -162,11 +152,7 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
 
   return (
     <GestureDetector gesture={edgeBackGesture}>
-      <KeyboardAvoidingView
-        behavior={isIOS ? "padding" : "height"}
-        className="flex-1"
-        style={{ backgroundColor: background }}
-      >
+      <View className="flex-1" style={{ backgroundColor: background }}>
         <View className="flex-1">
           <ChatHeader
             bot={bot}
@@ -180,6 +166,7 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
             ref={scrollViewRef}
             bot={bot}
             bottomInset={composerHeight}
+            keyboardOffset={keyboardOffset}
             canSend={serverOnline}
             historyState={
               conversation
@@ -201,13 +188,14 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
             showStarter={showStarter && serverOnline && !activity && conversation?.messages.length === 0}
             topInset={insets.top}
             onContentSizeChange={handleContentSizeChange}
-            onScroll={handleScroll}
+            onEndVisible={setAtLatest}
             onDismissStarter={() => setShowStarter(false)}
             onSelectStarter={sendMessage}
             onRetryHistory={fetchHistory}
           />
-          <View
-            className="absolute inset-x-0 bottom-0"
+          <KeyboardStickyView
+            style={{ position: "absolute", left: 0, right: 0, bottom: 0 }}
+            offset={{ opened: keyboardOffset }}
             pointerEvents="box-none"
             onLayout={({ nativeEvent: { layout } }) => setComposerHeight(layout.height)}
           >
@@ -227,9 +215,9 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
               onChangeDraft={setDraft}
               onSend={sendMessage}
             />
-          </View>
+          </KeyboardStickyView>
         </View>
-      </KeyboardAvoidingView>
+      </View>
     </GestureDetector>
   );
 }

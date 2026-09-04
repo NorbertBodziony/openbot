@@ -14,6 +14,10 @@ Expo Router 57.0.17 is patched in `patches/expo-router@57.0.17.patch` to apply z
 bounds when its enabler registers after the chat mounts. This keeps the avatar-to-header zoom
 interactive from the left edge without enabling dismissal from the middle of the chat.
 
+Keyboard Controller 1.21.9 is included in SDK 57 Expo Go. Custom development clients and
+standalone apps must be rebuilt after adding this native dependency; a JavaScript reload alone
+cannot add it to an existing binary.
+
 Run commands from the repository root:
 
 ```bash
@@ -40,7 +44,9 @@ beside the server-list button in the header, with a smaller attempt counter and 
 The status disappears once connected. Chat shows a compact, centered `Reconnecting · x/5 · m:ss`
 above the composer, with the same animated digits and no banner. The composer and status float over
 the message list on a transparent layer; bottom spacing keeps the last message clear of the controls.
-The status follows the keyboard and disappears
+The composer and status track interactive keyboard dismissal through `KeyboardStickyView`;
+`KeyboardChatScrollView` uses the same native keyboard frames for message insets and scrolling.
+There is no additional `KeyboardAvoidingView` or keyboard-event timer in the chat. The status disappears
 after reconnecting. Countdown ticks are local UI
 updates, not requests. Backgrounding suspends retries; returning respects any remaining wait and
 starts at most one attempt if its deadline has passed. A successful connection resets the counter. Dead

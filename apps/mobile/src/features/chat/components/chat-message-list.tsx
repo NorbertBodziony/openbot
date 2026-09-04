@@ -1,15 +1,9 @@
 import { useIsFocused } from "expo-router";
 import { Button, Typography } from "heroui-native";
 import { X } from "lucide-react-native";
-import { forwardRef, useRef } from "react";
-import {
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
-  Pressable,
-  ScrollView,
-  View,
-  type ViewStyle,
-} from "react-native";
+import { type ComponentRef, forwardRef, useRef } from "react";
+import { Pressable, View, type ViewStyle } from "react-native";
+import { KeyboardChatScrollView } from "react-native-keyboard-controller";
 import Animated, { useAnimatedStyle } from "react-native-reanimated";
 import { BloubAvatar, getBloubAvatarColor } from "@/features/bots/components/bloub-avatar";
 import { ChatMarkdown } from "@/features/chat/components/chat-markdown";
@@ -28,6 +22,7 @@ const STARTER_OPTIONS = [
 interface ChatMessageListProps {
   bot: MobileBot;
   bottomInset: number;
+  keyboardOffset: number;
   canSend: boolean;
   appActive: boolean;
   fieldBackground: ViewStyle["backgroundColor"];
@@ -39,16 +34,19 @@ interface ChatMessageListProps {
   showStarter: boolean;
   topInset: number;
   onContentSizeChange: () => void;
-  onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  onEndVisible: (visible: boolean) => void;
   onDismissStarter: () => void;
   onSelectStarter: (value: string) => void;
   onRetryHistory: () => void;
 }
 
-export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(function ChatMessageList(
+type ChatScrollViewRef = ComponentRef<typeof KeyboardChatScrollView>;
+
+export const ChatMessageList = forwardRef<ChatScrollViewRef, ChatMessageListProps>(function ChatMessageList(
   {
     bot,
     bottomInset,
+    keyboardOffset,
     canSend,
     appActive,
     fieldBackground,
@@ -60,7 +58,7 @@ export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(func
     showStarter,
     topInset,
     onContentSizeChange,
-    onScroll,
+    onEndVisible,
     onDismissStarter,
     onSelectStarter,
     onRetryHistory,
@@ -103,9 +101,9 @@ export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(func
   });
 
   return (
-    <ScrollView
+    <KeyboardChatScrollView
       ref={ref}
-      className="flex-1"
+      style={{ flex: 1 }}
       contentContainerStyle={{
         flexGrow: 1,
         gap: 10,
@@ -115,11 +113,14 @@ export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(func
         paddingTop: topInset + 84,
       }}
       contentInsetAdjustmentBehavior="never"
+      automaticallyAdjustKeyboardInsets={false}
+      keyboardLiftBehavior="whenAtEnd"
+      offset={keyboardOffset}
       keyboardDismissMode="interactive"
       keyboardShouldPersistTaps="handled"
       onContentSizeChange={onContentSizeChange}
       onLayout={onContentSizeChange}
-      onScroll={onScroll}
+      onEndVisible={onEndVisible}
       scrollEventThrottle={16}
       showsVerticalScrollIndicator={false}
     >
@@ -244,6 +245,6 @@ export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(func
           </Typography.Paragraph>
         </View>
       ) : null}
-    </ScrollView>
+    </KeyboardChatScrollView>
   );
 });
