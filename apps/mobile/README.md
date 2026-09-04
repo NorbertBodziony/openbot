@@ -48,6 +48,12 @@ When no bots have loaded and the selected server is connecting or offline, the b
 `Waiting for connection`. The empty-server prompt appears only once the server is online; bots
 already loaded remain visible during reconnection.
 
+While a server is disconnected, its bot avatars and colored chat bubbles fade locally with the same
+280 ms transition. Chat input, attachments,
+voice/send controls and suggested prompts are disabled. Draft text is preserved, and the controls
+and original colors return when the server is online. This visual state is derived only in the
+mobile UI: it never changes the bot's synced avatar profile or sends appearance updates over RTC.
+
 Invitations pin the desktop public key before acceptance. Pins are stored in the device Keychain /
 Keystore, scoped to the account service and user, and checked on later directory refreshes. Joining
 installs the validated host immediately; a subsequent directory-refresh failure does not undo a

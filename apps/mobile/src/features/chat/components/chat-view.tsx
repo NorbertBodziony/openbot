@@ -138,6 +138,7 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
   );
 
   function sendMessage(value = draft): void {
+    if (!serverOnline) return;
     const body = value.trim();
     if (!body) return;
 
@@ -168,6 +169,7 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
             ref={scrollViewRef}
             bot={bot}
             bottomInset={composerHeight}
+            canSend={serverOnline}
             fieldBackground={fieldBackground}
             foreground={foreground}
             messages={messages}
@@ -191,6 +193,7 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
               actionForeground={actionForeground}
               botName={bot.name}
               bottomInset={insets.bottom}
+              disabled={!serverOnline}
               draft={draft}
               fallbackBackground={fieldBackground}
               foreground={foreground}

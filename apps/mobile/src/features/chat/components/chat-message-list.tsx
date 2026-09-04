@@ -9,8 +9,10 @@ import {
   View,
   type ViewStyle,
 } from "react-native";
+import Animated, { useAnimatedStyle } from "react-native-reanimated";
 
 import { getBloubAvatarColor } from "@/features/bots/components/bloub-avatar";
+import { useConnectionAppearance } from "@/features/workspace/components/use-connection-appearance";
 import type { MobileBot } from "@/features/workspace/context/mobile-workspace-context";
 
 export interface ChatMessage {
@@ -28,6 +30,7 @@ const STARTER_OPTIONS = [
 interface ChatMessageListProps {
   bot: MobileBot;
   bottomInset: number;
+  canSend: boolean;
   fieldBackground: ViewStyle["backgroundColor"];
   foreground: ViewStyle["backgroundColor"];
   messages: ChatMessage[];
@@ -45,6 +48,7 @@ export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(func
   {
     bot,
     bottomInset,
+    canSend,
     fieldBackground,
     foreground,
     messages,
@@ -60,6 +64,19 @@ export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(func
   ref,
 ) {
   const userBubbleColor = getBloubAvatarColor(bot.avatarSeed, bot.avatarHue);
+  const appearance = useConnectionAppearance(!canSend);
+  const red = Number.parseInt(userBubbleColor.slice(1, 3), 16);
+  const green = Number.parseInt(userBubbleColor.slice(3, 5), 16);
+  const blue = Number.parseInt(userBubbleColor.slice(5, 7), 16);
+  const gray = red * 0.213 + green * 0.715 + blue * 0.072;
+  const userBubbleStyle = useAnimatedStyle(() => {
+    const { saturation } = appearance.get();
+    const r = Math.round(gray + (red - gray) * saturation);
+    const g = Math.round(gray + (green - gray) * saturation);
+    const b = Math.round(gray + (blue - gray) * saturation);
+    // Fade the color while keeping message text fully readable.
+    return { backgroundColor: `rgb(${r}, ${g}, ${b})` };
+  });
 
   return (
     <ScrollView
@@ -87,18 +104,18 @@ export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(func
       </Typography.Paragraph>
 
       {messages.map((message) => (
-        <View
+        <Animated.View
           key={message.id}
           className={`max-w-[88%] rounded-[22px] px-4 py-3 ${message.author === "user" ? "self-end" : "self-start"}`}
-          style={{
-            backgroundColor: message.author === "user" ? userBubbleColor : fieldBackground,
-            borderCurve: "continuous",
-          }}
+          style={[
+            { borderCurve: "continuous" },
+            message.author === "user" ? userBubbleStyle : { backgroundColor: fieldBackground },
+          ]}
         >
           <Typography.Paragraph selectable style={{ color: message.author === "user" ? "#0a0a0c" : foreground }}>
             {message.body}
           </Typography.Paragraph>
-        </View>
+        </Animated.View>
       ))}
 
       {showStarter ? (
@@ -128,11 +145,13 @@ export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(func
               <Pressable
                 key={option.id}
                 accessibilityRole="button"
+                accessibilityState={{ disabled: !canSend }}
+                disabled={!canSend}
                 className="flex-row gap-3 px-3 py-3"
                 style={({ pressed }) => ({
                   borderBottomColor: index < STARTER_OPTIONS.length - 1 ? String(muted) : "transparent",
                   borderBottomWidth: index < STARTER_OPTIONS.length - 1 ? 0.5 : 0,
-                  opacity: pressed ? 0.55 : 1,
+                  opacity: !canSend ? 0.45 : pressed ? 0.55 : 1,
                 })}
                 onPress={() => onSelectStarter(option.label)}
               >

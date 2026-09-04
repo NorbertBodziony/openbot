@@ -62,7 +62,7 @@ export function ChatHeader({
         >
           <Link.AppleZoomTarget>
             <BotPinAvatar botId={bot.id} location="chat" size={28}>
-              <BloubAvatar hue={bot.avatarHue} seed={bot.avatarSeed} size={28} />
+              <BloubAvatar botId={bot.id} hue={bot.avatarHue} seed={bot.avatarSeed} size={28} />
             </BotPinAvatar>
           </Link.AppleZoomTarget>
           <Typography.Paragraph className="min-w-0 shrink" weight="semibold" numberOfLines={1}>

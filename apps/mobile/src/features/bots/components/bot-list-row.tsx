@@ -109,7 +109,7 @@ export function BotListRow({
   const isUnpinTarget = transition?.botId === bot.id && transition.target === "row";
   const avatar = (
     <BotPinAvatar botId={bot.id} location={avatarLocation} size={54}>
-      <BloubAvatar hue={bot.avatarHue} seed={bot.avatarSeed} size={54} />
+      <BloubAvatar botId={bot.id} hue={bot.avatarHue} seed={bot.avatarSeed} size={54} />
     </BotPinAvatar>
   );
 

@@ -1,5 +1,6 @@
 import { GlassView } from "expo-glass-effect";
 import { ArrowUp, Mic, Plus } from "lucide-react-native";
+import { useEffect, useRef } from "react";
 import { Alert, Pressable, TextInput, View, type ViewStyle } from "react-native";
 
 import { ChatGlassIconButton } from "@/features/chat/components/chat-glass-icon-button";
@@ -9,6 +10,7 @@ interface ChatComposerProps {
   actionForeground: ViewStyle["backgroundColor"];
   botName: string;
   bottomInset: number;
+  disabled: boolean;
   draft: string;
   fallbackBackground: ViewStyle["backgroundColor"];
   foreground: ViewStyle["backgroundColor"];
@@ -24,6 +26,7 @@ export function ChatComposer({
   actionForeground,
   botName,
   bottomInset,
+  disabled,
   draft,
   fallbackBackground,
   foreground,
@@ -34,6 +37,11 @@ export function ChatComposer({
   onSend,
 }: ChatComposerProps) {
   const hasDraft = Boolean(draft.trim());
+  const inputRef = useRef<TextInput>(null);
+
+  useEffect(() => {
+    if (disabled) inputRef.current?.blur();
+  }, [disabled]);
 
   return (
     <View
@@ -43,6 +51,7 @@ export function ChatComposer({
     >
       <ChatGlassIconButton
         accessibilityLabel="Add attachment"
+        disabled={disabled}
         fallbackBackground={fallbackBackground}
         liquidGlassAvailable={liquidGlassAvailable}
         onPress={() => Alert.alert("Attachments", "Attachments will be connected with the conversation API.")}
@@ -61,12 +70,17 @@ export function ChatComposer({
           flexDirection: "row",
           height: 48,
           overflow: "hidden",
+          opacity: disabled ? 0.45 : 1,
           paddingLeft: 16,
           paddingRight: 5,
         }}
       >
         <TextInput
+          ref={inputRef}
           accessibilityLabel={`Message ${botName}`}
+          accessibilityState={{ disabled }}
+          editable={!disabled}
+          showSoftInputOnFocus={!disabled}
           className="min-w-0 flex-1 font-sans text-foreground"
           placeholder={`Ask ${botName}`}
           placeholderTextColor={muted}
@@ -80,6 +94,8 @@ export function ChatComposer({
         <Pressable
           accessibilityLabel={hasDraft ? "Send message" : "Start voice message"}
           accessibilityRole="button"
+          accessibilityState={{ disabled }}
+          disabled={disabled}
           className="size-10 items-center justify-center rounded-full"
           style={{ backgroundColor: hasDraft ? action : raised }}
           onPress={() =>
