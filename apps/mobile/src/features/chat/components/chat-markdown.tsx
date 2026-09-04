@@ -263,7 +263,7 @@ function MarkdownBlocks({
                         ? `${Number(token.start) + itemIndex}.`
                         : "•"}
                   </Typography>
-                  <View className="min-w-0 flex-1">
+                  <View className="min-w-0 shrink">
                     <MarkdownBlocks
                       tokens={item.tokens}
                       inList

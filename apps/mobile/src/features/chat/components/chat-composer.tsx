@@ -1,3 +1,5 @@
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import type { AgentPromptQuestion } from "@openbot/contracts/ipc";
 import { GlassView } from "expo-glass-effect";
 import { ArrowUp, Mic, Plus } from "lucide-react-native";
 import { useEffect, useRef } from "react";
@@ -12,6 +14,7 @@ interface ChatComposerProps {
   bottomInset: number;
   disabled: boolean;
   draft: string;
+  answerQuestion?: AgentPromptQuestion;
   fallbackBackground: ViewStyle["backgroundColor"];
   foreground: ViewStyle["backgroundColor"];
   liquidGlassAvailable: boolean;
@@ -28,6 +31,7 @@ export function ChatComposer({
   bottomInset,
   disabled,
   draft,
+  answerQuestion,
   fallbackBackground,
   foreground,
   liquidGlassAvailable,
@@ -72,7 +76,7 @@ export function ChatComposer({
     >
       <ChatGlassIconButton
         accessibilityLabel="Add attachment"
-        disabled={disabled}
+        disabled={disabled || Boolean(answerQuestion)}
         fallbackBackground={fallbackBackground}
         liquidGlassAvailable={liquidGlassAvailable}
         onPress={() => Alert.alert("Attachments", "Attachments will be connected with the conversation API.")}
@@ -98,12 +102,22 @@ export function ChatComposer({
       >
         <TextInput
           ref={inputRef}
-          accessibilityLabel={`Message ${botName}`}
+          accessibilityLabel={answerQuestion?.question ?? `Message ${botName}`}
           accessibilityState={{ disabled }}
           editable={!disabled}
           showSoftInputOnFocus={!disabled}
           className="min-w-0 flex-1 font-sans text-foreground"
-          placeholder={`Ask ${botName}`}
+          placeholder={
+            answerQuestion
+              ? answerQuestion.isSecret
+                ? "Enter a private answer"
+                : "Type your answer"
+              : `Ask ${botName}`
+          }
+          secureTextEntry={answerQuestion?.isSecret ?? false}
+          autoCorrect={!answerQuestion?.isSecret}
+          autoCapitalize={answerQuestion?.isSecret ? "none" : "sentences"}
+          maxLength={answerQuestion ? INPUT_LIMITS.promptAnswerText : undefined}
           placeholderTextColor={muted}
           returnKeyType="send"
           submitBehavior="blurAndSubmit"
@@ -131,7 +145,7 @@ export function ChatComposer({
           }}
         />
         <Pressable
-          accessibilityLabel={hasDraft ? "Send message" : "Start voice message"}
+          accessibilityLabel={hasDraft ? (answerQuestion ? "Send answer" : "Send message") : "Start voice message"}
           accessibilityRole="button"
           accessibilityState={{ disabled }}
           disabled={disabled}

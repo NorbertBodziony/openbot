@@ -1,6 +1,7 @@
-import type { ConversationMessage } from "@openbot/contracts/ipc";
+import type { ConversationMessage, ConversationQuestionPrompt } from "@openbot/contracts/ipc";
 
 export type ChatMessage =
+  | { id: string; kind: "question"; turnId: string | undefined; prompt: ConversationQuestionPrompt }
   | { id: string; kind: "message"; author: "bot" | "user"; body: string; streaming: boolean }
   | { id: string; kind: "thinking"; turnId: string | undefined; steps: { id: string; text: string }[] };
 
@@ -8,6 +9,10 @@ export function projectChatMessages(messages: ConversationMessage[]): ChatMessag
   const result: ChatMessage[] = [];
   const thinkingByTurn = new Map<string, Extract<ChatMessage, { kind: "thinking" }>>();
   for (const message of messages) {
+    if (message.questionPrompt) {
+      result.push({ id: message.id, kind: "question", turnId: message.turnId, prompt: message.questionPrompt });
+      continue;
+    }
     if (!message.text.trim() || message.author === "system") continue;
     if (message.author === "assistant" && message.itemType === "commentary") {
       const key = message.turnId ?? message.id;

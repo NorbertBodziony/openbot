@@ -7,7 +7,9 @@ import { KeyboardChatScrollView } from "react-native-keyboard-controller";
 import Animated, { useAnimatedStyle } from "react-native-reanimated";
 import { BloubAvatar, getBloubAvatarColor } from "@/features/bots/components/bloub-avatar";
 import { ChatMarkdown } from "@/features/chat/components/chat-markdown";
+import { ChatQuestionPrompt } from "@/features/chat/components/chat-question-prompt";
 import { ChatThinking } from "@/features/chat/components/chat-thinking";
+import type { QuestionPromptController } from "@/features/chat/components/use-question-prompt";
 import type { ChatMessage } from "@/features/chat/model/chat-messages";
 import { useBotActivity } from "@/features/workspace/components/use-bot-activity";
 import { useConnectionAppearance } from "@/features/workspace/components/use-connection-appearance";
@@ -25,6 +27,8 @@ interface ChatMessageListProps {
   keyboardOffset: number;
   canSend: boolean;
   appActive: boolean;
+  activeTurnId: string | null;
+  questionForm: QuestionPromptController;
   fieldBackground: ViewStyle["backgroundColor"];
   foreground: ViewStyle["backgroundColor"];
   historyState: "ready" | "connecting" | "waiting" | "loading" | "error";
@@ -49,6 +53,8 @@ export const ChatMessageList = forwardRef<ChatScrollViewRef, ChatMessageListProp
     keyboardOffset,
     canSend,
     appActive,
+    activeTurnId,
+    questionForm,
     fieldBackground,
     foreground,
     historyState,
@@ -81,7 +87,11 @@ export const ChatMessageList = forwardRef<ChatScrollViewRef, ChatMessageListProp
   const activity = useBotActivity(bot.id);
   const activityLabel =
     activity?.phase === "waiting"
-      ? "Waiting for your input on desktop"
+      ? messages.some(
+          (message) => message.kind === "question" && !message.prompt.resolution && message.turnId === activeTurnId,
+        )
+        ? "Waiting for your answer"
+        : "Waiting for your input on desktop"
       : activity?.phase === "responding"
         ? "Responding…"
         : activity?.detail || "Thinking…";
@@ -155,6 +165,13 @@ export const ChatMessageList = forwardRef<ChatScrollViewRef, ChatMessageListProp
             key={message.id}
             steps={message.steps}
             working={Boolean(activity && activity.turnId === message.turnId)}
+          />
+        ) : message.kind === "question" ? (
+          <ChatQuestionPrompt
+            key={message.id}
+            prompt={message.prompt}
+            controller={message.id === questionForm.messageId ? questionForm : undefined}
+            canSend={canSend}
           />
         ) : (
           <Animated.View

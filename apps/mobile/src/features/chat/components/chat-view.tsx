@@ -13,6 +13,7 @@ import { useBotPinTransition } from "@/features/bots/components/bot-pin-transiti
 import { ChatComposer } from "@/features/chat/components/chat-composer";
 import { ChatHeader } from "@/features/chat/components/chat-header";
 import { ChatMessageList } from "@/features/chat/components/chat-message-list";
+import { useQuestionPrompt } from "@/features/chat/components/use-question-prompt";
 import { projectChatMessages } from "@/features/chat/model/chat-messages";
 import { ConnectionStatus } from "@/features/workspace/components/connection-status";
 import { useBotActivity } from "@/features/workspace/components/use-bot-activity";
@@ -55,7 +56,14 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
   const [showStarter, setShowStarter] = useState(true);
   const [historyLoadFailed, setHistoryLoadFailed] = useState(false);
   const historyRequestRef = useRef(0);
-  const { conversations, loadConversation, markBotRead, servers, sendMessage: sendTeamMessage } = useMobileWorkspace();
+  const {
+    conversations,
+    loadConversation,
+    markBotRead,
+    servers,
+    respondToPrompt,
+    sendMessage: sendTeamMessage,
+  } = useMobileWorkspace();
   const conversation = conversations[bot.id];
   const conversationRef = useRef(conversation);
   conversationRef.current = conversation;
@@ -69,6 +77,19 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
   const readBoundaryStatus = latestMessage?.status;
   const server = servers.find((server) => server.id === bot.serverId);
   const serverOnline = server?.state === "online";
+  const activePrompt = messages.findLast(
+    (message) =>
+      message.kind === "question" &&
+      !message.prompt.resolution &&
+      Boolean(conversation?.activeTurnId) &&
+      message.turnId === conversation?.activeTurnId,
+  );
+  const questionForm = useQuestionPrompt(
+    bot.id,
+    activePrompt?.kind === "question" ? activePrompt : undefined,
+    serverOnline,
+    respondToPrompt,
+  );
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => setAppActive(state === "active"));
@@ -144,6 +165,11 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
     if (!body) return;
 
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (questionForm.question) {
+      questionForm.answer([body]);
+      requestAnimationFrame(() => scrollViewRef.current?.scrollToEnd({ animated: true }));
+      return;
+    }
     setDraft("");
     setShowStarter(false);
     void sendTeamMessage(bot.id, body).catch(() => setDraft((current) => current || body));
@@ -180,6 +206,8 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
                       : "loading"
             }
             appActive={appActive}
+            activeTurnId={conversation?.activeTurnId ?? null}
+            questionForm={questionForm}
             fieldBackground={fieldBackground}
             foreground={foreground}
             messages={messages}
@@ -201,18 +229,24 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
           >
             <ConnectionStatus server={server} />
             <ChatComposer
+              key={JSON.stringify([
+                bot.id,
+                questionForm.question ? questionForm.messageId : null,
+                questionForm.question?.id,
+              ])}
               action={action}
               actionForeground={actionForeground}
               botName={bot.name}
               bottomInset={insets.bottom}
-              disabled={!serverOnline}
-              draft={draft}
+              disabled={!serverOnline || questionForm.pending}
+              answerQuestion={questionForm.question}
+              draft={questionForm.question ? questionForm.draft : draft}
               fallbackBackground={fieldBackground}
               foreground={foreground}
               liquidGlassAvailable={liquidGlassAvailable}
               muted={muted}
               raised={raised}
-              onChangeDraft={setDraft}
+              onChangeDraft={questionForm.question ? questionForm.setDraft : setDraft}
               onSend={sendMessage}
             />
           </KeyboardStickyView>

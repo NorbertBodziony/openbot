@@ -1,4 +1,10 @@
-import type { BotAvatarHue, ConversationSnapshot, CreateBotInput, UpdateBotInput } from "@openbot/contracts/ipc";
+import type {
+  BotAvatarHue,
+  ConversationSnapshot,
+  CreateBotInput,
+  RespondToPromptInput,
+  UpdateBotInput,
+} from "@openbot/contracts/ipc";
 import type { RemoteRecoveryStatus } from "@openbot/team-client";
 import type { MobileBotActivities } from "./bot-activity";
 
@@ -61,6 +67,7 @@ export interface MobileWorkspaceContextValue {
   deleteBot: (botId: string) => Promise<void>;
   duplicateBot: (botId: string) => Promise<void>;
   loadConversation: (botId: string) => Promise<ConversationSnapshot>;
+  respondToPrompt: (botId: string, input: RespondToPromptInput) => Promise<void>;
   sendMessage: (botId: string, text: string) => Promise<void>;
   hideBot: (botId: string) => void;
   unhideBot: (botId: string) => void;

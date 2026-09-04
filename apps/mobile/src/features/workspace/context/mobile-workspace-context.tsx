@@ -1,7 +1,6 @@
 import {
   type AgentEvent,
   type BotSummary,
-  type ConversationMessage,
   type ConversationSnapshot,
   type CreateBotInput,
   isAvatarHue,
@@ -46,6 +45,7 @@ import {
   type RemoteTeamTransportRef,
 } from "@/features/workspace/components/remote-team-transport";
 import { type MobileBotActivities, reduceBotActivity } from "@/features/workspace/model/bot-activity";
+import { decodeConversation } from "@/features/workspace/model/conversation";
 import { trustedHostKeys } from "@/features/workspace/model/trusted-host-keys";
 import {
   MAX_PINNED_BOTS,
@@ -577,6 +577,32 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
           replyToMessageId: null,
         });
       },
+      respondToPrompt: async (botId, input) => {
+        const bot = bots.find((candidate) => candidate.id === botId);
+        const snapshot = conversationsRef.current[botId];
+        const message = snapshot?.messages.find(
+          (item) =>
+            item.turnId === snapshot.activeTurnId &&
+            item.questionPrompt?.requestId === input.requestId &&
+            item.questionPrompt.resolution === null,
+        );
+        if (
+          bot?.serverId !== activeServer.id ||
+          activeServer.state !== "online" ||
+          !message?.questionPrompt ||
+          message.questionPrompt.resolution ||
+          !snapshot?.activeTurnId ||
+          message.turnId !== snapshot.activeTurnId
+        ) {
+          throw new Error("This form is no longer available.");
+        }
+        await request("POST", "/v1/prompts/respond", ignoreResponse, {
+          requestId: input.requestId,
+          answers: input.answers,
+        });
+        // The answer is committed even if a subsequent refresh loses connection.
+        void loadConversation(botId).catch(() => undefined);
+      },
       hideBot: (botId) => {
         updatePreferences(activeServer.id, (current) => ({
           hidden: [...new Set([...current.hidden, botId])],
@@ -733,28 +759,6 @@ function decodeBotSummaries(value: unknown): RemoteBot[] {
   return value.map(decodeBot);
 }
 
-function decodeConversation(value: unknown): ConversationSnapshot {
-  if (
-    !isDynamicRecord(value) ||
-    !isString(value.botId) ||
-    (value.threadId !== null && !isString(value.threadId)) ||
-    (value.activeTurnId !== null && !isString(value.activeTurnId)) ||
-    !isNumber(value.revision) ||
-    !Number.isSafeInteger(value.revision) ||
-    value.revision < 0 ||
-    !Array.isArray(value.messages)
-  ) {
-    throw new Error("The server returned an invalid conversation.");
-  }
-  return {
-    botId: value.botId,
-    threadId: value.threadId,
-    activeTurnId: value.activeTurnId,
-    revision: value.revision,
-    messages: value.messages.map(decodeConversationMessage),
-  };
-}
-
 function decodeConversationReads(value: unknown): Record<string, { unreadCount: number }> {
   if (!isDynamicRecord(value)) throw new Error("The server returned invalid read states.");
   const reads: Record<string, { unreadCount: number }> = {};
@@ -770,41 +774,6 @@ function decodeConversationReads(value: unknown): Record<string, { unreadCount: 
     reads[botId] = { unreadCount: readState.unreadCount };
   }
   return reads;
-}
-
-function decodeConversationMessage(value: unknown): ConversationMessage {
-  if (
-    !isDynamicRecord(value) ||
-    !isString(value.id) ||
-    !isConversationAuthor(value.author) ||
-    !isString(value.text) ||
-    !isString(value.createdAt) ||
-    !isConversationStatus(value.status)
-  ) {
-    throw new Error("The server returned an invalid conversation message.");
-  }
-  return {
-    id: value.id,
-    author: value.author,
-    text: value.text,
-    createdAt: value.createdAt,
-    status: value.status,
-    ...(isString(value.turnId) ? { turnId: value.turnId } : {}),
-    ...(isString(value.itemType) ? { itemType: value.itemType } : {}),
-    ...(isConversationSource(value.source) ? { source: value.source } : {}),
-  };
-}
-
-function isConversationAuthor(value: unknown): value is ConversationMessage["author"] {
-  return value === "user" || value === "assistant" || value === "agent" || value === "system";
-}
-
-function isConversationStatus(value: unknown): value is ConversationMessage["status"] {
-  return value === "streaming" || value === "completed" || value === "failed" || value === "interrupted";
-}
-
-function isConversationSource(value: unknown): value is NonNullable<ConversationMessage["source"]> {
-  return value === "user" || value === "assistant" || value === "agent" || value === "system" || value === "routine";
 }
 
 function ignoreResponse(): void {}

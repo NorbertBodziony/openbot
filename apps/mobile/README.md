@@ -58,6 +58,14 @@ Chat web links show the site's `/favicon.ico`, cached on the phone, with a local
 loading or when unavailable. Compact thought-process text uses a smaller icon. Markdown images
 still open only on tap; website icon requests are described in `PRIVACY.md`.
 
+Structured question forms appear inline in mobile chat, including when reopening downloaded history.
+They support option selection, multiple questions, skipping and cancellation. Custom answers are typed
+in the main chat composer and sent to the current form question, rather than posted as chat messages. Responses
+use the existing `/v1/prompts/respond` endpoint over the authenticated desktop connection; conversation
+updates synchronize their resolution across devices. Offline forms are disabled, failed submissions
+can be retried, and completed or expired forms cannot be submitted again. Private answers use a
+secure input and are omitted from the local completion summary; unsent drafts stay in component memory.
+
 When no bots have loaded and the selected server is connecting or offline, the bot list shows
 `Waiting for connection`. The empty-server prompt appears only once the server is online; bots
 already loaded remain visible during reconnection.
