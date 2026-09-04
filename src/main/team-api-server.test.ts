@@ -30,6 +30,7 @@ import {
   TEAM_CAPABILITIES_HEADER,
   TEAM_PROTOCOL_V1_CAPABILITIES,
   TEAM_PROTOCOL_VERSION_HEADER,
+  teamProtocolV1HttpRoute,
 } from "@openbot/contracts/team-protocol/v1";
 import { TEAM_PROTOCOL_V3 } from "@openbot/contracts/team-protocol/v3";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -444,6 +445,37 @@ const ROUTE_METHODS: Record<string, string> = {
 // family `remote-screen-gateway.ts` owns, which answers 404 for a session that does not exist.
 const ROUTES_NOT_SERVED_OVER_HTTP = new Set(["remoteDesktopUpgrade", "remoteScreen.viewer"]);
 
+// Reaching the router is only half of what a route needs. `#json` encodes every JSON body through
+// the negotiated protocol's frozen adapter, and protocol v3 delegates all but agent duplication to
+// v1's route list, so a table entry that list cannot name is one the host answers 500 on for every
+// client - and the loop below cannot see it, because these stubs drive only ten routes as far as a
+// 2xx body. These are the entries whose response never passes through that classification, each for
+// a reason that is a property of the route rather than an omission.
+const ROUTES_WITHOUT_A_CLASSIFIED_JSON_BODY = new Set([
+  // Answered with 204 and no body at all.
+  "attachment",
+  "auth.logout",
+  "team.invite",
+  "team.session",
+  "remoteScreen.session",
+  // Answered with bytes rather than JSON, so `#json` is never the writer.
+  "team.logo",
+  "sharedFiles",
+  "workspaceFiles",
+  "agent.avatar",
+  // Answered only as a 426, which the codec projects through its error branch, where the route plays
+  // no part.
+  "events",
+  "host.remoteMac",
+  "host.remoteDesktopAccess",
+  // The v1 codec short-circuits this one ahead of classification, to keep a skill list it has no
+  // contract for intact.
+  "agent.skills",
+  // Protocol v3 only: its own adapter names this route before delegating the rest to v1. A v1 peer
+  // that calls it anyway is answered 500 rather than a protocol error - see the PR body.
+  "agent.duplicate",
+]);
+
 const ROUTE_SAMPLE_IDS = ["route-sample", "route-sample-other"];
 
 // The table's three shapes: a fixed path, a builder taking one or two ids, and a group of either.
@@ -486,8 +518,22 @@ describe("TeamApiServer routing", () => {
       const login = await jsonRequest<{ sessionToken: string }>(base, TEAM_API_ROUTES.auth.login, {
         body: { username: "owner", password: "correct horse battery" },
       });
-      const routes = collectRoutes(TEAM_API_ROUTES, []).filter((route) => !ROUTES_NOT_SERVED_OVER_HTTP.has(route.name));
+      const collected = collectRoutes(TEAM_API_ROUTES, []);
+      const routes = collected.filter((route) => !ROUTES_NOT_SERVED_OVER_HTTP.has(route.name));
+      // Both directions, because either one alone can pass while saying nothing: a table walk that
+      // returned nothing would satisfy the first check, and a method left behind by a deleted route
+      // would never be noticed without the second.
       expect(routes.filter((route) => !ROUTE_METHODS[route.name]).map((route) => route.name)).toEqual([]);
+      expect(Object.keys(ROUTE_METHODS).filter((name) => !collected.some((route) => route.name === name))).toEqual([]);
+
+      // Every route the codec has to name, it names. Renaming a path in the table moves the host and
+      // the client together, so the loop below stays green - this is the half of the surface that
+      // notices, because the frozen adapter does not move with them.
+      const unclassified = routes
+        .filter((route) => !ROUTES_WITHOUT_A_CLASSIFIED_JSON_BODY.has(route.name))
+        .filter((route) => !teamProtocolV1HttpRoute(ROUTE_METHODS[route.name], route.path))
+        .map((route) => `${ROUTE_METHODS[route.name]} ${route.path} (${route.name})`);
+      expect(unclassified).toEqual([]);
 
       // Signing out invalidates the token every other request needs, so it goes last - otherwise the
       // routes after it would answer 401 and never reach the router's 404.

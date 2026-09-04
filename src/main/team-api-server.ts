@@ -1644,12 +1644,17 @@ export class TeamApiServer {
   #json(response: ServerResponse, status: number, value: object | null): void {
     const route = this.#responseRoutes.get(response);
     if (!route) throw new Error("Team API response route is unavailable.");
-    response.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
     const options = { preserveSemanticTags: supportsTeamSemanticTags(route.capabilities) };
+    // The body is encoded before the head is written. A response the negotiated protocol cannot
+    // represent - a route its frozen adapter does not classify - makes the encoder throw, and with
+    // the headers already sent that throw could neither answer the caller nor end the request: it
+    // surfaced as a hung socket and an `ERR_HTTP_HEADERS_SENT` rejection out of `#handle`'s own
+    // error path. Encoding first lets that failure become the 500 the caller can read.
     const body =
       route.protocol === TEAM_PROTOCOL_V3
         ? encodeTeamProtocolV3CurrentHttpResponse(route.method, route.path, status, value, options)
         : encodeTeamProtocolV1CurrentHttpResponse(route.method, route.path, status, value, options);
+    response.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
     response.end(`${body}\n`);
   }
 
