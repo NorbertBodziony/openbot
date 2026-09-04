@@ -710,6 +710,13 @@ describe("remote connection failures", () => {
     // merely going away: the failure that caused it is what the user has to see.
     transport.emit("disconnected", hostId);
     expect(fixture.server(hostId)).toMatchObject({ state: "error", issue: { code: "protocol_error" } });
+
+    // Retrying by hand is the act the suspension was waiting for. A host still suspended after it
+    // reads every later disconnect as the old failure and never reconnects on its own again.
+    vi.spyOn(transport, "connect").mockResolvedValue(undefined);
+    await fixture.manager.retryConnection(hostId);
+    transport.emit("disconnected", hostId);
+    expect(fixture.server(hostId)).toMatchObject({ state: "offline" });
   });
 });
 

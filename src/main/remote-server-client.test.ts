@@ -371,4 +371,34 @@ describe("WebRTC request decoding", () => {
     await expect(unreadableHost.refreshWebRtcCompatibility("host")).rejects.toThrow("invalid response body");
     expect(connections.statusFor("host")).toMatchObject({ state: "error", issue: { code: "protocol_error" } });
   });
+
+  // A capabilities payload the route decoder refuses is a third way for the probe to fail, and the
+  // one that reaches neither the transport's own error nor a `RemoteRequestError`: the decoder
+  // throws a plain `Error`, every caller of the probe turns a rejection into `false`, and the host
+  // is left healthy. The failure has to be classified where the decode happens.
+  it("records the probe's own decode failure, not just the ones the transport names", async () => {
+    const server = storedHttpsServer("host", { transport: "webrtc-v2", apiUrl: "webrtc://host" });
+    const connections = new RemoteServerConnections({
+      appVersion: null,
+      onChanged: () => undefined,
+      onReconnectSuspended: () => undefined,
+    });
+    const client = new RemoteServerClient({
+      appVersion: "0.4.0",
+      servers: { require: () => server, token: () => "token" },
+      connections,
+      transport: {
+        request: async (_hostId, path) => {
+          if (path !== TEAM_API_ROUTES.compatibility) return { malformed: true };
+          return { appVersion: "0.4.0", protocol: { minimum: 2, maximum: 2 }, capabilities: ["remote-desktop"] };
+        },
+        requestResponse: async () => {
+          throw new Error("unused");
+        },
+      },
+    });
+
+    await expect(client.probeRemoteDesktop(server)).rejects.toThrow("could not safely use");
+    expect(connections.statusFor("host")).toMatchObject({ state: "error", issue: { code: "protocol_error" } });
+  });
 });

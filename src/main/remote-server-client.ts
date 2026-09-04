@@ -401,7 +401,8 @@ export class RemoteServerClient {
       if (!compatibility.capabilities.includes("remote-desktop")) return false;
       let capabilities: RemoteDesktopCapabilities;
       if (server.transport === "webrtc-v2") {
-        capabilities = decodeRemoteDesktopCapabilities(
+        capabilities = decodeOrProtocolError(
+          decodeRemoteDesktopCapabilities,
           await this.#hostRequest(server.id, TEAM_API_ROUTES.remoteScreen.capabilities, {
             preserveSemanticTags: supportsTeamSemanticTags(compatibility.capabilities),
           }),
@@ -419,8 +420,14 @@ export class RemoteServerClient {
       if (error instanceof RemoteRequestError && [404, 426, 503].includes(error.status)) return false;
       // A host answering the probe with something no build can read is not a host without screen
       // sharing. Every caller of this turns a rejection into `false` or `null`, so a protocol failure
-      // that is not recorded here is a host that stays healthy and reconnectable.
-      if (error instanceof RemoteRequestError && error.code === "protocol_error") {
+      // that is not recorded here is a host that stays healthy and reconnectable. Both error classes
+      // appear here and neither extends the other: the HTTPS arm's `requestJson` raises
+      // `RemoteProtocolError` for a body it cannot decode, the WebRTC arm's transport raises a
+      // `protocol_error` `RemoteRequestError` -- so checking one of them records half the failures.
+      if (
+        error instanceof RemoteProtocolError ||
+        (error instanceof RemoteRequestError && error.code === "protocol_error")
+      ) {
         this.#connections.reportError(server.id, error);
       }
       throw error;

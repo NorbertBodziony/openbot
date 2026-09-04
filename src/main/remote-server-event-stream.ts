@@ -193,8 +193,6 @@ export class RemoteEventStream {
     this.#reconnectAttempts.delete(serverId);
   }
 
-  // What a suspended reconnect costs the event stream. The registry decides that a failure is not
-  // worth retrying; this is the only place that knows there is a socket to tear down for it.
   // Whether this server's retries are suspended. The manager asks before it records a WebRTC
   // disconnect as a plain "offline": the HTTPS arm has the same guard inline (`!protocolFailed`
   // above the `setState` in `#connect`), and the two must agree or the same failure reads as two
@@ -203,6 +201,16 @@ export class RemoteEventStream {
     return this.#authenticationPaused.has(serverId);
   }
 
+  // The user asked for this server again, which is the act the suspension was waiting for. `restart`
+  // does this for an HTTPS server on its way to reopening the socket; a WebRTC server has no socket
+  // here, so its manual retry calls this on its own and the two must not drift.
+  resumeReconnect(serverId: string): void {
+    this.#authenticationPaused.delete(serverId);
+    this.clearReconnectBackoff(serverId);
+  }
+
+  // What a suspended reconnect costs the event stream. The registry decides that a failure is not
+  // worth retrying; this is the only place that knows there is a socket to tear down for it.
   suspendReconnect(serverId: string): void {
     this.#authenticationPaused.add(serverId);
     this.#controllers.get(serverId)?.abort();
@@ -256,10 +264,7 @@ export class RemoteEventStream {
     const reconnectTimer = this.#reconnectTimers.get(serverId);
     if (reconnectTimer) clearTimeout(reconnectTimer);
     this.#reconnectTimers.delete(serverId);
-    if (resetBackoff) {
-      this.#reconnectAttempts.delete(serverId);
-      this.#authenticationPaused.delete(serverId);
-    }
+    if (resetBackoff) this.resumeReconnect(serverId);
     this.ensure(serverId);
   }
 

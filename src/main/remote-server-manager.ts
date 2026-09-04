@@ -495,6 +495,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     try {
       if (server.transport === "webrtc-v2") {
         if (!this.#webrtcTransport) throw new Error("The WebRTC transport is unavailable.");
+        // The user retrying is what lifts the suspension a protocol or credential failure left
+        // behind. Without this the connection comes up and the next disconnect never reconnects,
+        // because `scheduleReconnect` still sees the host paused -- the HTTPS arm below gets the
+        // same reset from `restart(serverId, true)`.
+        this.#events.resumeReconnect(serverId);
         this.#connections.setState(serverId, "connecting");
         this.#emitChanged();
         await this.#webrtcTransport.connect(serverId);
