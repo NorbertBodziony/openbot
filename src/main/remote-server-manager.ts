@@ -94,6 +94,7 @@ import {
 } from "./remote-server-connection-status";
 import { RemoteServerConnections } from "./remote-server-connections";
 import { RemoteProtocolError, RemoteRequestError } from "./remote-server-errors";
+import { reconcileWebRtcHosts } from "./remote-server-host-directory";
 import { remoteFetch, requestJson, throwRemoteResponseError, webRtcRequestBody } from "./remote-server-http";
 import { RemoteServerStore, type StoredRemoteServerView, type TokenCipher } from "./remote-server-store";
 import type { StoredRemoteServer } from "./remote-server-stored-shape";
@@ -1065,55 +1066,19 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   async #syncWebRtcHosts(): Promise<void> {
-    if (!this.#webrtcTransport) return;
-    const hosts = await this.#webrtcTransport.listHosts();
-    const synchronizedServers = hosts
-      .filter((host) => host.hostId !== this.#getLocalHostId() && !this.#store.isHiddenHost(host.hostId))
-      .map<StoredRemoteServer>((host) => {
-        const existing = this.#store.find(host.hostId);
-        const advertisedFingerprint = host.devicePublicKey ? fingerprint(host.devicePublicKey) : "";
-        const pinnedFingerprint = existing?.transport === "webrtc-v2" ? existing.fingerprint : "";
-        const publicKey =
-          existing?.transport === "webrtc-v2" && existing.publicKey
-            ? existing.publicKey
-            : !pinnedFingerprint || pinnedFingerprint === advertisedFingerprint
-              ? host.devicePublicKey
-              : null;
-        if (publicKey) this.#webrtcTransport?.pinHostKey(host.hostId, publicKey);
-        return {
-          id: host.hostId,
-          name: host.name,
-          apiUrl: `webrtc://${host.hostId}`,
-          fingerprint: pinnedFingerprint || advertisedFingerprint,
-          ...(publicKey ? { publicKey } : {}),
-          username: this.#centralAccount.getEmail().trim().toLowerCase(),
-          encryptedToken: "",
-          remoteDesktopAvailable: false,
-          logoVersion: host.logoKey,
-          role: host.role,
-          transport: "webrtc-v2",
-        };
-      });
-    const synchronizedById = new Map(synchronizedServers.map((server) => [server.id, server]));
-    const retainedIds = new Set<string>();
-    const servers = this.#store.servers.flatMap((server) => {
-      if (server.transport !== "webrtc-v2") return this.#allowLocalDevelopmentInvites ? [server] : [];
-      const synchronized = synchronizedById.get(server.id);
-      if (!synchronized) return [];
-      retainedIds.add(server.id);
-      return [synchronized];
+    const transport = this.#webrtcTransport;
+    if (!transport) return;
+    const { servers, removedHostIds, pinnedKeys } = reconcileWebRtcHosts({
+      hosts: await transport.listHosts(),
+      servers: this.#store.servers,
+      localHostId: this.#getLocalHostId(),
+      isHiddenHost: (hostId) => this.#store.isHiddenHost(hostId),
+      username: this.#centralAccount.getEmail().trim().toLowerCase(),
+      keepOtherTransports: this.#allowLocalDevelopmentInvites,
     });
-    for (const server of synchronizedServers) {
-      if (retainedIds.has(server.id)) continue;
-      retainedIds.add(server.id);
-      servers.push(server);
-    }
-    const currentHostIds = new Set(servers.map((server) => server.id));
-    const removedHostIds = this.#store.servers
-      .filter((server) => server.transport === "webrtc-v2" && !currentHostIds.has(server.id))
-      .map((server) => server.id);
+    for (const { hostId, publicKey } of pinnedKeys) transport.pinHostKey(hostId, publicKey);
     for (const serverId of removedHostIds) {
-      await this.#webrtcTransport.disconnect(serverId).catch(() => undefined);
+      await transport.disconnect(serverId).catch(() => undefined);
       this.#clearServerConnectionState(serverId);
     }
     await this.#store.replaceServers(servers);
