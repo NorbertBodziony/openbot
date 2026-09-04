@@ -103,6 +103,9 @@ Only device/session labels, IDs, sign-in times and last-activity times are retur
 Mobile hidden and pinned chat preferences are stored on the phone, separately per account and server.
 Conversation read/unread changes are stored on the desktop host and shared with your other connected devices.
 
+Mobile chat uses a local symbol beside links. It does not fetch website icons or Markdown images
+when displaying a conversation. Link destinations are contacted only when you choose to open them.
+
 ## Email delivery and infrastructure providers
 
 OpenBot sends sign-in and team invitation messages through the configured SMTP provider. The

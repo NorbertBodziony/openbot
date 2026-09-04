@@ -1,0 +1,34 @@
+diff --git a/build/link/zoom/usePreventZoomTransitionDismissal.ios.js b/build/link/zoom/usePreventZoomTransitionDismissal.ios.js
+index 24cbeeaf58d3f5236d691a2db59219a57481651c..1130f9a8eda9182e653ed53537a589d6fa9f27e7 100644
+--- a/build/link/zoom/usePreventZoomTransitionDismissal.ios.js
++++ b/build/link/zoom/usePreventZoomTransitionDismissal.ios.js
+@@ -71,6 +71,7 @@ function usePreventZoomTransitionDismissal(options) {
+         options?.unstable_dismissalBoundsRect?.maxX,
+         options?.unstable_dismissalBoundsRect?.minY,
+         options?.unstable_dismissalBoundsRect?.maxY,
++        context.hasEnabler,
+         context.setDismissalBoundsRect,
+         gestureEnabled,
+         navigation,
+diff --git a/build/global-state/routingQueue.js b/build/global-state/routingQueue.js
+--- a/build/global-state/routingQueue.js
++++ b/build/global-state/routingQueue.js
+@@ -15,14 +15,16 @@ exports.routingQueue = {
+         return exports.routingQueue.queue;
+     },
+     add(action) {
+-        exports.routingQueue.queue.push(action);
++        // useSyncExternalStore must observe a new snapshot for every queued action.
++        exports.routingQueue.queue = [...exports.routingQueue.queue, action];
+         for (const callback of exports.routingQueue.subscribers) {
+             callback();
+         }
+     },
+     run(ref) {
+         // Reset the identity of the queue.
+-        const events = exports.routingQueue.queue;
++        // Draining must not mutate a snapshot already observed by React.
++        const events = [...exports.routingQueue.queue];
+         exports.routingQueue.queue = [];
+         let action;
+         while ((action = events.shift())) {

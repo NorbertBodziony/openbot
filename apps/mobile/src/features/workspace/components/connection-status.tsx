@@ -1,21 +1,59 @@
+import { REMOTE_RETRY_LIMIT } from "@openbot/team-client";
 import { Typography } from "heroui-native";
-import { useThemeColor } from "heroui-native/hooks";
-import { WifiOff } from "lucide-react-native";
 import { View } from "react-native";
 
+import { ConnectionCountdown } from "@/features/workspace/components/connection-countdown";
+import { AnimatedCounter } from "@/features/workspace/components/connection-counter";
+import { ConnectionStatusReveal } from "@/features/workspace/components/connection-status-reveal";
 import type { MobileServer } from "@/features/workspace/model/workspace-types";
 
-export function ConnectionStatus({ server }: { server: MobileServer | undefined }) {
-  const muted = useThemeColor("muted");
-  if (!server || server.state === "online") return null;
+function ConnectionStatusText({ server }: { server: MobileServer }) {
+  const recovery = server.recoveryStatus;
+  const reconnecting = recovery && recovery.phase !== "online";
+  const title = reconnecting ? "Reconnecting" : server.state === "connecting" ? "Connecting…" : "Offline";
+  const detail = reconnecting ? `Attempt ${recovery.attempt}/${REMOTE_RETRY_LIMIT}` : server.connectionMessage;
+  const remainingSeconds = reconnecting ? recovery.remainingSeconds : null;
+
   return (
-    <View className="px-5 pb-3 pt-1">
-      <View className="flex-row items-center gap-2 rounded-2xl bg-control px-3 py-2.5">
-        <WifiOff color={String(muted)} size={17} strokeWidth={1.8} />
-        <Typography.Paragraph type="body-xs" className="min-w-0 flex-1 text-text-secondary">
-          {server.connectionMessage ?? (server.state === "connecting" ? "Connecting…" : "This server is offline.")}
-        </Typography.Paragraph>
-      </View>
+    <View
+      accessible
+      accessibilityLabel={[
+        title,
+        detail,
+        remainingSeconds !== null && remainingSeconds > 0 ? `Retry in ${remainingSeconds} seconds` : null,
+      ]
+        .filter(Boolean)
+        .join(". ")}
+      className="flex-row items-center justify-center px-5 pb-1 pt-1"
+    >
+      <Typography.Paragraph
+        type="body-xs"
+        className="shrink text-text-secondary"
+        numberOfLines={1}
+        maxFontSizeMultiplier={1.2}
+      >
+        {reconnecting ? `${title} · ` : detail ? `${title} · ${detail}` : title}
+      </Typography.Paragraph>
+      {reconnecting ? (
+        <>
+          <AnimatedCounter value={String(recovery.attempt)} />
+          <Typography.Paragraph type="body-xs" className="text-text-secondary" maxFontSizeMultiplier={1.2}>
+            /{REMOTE_RETRY_LIMIT}
+          </Typography.Paragraph>
+        </>
+      ) : null}
+      <ConnectionCountdown seconds={remainingSeconds} />
     </View>
+  );
+}
+
+export function ConnectionStatus({ server }: { server: MobileServer | undefined }) {
+  return (
+    <ConnectionStatusReveal
+      value={server && !server.initialConnectionPending && server.state !== "online" ? server : null}
+      collapseOnHide
+    >
+      {(displayed) => <ConnectionStatusText server={displayed} />}
+    </ConnectionStatusReveal>
   );
 }

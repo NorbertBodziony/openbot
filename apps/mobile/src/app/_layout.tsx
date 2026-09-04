@@ -1,16 +1,20 @@
 import "../../global.css";
 
 import { QueryClientProvider } from "@tanstack/react-query";
+import { usePathname } from "expo-router";
 import { DarkTheme, DefaultTheme, ThemeProvider } from "expo-router/react-navigation";
 import { Stack } from "expo-router/stack";
 import { StatusBar } from "expo-status-bar";
-import { Spinner } from "heroui-native";
 import { HeroUINativeProvider } from "heroui-native/provider";
+import { useLayoutEffect } from "react";
 import { useColorScheme, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { KeyboardProvider } from "react-native-keyboard-controller";
 import { withUniwind } from "uniwind";
 
 import { MobileSessionProvider, useMobileSession } from "@/features/auth/context/mobile-session-context";
+import { AppLoadingOverlayProvider, useAppLoadingOverlay } from "@/shared/components/app-loading-overlay";
+import { BloubAnimationProvider } from "@/shared/components/bloub-loader";
 import { isIOS } from "@/shared/lib/platform";
 import { queryClient } from "@/shared/lib/query-client";
 
@@ -22,13 +26,17 @@ const UniwindGestureHandlerRootView = withUniwind(GestureHandlerRootView);
 
 function RootNavigator() {
   const { loading, session } = useMobileSession();
+  const pathname = usePathname();
+  const { setLoadingLabel, isLoaderPresent } = useAppLoadingOverlay();
 
-  if (loading) {
-    return (
-      <View className="flex-1 items-center justify-center bg-background">
-        <Spinner color="default" accessibilityLabel="Loading account" />
-      </View>
-    );
+  useLayoutEffect(() => {
+    if (loading) setLoadingLabel("Loading account");
+    else if (!session || (pathname !== "/" && pathname !== "/connected")) setLoadingLabel(null);
+    // Keep the loader visible until ConnectedScreen reports the workspace state.
+  }, [loading, pathname, session, setLoadingLabel]);
+
+  if (loading || (!session && isLoaderPresent)) {
+    return <View className="flex-1 bg-background" />;
   }
 
   return (
@@ -55,16 +63,22 @@ export default function RootLayout() {
 
   return (
     <UniwindGestureHandlerRootView className="flex-1">
-      <QueryClientProvider client={queryClient}>
-        <HeroUINativeProvider>
-          <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
-            <StatusBar style="auto" />
-            <MobileSessionProvider>
-              <RootNavigator />
-            </MobileSessionProvider>
-          </ThemeProvider>
-        </HeroUINativeProvider>
-      </QueryClientProvider>
+      <KeyboardProvider preload={false}>
+        <QueryClientProvider client={queryClient}>
+          <HeroUINativeProvider>
+            <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
+              <StatusBar style="auto" />
+              <BloubAnimationProvider>
+                <MobileSessionProvider>
+                  <AppLoadingOverlayProvider>
+                    <RootNavigator />
+                  </AppLoadingOverlayProvider>
+                </MobileSessionProvider>
+              </BloubAnimationProvider>
+            </ThemeProvider>
+          </HeroUINativeProvider>
+        </QueryClientProvider>
+      </KeyboardProvider>
     </UniwindGestureHandlerRootView>
   );
 }

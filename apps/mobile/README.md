@@ -10,6 +10,23 @@ React Native app built with Expo SDK 57, Expo Router, TypeScript 7, Biome, and B
 
 ## Development
 
+Expo Router 57.0.17 is patched in `patches/expo-router@57.0.17.patch` to apply zoom dismissal
+bounds when its enabler registers after the chat mounts. This keeps the avatar-to-header zoom
+interactive from the left edge without enabling dismissal from the middle of the chat.
+The same patch keeps navigation queue snapshots immutable so React observes every navigation
+action, including the first tap when reopening a chat after going back.
+If a row or pinned avatar is tapped during the native return transition, the app retains that
+tap until the list is focused and `transitionEnd` fires. It then invokes the original Link
+handler once, preserving its AppleZoom source without a fixed delay.
+Focus is read from the route's live `isFocused()` state; nested navigators do not always emit
+an initial `focus` event, so a first tap must not depend on receiving one.
+
+Keyboard Controller 1.21.9 is included in SDK 57 Expo Go. Custom development clients and
+standalone apps must be rebuilt after adding this native dependency; a JavaScript reload alone
+cannot add it to an existing binary. All channels use the fingerprint runtime policy, so these
+updates cannot target older app-version `1.0.0` binaries without Keyboard Controller. Build and
+distribute a binary with the new fingerprint before publishing compatible OTA updates.
+
 Run commands from the repository root:
 
 ```bash
@@ -31,13 +48,47 @@ events to React Native. This keeps the production transport identical while rema
 Expo Go without a development build.
 
 Remote connection recovery makes up to five attempts, waiting 10 seconds after each failure. After
-five failures it waits two minutes before starting a new series. The bot list and chat show
-`Reconnecting x/5` and a countdown until the next attempt or series. Countdown ticks are local UI
+five failures it waits two minutes before starting a new series. The bot list shows `Reconnecting`
+beside the server-list button in the header, with a smaller attempt counter and retry countdown below.
+The status disappears once connected. Chat shows a compact, centered `Reconnecting · x/5 · m:ss`
+above the composer, with the same animated digits and no banner. The composer and status float over
+the message list on a transparent layer; bottom spacing keeps the last message clear of the controls.
+The composer and status track interactive keyboard dismissal through `KeyboardStickyView`;
+`KeyboardChatScrollView` uses the same native keyboard frames for message insets and scrolling.
+There is no additional `KeyboardAvoidingView` or keyboard-event timer in the chat. The status disappears
+after reconnecting. Countdown ticks are local UI
 updates, not requests. Backgrounding suspends retries; returning respects any remaining wait and
 starts at most one attempt if its deadline has passed. A successful connection resets the counter. Dead
 WebRTC peers are discarded and authenticated again. Recovery reloads cached conversations as well
 as agents and unread counts, including after an event-buffer reset. An interruption of Signal alone
 can resume sooner while the authenticated WebRTC connection is still healthy, without a new ticket.
+
+Chat links use a local link icon, with a smaller icon in thought-process text. Rendering links
+or Markdown images does not contact their destinations; they open only on tap.
+
+The Bloub loading overlay first renders a single idle pose. After commit, the animation provider
+prepares one shared 30 fps sequence in idle batches of at most four frames. Hidden loaders and
+reduced-motion mode do not start that work. Exit geometry is prepared the same way while holding
+the current pose, then settles to idle before scaling down; unfinished preparation is cancelled
+when no longer needed.
+
+Structured question forms appear inline in mobile chat, including when reopening downloaded history.
+They support option selection, multiple questions, skipping and cancellation. Custom answers are typed
+in the main chat composer and sent to the current form question, rather than posted as chat messages. Responses
+use the existing `/v1/prompts/respond` endpoint over the authenticated desktop connection; conversation
+updates synchronize their resolution across devices. Offline forms are disabled, failed submissions
+can be retried, and completed or expired forms cannot be submitted again. Private answers use a
+secure input and are omitted from the local completion summary; unsent drafts stay in component memory.
+
+When no bots have loaded and the selected server is connecting or offline, the bot list shows
+`Waiting for connection`. The empty-server prompt appears only once the server is online; bots
+already loaded remain visible during reconnection.
+
+While a server is disconnected, its bot avatars and colored chat bubbles fade locally with the same
+280 ms transition. Chat input, attachments,
+voice/send controls and suggested prompts are disabled. Draft text is preserved, and the controls
+and original colors return when the server is online. This visual state is derived only in the
+mobile UI: it never changes the bot's synced avatar profile or sends appearance updates over RTC.
 
 Invitations pin the desktop public key before acceptance. Pins are stored in the device Keychain /
 Keystore, scoped to the account service and user, and checked on later directory refreshes. Joining

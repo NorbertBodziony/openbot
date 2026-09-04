@@ -10,6 +10,9 @@ import { ChatGlassIconButton } from "@/features/chat/components/chat-glass-icon-
 import type { MobileBot } from "@/features/workspace/context/mobile-workspace-context";
 import { SheetScrollEdgeEffect } from "@/shared/components/sheet-scroll-edge-effect";
 
+//! Intentionally hidden until desktop handoff is implemented.
+const DESKTOP_HANDOFF_ENABLED = false;
+
 interface ChatHeaderProps {
   bot: MobileBot;
   fallbackBackground: ViewStyle["backgroundColor"];
@@ -62,7 +65,7 @@ export function ChatHeader({
         >
           <Link.AppleZoomTarget>
             <BotPinAvatar botId={bot.id} location="chat" size={28}>
-              <BloubAvatar hue={bot.avatarHue} seed={bot.avatarSeed} size={28} />
+              <BloubAvatar botId={bot.id} hue={bot.avatarHue} seed={bot.avatarSeed} size={28} />
             </BotPinAvatar>
           </Link.AppleZoomTarget>
           <Typography.Paragraph className="min-w-0 shrink" weight="semibold" numberOfLines={1}>
@@ -72,14 +75,16 @@ export function ChatHeader({
 
         <View className="flex-1" />
 
-        <ChatGlassIconButton
-          accessibilityLabel="Open on desktop"
-          fallbackBackground={fallbackBackground}
-          liquidGlassAvailable={liquidGlassAvailable}
-          onPress={() => Alert.alert("Open on desktop", "Desktop handoff will be connected with the server API.")}
-        >
-          <Monitor color={iconColor} size={22} strokeWidth={1.9} />
-        </ChatGlassIconButton>
+        {DESKTOP_HANDOFF_ENABLED ? (
+          <ChatGlassIconButton
+            accessibilityLabel="Open on desktop"
+            fallbackBackground={fallbackBackground}
+            liquidGlassAvailable={liquidGlassAvailable}
+            onPress={() => Alert.alert("Open on desktop", "Desktop handoff will be connected with the server API.")}
+          >
+            <Monitor color={iconColor} size={22} strokeWidth={1.9} />
+          </ChatGlassIconButton>
+        ) : null}
       </View>
       <SheetScrollEdgeEffect
         style={{ height: topInset + 82, left: 0, position: "absolute", right: 0, top: 0, zIndex: 10 }}

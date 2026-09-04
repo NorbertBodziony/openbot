@@ -2,23 +2,21 @@ import { isLiquidGlassAvailable } from "expo-glass-effect";
 import * as Haptics from "expo-haptics";
 import { router, useIsFocused } from "expo-router";
 import { useThemeColor } from "heroui-native/hooks";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  AppState,
-  KeyboardAvoidingView,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
-  type ScrollView,
-} from "react-native";
+import { type ComponentRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AppState, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import { KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { scheduleOnRN } from "react-native-worklets";
 
 import { useBotPinTransition } from "@/features/bots/components/bot-pin-transition";
 import { ChatComposer } from "@/features/chat/components/chat-composer";
 import { ChatHeader } from "@/features/chat/components/chat-header";
-import { type ChatMessage, ChatMessageList } from "@/features/chat/components/chat-message-list";
+import { ChatMessageList } from "@/features/chat/components/chat-message-list";
+import { useQuestionPrompt } from "@/features/chat/components/use-question-prompt";
+import { latestReadableMessage, projectChatMessages } from "@/features/chat/model/chat-messages";
 import { ConnectionStatus } from "@/features/workspace/components/connection-status";
+import { useBotActivity } from "@/features/workspace/components/use-bot-activity";
 import type { MobileBot } from "@/features/workspace/context/mobile-workspace-context";
 import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 import { isIOS } from "@/shared/lib/platform";
@@ -39,9 +37,11 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
   const isFocused = useIsFocused();
   const [appActive, setAppActive] = useState(AppState.currentState === "active");
   const [atLatest, setAtLatest] = useState(false);
+  const [composerHeight, setComposerHeight] = useState(0);
   const insets = useSafeAreaInsets();
+  const keyboardOffset = Math.max(insets.bottom, 10) - 10;
   const { leaveBotChatAnimated } = useBotPinTransition();
-  const scrollViewRef = useRef<ScrollView>(null);
+  const scrollViewRef = useRef<ComponentRef<typeof ChatMessageList>>(null);
   const initialScrollBotIdRef = useRef<string | null>(bot.id);
   const [foreground, muted, fieldBackground, raised, action, actionForeground, background] = useThemeColor([
     "foreground",
@@ -54,28 +54,40 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
   ]);
   const [draft, setDraft] = useState("");
   const [showStarter, setShowStarter] = useState(true);
-  const { conversations, loadConversation, markBotRead, servers, sendMessage: sendTeamMessage } = useMobileWorkspace();
+  const [historyLoadFailed, setHistoryLoadFailed] = useState(false);
+  const historyRequestRef = useRef(0);
+  const {
+    conversations,
+    loadConversation,
+    markBotRead,
+    servers,
+    respondToPrompt,
+    sendMessage: sendTeamMessage,
+  } = useMobileWorkspace();
   const conversation = conversations[bot.id];
   const conversationRef = useRef(conversation);
   conversationRef.current = conversation;
-  const messages = useMemo<ChatMessage[]>(
-    () =>
-      (conversation?.messages ?? [])
-        .filter((message) => message.text.trim().length > 0 && message.author !== "system")
-        .map((message) => ({
-          id: message.id,
-          author: message.author === "user" ? "user" : "bot",
-          body: message.text,
-        })),
-    [conversation],
-  );
+  const activity = useBotActivity(bot.id);
+  const messages = useMemo(() => projectChatMessages(conversation?.messages ?? []), [conversation]);
   const liquidGlassAvailable = isLiquidGlassAvailable();
-  const latestMessage = conversation?.messages.findLast(
-    (message) => message.author !== "system" && message.text.trim().length > 0,
-  );
+  const latestMessage = latestReadableMessage(conversation?.messages ?? []);
   const readBoundary = latestMessage?.id;
   const readBoundaryStatus = latestMessage?.status;
-  const serverOnline = servers.find((server) => server.id === bot.serverId)?.state === "online";
+  const server = servers.find((server) => server.id === bot.serverId);
+  const serverOnline = server?.state === "online";
+  const activePrompt = messages.findLast(
+    (message) =>
+      message.kind === "question" &&
+      !message.prompt.resolution &&
+      Boolean(conversation?.activeTurnId) &&
+      message.turnId === conversation?.activeTurnId,
+  );
+  const questionForm = useQuestionPrompt(
+    bot.id,
+    activePrompt?.kind === "question" ? activePrompt : undefined,
+    serverOnline,
+    respondToPrompt,
+  );
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => setAppActive(state === "active"));
@@ -89,21 +101,35 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
   }, [isFocused, appActive, atLatest, serverOnline, readBoundary, readBoundaryStatus, bot.id, markBotRead]);
 
   useEffect(() => {
-    let active = true;
-    const revisionBeforeLoad = conversationRef.current?.revision ?? null;
     setAtLatest(false);
     initialScrollBotIdRef.current = bot.id;
+  }, [bot.id]);
+
+  const fetchHistory = useCallback(() => {
+    if (!serverOnline) return;
+    const requestId = ++historyRequestRef.current;
+    const revisionBeforeLoad = conversationRef.current?.revision ?? null;
+    setHistoryLoadFailed(false);
     void loadConversation(bot.id)
       .then((snapshot) => {
-        if (active && (revisionBeforeLoad === null || snapshot.revision > revisionBeforeLoad)) {
+        if (
+          historyRequestRef.current === requestId &&
+          (revisionBeforeLoad === null || snapshot.revision > revisionBeforeLoad)
+        ) {
           initialScrollBotIdRef.current = bot.id;
         }
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (historyRequestRef.current === requestId) setHistoryLoadFailed(true);
+      });
+  }, [bot.id, loadConversation, serverOnline]);
+
+  useEffect(() => {
+    fetchHistory();
     return () => {
-      active = false;
+      historyRequestRef.current += 1;
     };
-  }, [bot.id, loadConversation]);
+  }, [fetchHistory]);
 
   const handleContentSizeChange = useCallback(() => {
     if (!conversation || (initialScrollBotIdRef.current !== bot.id && !atLatest)) return;
@@ -111,11 +137,6 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
     scrollViewRef.current?.scrollToEnd({ animated: false });
     setAtLatest(true);
   }, [atLatest, bot.id, conversation]);
-
-  const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-    setAtLatest(contentOffset.y + layoutMeasurement.height >= contentSize.height - 24);
-  }, []);
 
   const handleLeaveConversation = useCallback(() => {
     if (animateAvatarOnExit) leaveBotChatAnimated(bot.id);
@@ -125,6 +146,7 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
   const edgeBackGesture = useMemo(
     () =>
       Gesture.Pan()
+        .enabled(!isIOS)
         .hitSlop({ left: 0, width: CHAT_BACK_EDGE_WIDTH })
         .activeOffsetX(12)
         .failOffsetX(-8)
@@ -135,11 +157,17 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
     [handleLeaveConversation],
   );
 
-  function sendMessage(value = draft): void {
+  function sendMessage(value: string): void {
+    if (!serverOnline) return;
     const body = value.trim();
     if (!body) return;
 
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (questionForm.question) {
+      questionForm.answer([body]);
+      requestAnimationFrame(() => scrollViewRef.current?.scrollToEnd({ animated: true }));
+      return;
+    }
     setDraft("");
     setShowStarter(false);
     void sendTeamMessage(bot.id, body).catch(() => setDraft((current) => current || body));
@@ -148,50 +176,80 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
 
   return (
     <GestureDetector gesture={edgeBackGesture}>
-      <KeyboardAvoidingView
-        behavior={isIOS ? "padding" : "height"}
-        className="flex-1"
-        style={{ backgroundColor: background }}
-      >
-        <ChatHeader
-          bot={bot}
-          fallbackBackground={fieldBackground}
-          foreground={foreground}
-          liquidGlassAvailable={liquidGlassAvailable}
-          topInset={insets.top}
-          onBack={handleLeaveConversation}
-        />
-        <ChatMessageList
-          ref={scrollViewRef}
-          bot={bot}
-          fieldBackground={fieldBackground}
-          foreground={foreground}
-          messages={messages}
-          muted={muted}
-          raised={raised}
-          showStarter={showStarter && messages.length === 0}
-          topInset={insets.top}
-          onContentSizeChange={handleContentSizeChange}
-          onScroll={handleScroll}
-          onDismissStarter={() => setShowStarter(false)}
-          onSelectStarter={sendMessage}
-        />
-        <ConnectionStatus server={servers.find((server) => server.id === bot.serverId)} />
-        <ChatComposer
-          action={action}
-          actionForeground={actionForeground}
-          botName={bot.name}
-          bottomInset={insets.bottom}
-          draft={draft}
-          fallbackBackground={fieldBackground}
-          foreground={foreground}
-          liquidGlassAvailable={liquidGlassAvailable}
-          muted={muted}
-          raised={raised}
-          onChangeDraft={setDraft}
-          onSend={() => sendMessage()}
-        />
-      </KeyboardAvoidingView>
+      <View className="flex-1" style={{ backgroundColor: background }}>
+        <View className="flex-1">
+          <ChatHeader
+            bot={bot}
+            fallbackBackground={fieldBackground}
+            foreground={foreground}
+            liquidGlassAvailable={liquidGlassAvailable}
+            topInset={insets.top}
+            onBack={handleLeaveConversation}
+          />
+          <ChatMessageList
+            ref={scrollViewRef}
+            bot={bot}
+            bottomInset={composerHeight}
+            keyboardOffset={keyboardOffset}
+            canSend={serverOnline}
+            historyState={
+              conversation
+                ? "ready"
+                : server?.initialConnectionPending
+                  ? "connecting"
+                  : !serverOnline
+                    ? "waiting"
+                    : historyLoadFailed
+                      ? "error"
+                      : "loading"
+            }
+            appActive={appActive}
+            activeTurnId={conversation?.activeTurnId ?? null}
+            questionForm={questionForm}
+            fieldBackground={fieldBackground}
+            foreground={foreground}
+            messages={messages}
+            muted={muted}
+            raised={raised}
+            showStarter={showStarter && serverOnline && !activity && conversation?.messages.length === 0}
+            topInset={insets.top}
+            onContentSizeChange={handleContentSizeChange}
+            onEndVisible={setAtLatest}
+            onDismissStarter={() => setShowStarter(false)}
+            onSelectStarter={sendMessage}
+            onRetryHistory={fetchHistory}
+          />
+          <KeyboardStickyView
+            style={{ position: "absolute", left: 0, right: 0, bottom: 0 }}
+            offset={{ opened: keyboardOffset }}
+            pointerEvents="box-none"
+            onLayout={({ nativeEvent: { layout } }) => setComposerHeight(layout.height)}
+          >
+            <ConnectionStatus server={server} />
+            <ChatComposer
+              key={JSON.stringify([
+                bot.id,
+                questionForm.question ? questionForm.messageId : null,
+                questionForm.question?.id,
+              ])}
+              action={action}
+              actionForeground={actionForeground}
+              botName={bot.name}
+              bottomInset={insets.bottom}
+              disabled={!serverOnline || questionForm.pending}
+              answerQuestion={questionForm.question}
+              draft={questionForm.question ? questionForm.draft : draft}
+              fallbackBackground={fieldBackground}
+              foreground={foreground}
+              liquidGlassAvailable={liquidGlassAvailable}
+              muted={muted}
+              raised={raised}
+              onChangeDraft={questionForm.question ? questionForm.setDraft : setDraft}
+              onSend={sendMessage}
+            />
+          </KeyboardStickyView>
+        </View>
+      </View>
     </GestureDetector>
   );
 }

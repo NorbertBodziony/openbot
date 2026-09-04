@@ -2,16 +2,22 @@ import { router } from "expo-router";
 import { useIsFocused } from "expo-router/react-navigation";
 import { Typography } from "heroui-native";
 import { View } from "react-native";
+import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 
 import { AppLogo } from "@/features/auth/components/app-logo";
 import { PixelBlastBackground } from "@/features/auth/components/pixel-blast-background";
 import { ScanQrButton } from "@/features/auth/components/scan-qr-button";
 
+const SIGN_IN_ENTER = FadeIn.duration(220).reduceMotion(ReduceMotion.System);
+
 export function SignInScreen() {
   const isFocused = useIsFocused();
 
   return (
-    <View className="min-h-full flex-1 grow items-center justify-center overflow-hidden bg-background px-6 pb-safe-offset-8 pt-safe-offset-8">
+    <Animated.View
+      entering={SIGN_IN_ENTER}
+      className="min-h-full flex-1 grow items-center justify-center overflow-hidden bg-background px-6 pb-safe-offset-8 pt-safe-offset-8"
+    >
       <PixelBlastBackground active={isFocused} />
       <View className="z-10 w-full max-w-90">
         <View className="mb-10.5 items-center justify-center gap-6">
@@ -39,6 +45,6 @@ export function SignInScreen() {
           <ScanQrButton onPress={() => router.push("/scan-qr-code")} />
         </View>
       </View>
-    </View>
+    </Animated.View>
   );
 }

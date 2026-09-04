@@ -1,7 +1,6 @@
 import {
   type AgentEvent,
   type BotSummary,
-  type ConversationMessage,
   type ConversationSnapshot,
   type CreateBotInput,
   isAvatarHue,
@@ -45,6 +44,8 @@ import {
   RemoteTeamTransport,
   type RemoteTeamTransportRef,
 } from "@/features/workspace/components/remote-team-transport";
+import { type MobileBotActivities, reduceBotActivity } from "@/features/workspace/model/bot-activity";
+import { decodeConversation } from "@/features/workspace/model/conversation";
 import { trustedHostKeys } from "@/features/workspace/model/trusted-host-keys";
 import {
   MAX_PINNED_BOTS,
@@ -75,6 +76,7 @@ const EMPTY_SERVER: MobileServer = {
   name: "OpenBot",
   kind: "local",
   state: "connecting",
+  initialConnectionPending: true,
   connectionMessage: null,
   address: null,
   accent: SERVER_ACCENTS[0],
@@ -121,6 +123,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
   const [activeServerId, setActiveServerId] = useState<string | null>(session.host?.hostId ?? null);
   const activeServerPublicKey = servers.find((server) => server.id === activeServerId)?.publicKey;
   const [conversations, setConversations] = useState<Record<string, ConversationSnapshot>>({});
+  const [activityByServer, setActivityByServer] = useState<Record<string, MobileBotActivities>>({});
   const conversationsRef = useRef(conversations);
   conversationsRef.current = conversations;
   const preferenceStore = useMemo(
@@ -140,19 +143,23 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
 
   const installHosts = useCallback((hosts: RemoteTeamHost[]) => {
     setServers((current) => {
-      const states = new Map(current.map((server) => [server.id, server.state]));
-      const messages = new Map(current.map((server) => [server.id, server.connectionMessage]));
-      return hosts.map((host, index) => ({
-        id: host.hostId,
-        name: host.name,
-        kind: host.role === "owner" ? "local" : "remote",
-        state: states.get(host.hostId) ?? "offline",
-        connectionMessage: messages.get(host.hostId) ?? null,
-        address: null,
-        accent: SERVER_ACCENTS[index % SERVER_ACCENTS.length] ?? SERVER_ACCENTS[0],
-        publicKey: current.find((server) => server.id === host.hostId)?.publicKey ?? host.devicePublicKey,
-        membershipId: host.membershipId,
-      }));
+      const previousServers = new Map(current.map((server) => [server.id, server]));
+      return hosts.map((host, index) => {
+        const previous = previousServers.get(host.hostId);
+        return {
+          id: host.hostId,
+          name: host.name,
+          kind: host.role === "owner" ? "local" : "remote",
+          state: previous?.state ?? "offline",
+          initialConnectionPending: previous?.initialConnectionPending ?? true,
+          connectionMessage: previous?.connectionMessage ?? null,
+          recoveryStatus: previous?.recoveryStatus,
+          address: null,
+          accent: SERVER_ACCENTS[index % SERVER_ACCENTS.length] ?? SERVER_ACCENTS[0],
+          publicKey: previous?.publicKey ?? host.devicePublicKey,
+          membershipId: host.membershipId,
+        };
+      });
     });
     setActiveServerId((current) => (hosts.some((host) => host.hostId === current) ? current : null));
   }, []);
@@ -203,6 +210,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
   const loadServer = useCallback(
     async (server: MobileServer) => {
       const currentGeneration = ++loadGeneration.current;
+      setActivityByServer((current) => ({ ...current, [server.id]: {} }));
       connectionStage.current = "preferences";
       const saved = preferenceStore.read(server.id);
       setPreferences((current) => ({ ...current, [server.id]: saved }));
@@ -241,7 +249,9 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
       connectionStage.current = "connection";
       setServers((current) =>
         current.map((candidate) =>
-          candidate.id === server.id ? { ...candidate, state: "online", connectionMessage: null } : candidate,
+          candidate.id === server.id
+            ? { ...candidate, state: "online", initialConnectionPending: false, connectionMessage: null }
+            : candidate,
         ),
       );
     },
@@ -262,7 +272,9 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
         const connectionMessage = lastFailure;
         setServers((current) =>
           current.map((candidate) =>
-            candidate.id === server.id ? { ...candidate, state: "offline", connectionMessage } : candidate,
+            candidate.id === server.id
+              ? { ...candidate, state: "offline", initialConnectionPending: false, connectionMessage }
+              : candidate,
           ),
         );
       },
@@ -280,6 +292,8 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
                   state:
                     status.phase === "online" ? "online" : status.phase === "connecting" ? "connecting" : "offline",
                   connectionMessage: remoteRecoveryMessage(status, lastFailure),
+                  recoveryStatus: status,
+                  initialConnectionPending: candidate.initialConnectionPending && status.phase === "connecting",
                 }
               : candidate,
           ),
@@ -326,6 +340,16 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
   const handleTeamEvent = useCallback(
     (serverId: string, event: AgentEvent | TeamRealtimeEvent) => {
       if (removedServers.current.has(serverId)) return;
+      if (
+        event.type !== "conversation" ||
+        event.snapshot.revision >= (conversationsRef.current[event.snapshot.botId]?.revision ?? 0)
+      ) {
+        setActivityByServer((current) => {
+          const previous = current[serverId] ?? {};
+          const next = reduceBotActivity(previous, event);
+          return next === previous ? current : { ...current, [serverId]: next };
+        });
+      }
       if (
         event.type === "conversation" ||
         event.type === "conversation-invalidated" ||
@@ -466,6 +490,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
       pinnedBotIds,
       unreadBotIds,
       conversations,
+      activityByServer,
       selectServer: setActiveServerId,
       leaveServer: async (serverId) => {
         const server = serversRef.current.find((candidate) => candidate.id === serverId);
@@ -483,6 +508,11 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
         }
         setServers((current) => current.filter((candidate) => candidate.id !== serverId));
         setBots((current) => current.filter((bot) => bot.serverId !== serverId));
+        setActivityByServer((current) => {
+          const next = { ...current };
+          delete next[serverId];
+          return next;
+        });
         setConversations((current) =>
           Object.fromEntries(Object.entries(current).filter(([id]) => !removedIds.has(id))),
         );
@@ -500,6 +530,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
             name: host.name,
             kind: "remote",
             state: "offline",
+            initialConnectionPending: true,
             connectionMessage: null,
             address: null,
             accent: SERVER_ACCENTS[0],
@@ -546,6 +577,32 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
           replyToMessageId: null,
         });
       },
+      respondToPrompt: async (botId, input) => {
+        const bot = bots.find((candidate) => candidate.id === botId);
+        const snapshot = conversationsRef.current[botId];
+        const message = snapshot?.messages.find(
+          (item) =>
+            item.turnId === snapshot.activeTurnId &&
+            item.questionPrompt?.requestId === input.requestId &&
+            item.questionPrompt.resolution === null,
+        );
+        if (
+          bot?.serverId !== activeServer.id ||
+          activeServer.state !== "online" ||
+          !message?.questionPrompt ||
+          message.questionPrompt.resolution ||
+          !snapshot?.activeTurnId ||
+          message.turnId !== snapshot.activeTurnId
+        ) {
+          throw new Error("This form is no longer available.");
+        }
+        await request("POST", "/v1/prompts/respond", ignoreResponse, {
+          requestId: input.requestId,
+          answers: input.answers,
+        });
+        // The answer is committed even if a subsequent refresh loses connection.
+        void loadConversation(botId).catch(() => undefined);
+      },
       hideBot: (botId) => {
         updatePreferences(activeServer.id, (current) => ({
           hidden: [...new Set([...current.hidden, botId])],
@@ -586,6 +643,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
     };
   }, [
     activeServerId,
+    activityByServer,
     bots,
     conversations,
     directory,
@@ -701,28 +759,6 @@ function decodeBotSummaries(value: unknown): RemoteBot[] {
   return value.map(decodeBot);
 }
 
-function decodeConversation(value: unknown): ConversationSnapshot {
-  if (
-    !isDynamicRecord(value) ||
-    !isString(value.botId) ||
-    (value.threadId !== null && !isString(value.threadId)) ||
-    (value.activeTurnId !== null && !isString(value.activeTurnId)) ||
-    !isNumber(value.revision) ||
-    !Number.isSafeInteger(value.revision) ||
-    value.revision < 0 ||
-    !Array.isArray(value.messages)
-  ) {
-    throw new Error("The server returned an invalid conversation.");
-  }
-  return {
-    botId: value.botId,
-    threadId: value.threadId,
-    activeTurnId: value.activeTurnId,
-    revision: value.revision,
-    messages: value.messages.map(decodeConversationMessage),
-  };
-}
-
 function decodeConversationReads(value: unknown): Record<string, { unreadCount: number }> {
   if (!isDynamicRecord(value)) throw new Error("The server returned invalid read states.");
   const reads: Record<string, { unreadCount: number }> = {};
@@ -738,40 +774,6 @@ function decodeConversationReads(value: unknown): Record<string, { unreadCount: 
     reads[botId] = { unreadCount: readState.unreadCount };
   }
   return reads;
-}
-
-function decodeConversationMessage(value: unknown): ConversationMessage {
-  if (
-    !isDynamicRecord(value) ||
-    !isString(value.id) ||
-    !isConversationAuthor(value.author) ||
-    !isString(value.text) ||
-    !isString(value.createdAt) ||
-    !isConversationStatus(value.status)
-  ) {
-    throw new Error("The server returned an invalid conversation message.");
-  }
-  return {
-    id: value.id,
-    author: value.author,
-    text: value.text,
-    createdAt: value.createdAt,
-    status: value.status,
-    ...(isString(value.turnId) ? { turnId: value.turnId } : {}),
-    ...(isConversationSource(value.source) ? { source: value.source } : {}),
-  };
-}
-
-function isConversationAuthor(value: unknown): value is ConversationMessage["author"] {
-  return value === "user" || value === "assistant" || value === "agent" || value === "system";
-}
-
-function isConversationStatus(value: unknown): value is ConversationMessage["status"] {
-  return value === "streaming" || value === "completed" || value === "failed" || value === "interrupted";
-}
-
-function isConversationSource(value: unknown): value is NonNullable<ConversationMessage["source"]> {
-  return value === "user" || value === "assistant" || value === "agent" || value === "system" || value === "routine";
 }
 
 function ignoreResponse(): void {}
