@@ -8,13 +8,28 @@ import { type Browser, chromium, type Page } from "playwright-core";
 
 export const DEFAULT_DEV_AUTOMATION_PORT = 9_333;
 
-export function readAutomationPort(value: string | undefined): number {
-  if (value === undefined || value.trim() === "") return DEFAULT_DEV_AUTOMATION_PORT;
-  const port = Number(value);
+export interface ResolvedAutomationPort {
+  port: number;
+  explicit: boolean;
+}
+
+// CDP exposes no per-profile identity (`OPENBOT_DEV_INSTANCE_ID` only changes
+// the user-data directory), so two OpenBot instances are indistinguishable
+// over the protocol. The caller uses `explicit` to demand `--port=` before
+// any mutation, keeping a defaulted port read-only.
+export function resolveAutomationPort(
+  flag: string | undefined,
+  environment: string | undefined,
+): ResolvedAutomationPort {
+  const source = flag ?? environment;
+  if (source === undefined || source.trim() === "") {
+    return { port: DEFAULT_DEV_AUTOMATION_PORT, explicit: false };
+  }
+  const port = Number(source);
   if (!Number.isInteger(port) || port < 1_024 || port > 65_535) {
     throw new Error("OPENBOT_DEV_REMOTE_DEBUGGING_PORT must be an integer from 1024 to 65535.");
   }
-  return port;
+  return { port, explicit: true };
 }
 
 export interface AutomationSession {

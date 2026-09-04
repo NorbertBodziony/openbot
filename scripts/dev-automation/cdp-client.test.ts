@@ -1,7 +1,7 @@
 // Guardrails that keep automation on the intended dev instance: the wrong
 // port must fail before any click or keystroke can reach another app.
 import { describe, expect, it } from "vitest";
-import { isOpenBotBrowser, pickMainPage, readAutomationPort } from "./cdp-client";
+import { isOpenBotBrowser, pickMainPage, resolveAutomationPort } from "./cdp-client";
 
 describe("isOpenBotBrowser", () => {
   it("accepts the Electron user agent", () => {
@@ -29,9 +29,18 @@ describe("pickMainPage", () => {
   });
 });
 
-describe("readAutomationPort", () => {
+describe("resolveAutomationPort", () => {
   it("rejects values outside the dev port range", () => {
-    expect(() => readAutomationPort("80")).toThrow();
-    expect(readAutomationPort(undefined)).toBe(9_333);
+    expect(() => resolveAutomationPort("80", undefined)).toThrow();
+  });
+
+  it("marks defaulted ports as non-explicit so mutations refuse them", () => {
+    expect(resolveAutomationPort(undefined, undefined)).toEqual({ port: 9_333, explicit: false });
+    expect(resolveAutomationPort("", "  ")).toEqual({ port: 9_333, explicit: false });
+  });
+
+  it("marks flag and environment ports as explicit", () => {
+    expect(resolveAutomationPort("9334", undefined)).toEqual({ port: 9334, explicit: true });
+    expect(resolveAutomationPort(undefined, "9335")).toEqual({ port: 9335, explicit: true });
   });
 });

@@ -3,7 +3,7 @@
 // copies openbot.db: it drives the instance you already have open.
 import { join } from "node:path";
 import { createOpenBotLogger } from "@openbot/logging";
-import { connectToDevApp, readAutomationPort } from "./cdp-client";
+import { connectToDevApp, resolveAutomationPort } from "./cdp-client";
 import { clickByRole, parseAutomationRole, screenshotTo, snapshotPage, typeByRole } from "./tools";
 
 // Diagnostics go to stderr so stdout carries only the final JSON document,
@@ -37,11 +37,17 @@ function readTimeout(): number {
   return timeout;
 }
 
-function requireMutations(command: string): void {
+function requireMutations(command: string, portExplicit: boolean): void {
   if (!hasFlag("--allow-mutations")) {
     throw new Error(
       `${command} changes the live dev app. Re-run with --allow-mutations. ` +
         "Snapshots and screenshots stay available without it.",
+    );
+  }
+  if (!portExplicit) {
+    throw new Error(
+      `${command} changes the live dev app, and CDP cannot tell OpenBot profiles apart. ` +
+        "Re-run with --port=<OPENBOT_DEV_REMOTE_DEBUGGING_PORT> naming the instance you mean to drive.",
     );
   }
 }
@@ -51,11 +57,15 @@ async function main(): Promise<void> {
   if (command !== "snapshot" && command !== "click" && command !== "type" && command !== "screenshot") {
     throw new Error("Usage: bun scripts/dev-automation/cli.ts <snapshot|click|type|screenshot> [flags]");
   }
-  if (command === "click" || command === "type") requireMutations(command);
+  const resolved = resolveAutomationPort(
+    flagValue("--port") ?? undefined,
+    process.env.OPENBOT_DEV_REMOTE_DEBUGGING_PORT,
+  );
+  if (command === "click" || command === "type") requireMutations(command, resolved.explicit);
   const role = command === "click" || command === "type" ? parseAutomationRole(requireFlagValue("--role")) : null;
   const name = command === "click" || command === "type" ? requireFlagValue("--name") : null;
   const text = command === "type" ? requireFlagValue("--text") : null;
-  const port = readAutomationPort(flagValue("--port") ?? process.env.OPENBOT_DEV_REMOTE_DEBUGGING_PORT);
+  const port = resolved.port;
   const timeoutMs = readTimeout();
   const session = await connectToDevApp(port, logger);
   try {

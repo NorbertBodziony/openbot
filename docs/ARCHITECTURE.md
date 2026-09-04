@@ -83,6 +83,7 @@ lifetime: state that belongs to one team server goes inside the keyed scope in
     `process.stdout.write` with a `// Machine-readable:` comment instead. Dev automation
     (`scripts/dev-automation`, `bun run dev:automation`) drives the already-running dev app over its
     remote-debugging CDP port and never launches a second instance, seeds, or resets the dev profile.
+    Mutations name their instance with `--port=` because CDP exposes no per-profile identity.
 
 SQLite migration history starts at the frozen version 8 compatibility baseline. Keep the baseline
 schema unchanged, append every later migration in numeric order, and update the separate latest
