@@ -38,7 +38,13 @@ export function ChatComposer({
 }: ChatComposerProps) {
   const hasDraft = Boolean(draft.trim());
   const inputRef = useRef<TextInput>(null);
+  const editingRef = useRef(false);
+  const latestTextRef = useRef(draft);
   const sendAfterEditingRef = useRef(false);
+
+  useEffect(() => {
+    latestTextRef.current = draft;
+  }, [draft]);
 
   useEffect(() => {
     if (disabled) {
@@ -49,12 +55,12 @@ export function ChatComposer({
 
   function requestSend(): void {
     if (disabled || sendAfterEditingRef.current) return;
-    if (inputRef.current?.isFocused()) {
+    if (editingRef.current && inputRef.current) {
       // Ending native editing commits pending autocorrection before sending.
       sendAfterEditingRef.current = true;
       inputRef.current.blur();
     } else {
-      onSend(draft);
+      onSend(latestTextRef.current);
     }
   }
 
@@ -104,11 +110,21 @@ export function ChatComposer({
           selectionColor={foreground}
           style={{ fontSize: 16, height: 48, paddingBottom: 0, paddingTop: 0 }}
           value={draft}
-          onChangeText={onChangeDraft}
+          onFocus={() => {
+            editingRef.current = true;
+          }}
+          onChangeText={(text) => {
+            latestTextRef.current = text;
+            onChangeDraft(text);
+          }}
           onSubmitEditing={() => {
             if (!disabled) sendAfterEditingRef.current = true;
           }}
           onEndEditing={({ nativeEvent: { text } }) => {
+            // Native editing can end before the send button's release event,
+            // while TextInput.isFocused() is still waiting for onBlur.
+            editingRef.current = false;
+            latestTextRef.current = text;
             if (!sendAfterEditingRef.current) return;
             sendAfterEditingRef.current = false;
             if (!disabled) onSend(text);

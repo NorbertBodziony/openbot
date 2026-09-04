@@ -26,7 +26,7 @@ const UniwindGestureHandlerRootView = withUniwind(GestureHandlerRootView);
 function RootNavigator() {
   const { loading, session } = useMobileSession();
   const pathname = usePathname();
-  const { setLoadingLabel } = useAppLoadingOverlay();
+  const { setLoadingLabel, isLoaderPresent } = useAppLoadingOverlay();
 
   useLayoutEffect(() => {
     if (loading) setLoadingLabel("Loading account");
@@ -34,7 +34,7 @@ function RootNavigator() {
     // Keep the loader visible until ConnectedScreen reports the workspace state.
   }, [loading, pathname, session, setLoadingLabel]);
 
-  if (loading) {
+  if (loading || (!session && isLoaderPresent)) {
     return <View className="flex-1 bg-background" />;
   }
 
