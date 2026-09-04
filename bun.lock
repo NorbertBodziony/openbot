@@ -252,7 +252,7 @@
     "@cloudflare/workers-types": "5.20260815.1",
     "@fontsource-variable/inter": "5.3.0",
     "@kobalte/core": "2.0.0-alpha.0",
-    "@norbert_bodziony/bloub": "0.2.1",
+    "@norbert_bodziony/bloub": "0.3.0",
     "@openpanel/web": "1.4.1",
     "@solidjs/signals": "2.0.0-rc.0",
     "@solidjs/testing-library": "1.0.0-beta.2",
@@ -778,7 +778,7 @@
 
     "@noble/hashes": ["@noble/hashes@2.3.0", "", {}, "sha512-oN+QwyX7VSHotibwubG3kpzbwKrfnyR6OOO+3Nk/53ADL7FmgHHz4TgrbaYKvvOw09u6QTx0oiH1cNCIOuN0CQ=="],
 
-    "@norbert_bodziony/bloub": ["@norbert_bodziony/bloub@0.2.1", "", { "peerDependencies": { "@solidjs/web": "^2.0.0-rc.0", "solid-js": "^2.0.0-rc.0" } }, "sha512-HyCvKreqOPlpCfgvHN4CtmNYI+K8Fe9ZYh3Eoe9rc9oWesp5IXq+c6pQMyA+rRUR3/GKNjU6lO50bAaiTUcm/g=="],
+    "@norbert_bodziony/bloub": ["@norbert_bodziony/bloub@0.3.0", "", { "peerDependencies": { "@solidjs/web": "^2.0.0-rc.0", "solid-js": "^2.0.0-rc.0" } }, "sha512-nWqtQsX9dQ4fFipi3x0YvygFXXe3i3vcBtJovLTX5UdKK2XIGK1oAWQahXJqpOLjeVNiAGutB5SpaBf6IJoDAQ=="],
 
     "@nothing-but/utils": ["@nothing-but/utils@0.17.0", "", {}, "sha512-TuCHcHLOqDL0SnaAxACfuRHBNRgNJcNn9X0GiH5H3YSDBVquCr3qEIG3FOQAuMyZCbu9w8nk2CHhOsn7IvhIwQ=="],
 
