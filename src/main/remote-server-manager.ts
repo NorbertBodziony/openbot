@@ -468,6 +468,22 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         logoVersion: identity.logoVersion,
       });
       this.#connections.setState(server.id, "online");
+      // The stream restarts before the probe, not after. `restart(id, true)` lifts the suspension a
+      // previous failure left, and opening the socket clears the recorded issue -- so with the probe
+      // first, a host answering the capabilities route with something no build can read had its
+      // protocol failure wiped by the restart that followed it, and the sign-in ended online. Last
+      // writer wins, so the probe has to be the last writer.
+      // The stream restarts before the probe, not after. `restart(id, true)` lifts the suspension a
+      // previous failure left, and opening the socket clears the recorded issue -- so with the probe
+      // first, a host answering the capabilities route with something no build can read had its
+      // protocol failure wiped by the restart that followed it, and the sign-in ended online. Last
+      // writer wins, so the probe has to be the last writer.
+      // The stream restarts before the probe, not after. `restart(id, true)` lifts the suspension a
+      // previous failure left, and opening the socket clears the recorded issue -- so with the probe
+      // first, a host answering the capabilities route with something no build can read had its
+      // protocol failure wiped by the restart that followed it, and the sign-in ended online. Last
+      // writer wins, so the probe has to be the last writer.
+      this.#events.restart(server.id, true);
       // The probe authenticates with the session token this sign-in just replaced, so it has to run
       // against the stored server rather than the one `login` was handed. It is also the one step
       // here that may not fail the sign-in: the credentials are already on disk and the user is
@@ -478,7 +494,6 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         const remoteDesktopAvailable = await this.#client.probeRemoteDesktop(signedIn).catch(() => null);
         if (remoteDesktopAvailable !== null) await this.#store.update(server.id, { remoteDesktopAvailable });
       }
-      this.#events.restart(server.id, true);
     } catch (error) {
       this.#connections.reportError(server.id, error, "error");
       throw error;

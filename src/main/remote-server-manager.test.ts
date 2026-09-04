@@ -11,6 +11,7 @@ import { decodeBrowserPreviewFromHost, decodeBrowserTab } from "./remote-device-
 import { RemoteServerManager } from "./remote-server-manager";
 import {
   createRemoteManager,
+  deferredRoute,
   fakeWebRtcTransport,
   stopRemoteFixtures,
   storedHttpsServer,
@@ -717,6 +718,71 @@ describe("remote connection failures", () => {
     await fixture.manager.retryConnection(hostId);
     transport.emit("disconnected", hostId);
     expect(fixture.server(hostId)).toMatchObject({ state: "offline" });
+  });
+
+  // Signing in ends with the desktop probe, whose rejection `login` deliberately swallows -- the
+  // credentials are already on disk. Swallowing the rejection must not swallow what it recorded: the
+  // stream restart lifts the suspension and opening the socket clears the issue, so whichever of the
+  // two runs last decides whether a host answering with nonsense ends up online.
+  it("keeps a protocol failure the sign-in's last request recorded", async () => {
+    const serverId = "00000000-0000-4000-8000-00000000001a";
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+    const hostFingerprint = fingerprint(publicKeyPem);
+    const probe = deferredRoute();
+    stubTeamFetch({
+      compatibility: { capabilities: ["remote-desktop", "agent-runtime-snapshots"] },
+      routes: {
+        "/v1/identity": ({ url }) => {
+          const challenge = url.searchParams.get("challenge") ?? "";
+          return Response.json({
+            serverId,
+            publicKey: publicKeyPem,
+            serverName: "Host",
+            fingerprint: hostFingerprint,
+            challenge,
+            signature: sign(null, Buffer.from(challenge), privateKey).toString("base64url"),
+            enabledOnLaunch: true,
+            logoVersion: null,
+          });
+        },
+        "/v1/auth/account": () =>
+          Response.json({
+            member: {
+              id: "member-id",
+              username: "member",
+              email: "person@example.com",
+              name: null,
+              avatarUrl: null,
+              role: "member",
+              createdAt: new Date().toISOString(),
+              disabled: false,
+            },
+            sessionToken: "session-token",
+            sessionExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+          }),
+        "/v1/remote-screen/capabilities": probe.handler,
+      },
+    });
+    const { sockets } = stubEventSockets();
+    const fixture = await createRemoteManager({
+      servers: [storedHttpsServer(serverId, { fingerprint: hostFingerprint, publicKey: publicKeyPem })],
+      appVersion: "0.4.0",
+    });
+
+    fixture.manager.startEventConnections();
+    await waitForServer(fixture, { state: "online" });
+    const signedIn = fixture.manager.login({ serverId });
+
+    // The probe is in flight, and the stream has already restarted on the new token: a second socket
+    // exists. That order is the whole point -- the restart cannot come after the answer below.
+    await probe.arrived;
+    await vi.waitFor(() => expect(sockets).toHaveLength(2));
+    probe.resolve(Response.json({ malformed: true }));
+    await signedIn;
+
+    await vi.waitFor(() => expect(sockets[1]?.close).toHaveBeenCalledWith(1000, "Client stopped"));
+    expect(fixture.server(serverId)).toMatchObject({ state: "error", issue: { code: "protocol_error" } });
   });
 });
 
