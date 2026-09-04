@@ -107,16 +107,29 @@ export async function validateMobileSession(session: MobileSession): Promise<Mob
 }
 
 export async function logoutMobileSession(session: MobileSession): Promise<void> {
-  await Promise.all([
-    deleteMobileSessionIfCurrent(session.sessionToken),
-    withMobileAuthRequestTimeout(async (signal) => {
-      await fetch(new URL("/v1/mobile-auth/session", session.apiUrl).toString(), {
+  try {
+    await withMobileAuthRequestTimeout(async (signal) => {
+      const response = await fetch(new URL("/v1/mobile-auth/session", session.apiUrl).toString(), {
         method: "DELETE",
         headers: { Authorization: `Bearer ${session.sessionToken}` },
         signal,
       });
-    }),
-  ]);
+      if (!response.ok) throw new Error("The account service did not confirm revocation.");
+    });
+  } catch {
+    // Revocation may have committed before DELETE timed out, lost its response,
+    // or failed while notifying peers. Check the token instead of treating an
+    // ambiguous transport result as proof that the session is still active.
+    try {
+      if ((await validateMobileSession(session)) === null) return;
+    } catch {
+      // Without confirmation, keep the credential available for another attempt.
+    }
+    throw new Error("Could not confirm sign-out. Check your connection and try again.");
+  }
+  // Sessions deliberately do not expire. Keep the encrypted credential until the
+  // server confirms revocation so a failed logout can be retried, even after restarting.
+  await deleteMobileSessionIfCurrent(session.sessionToken);
 }
 
 async function withMobileAuthRequestTimeout<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {

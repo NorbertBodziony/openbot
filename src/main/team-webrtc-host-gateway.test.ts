@@ -82,7 +82,14 @@ describe("TeamWebRtcHostGateway", () => {
     const eventScopes: Array<
       Extract<ReturnType<typeof decodeTeamProtocolV1ClientEvent>, { type: "agent-event-scope" }>
     > = [];
-    const localServer = createServer((_request, response) => {
+    const unreadState = { unreadCount: 1, firstUnreadMessageId: "reply-1", throughMessageId: null };
+    const localServer = createServer((request, response) => {
+      if (request.url === "/v1/agents/bot-1/conversation/unread") {
+        const supported = request.headers["openbot-protocol-version"] === "3";
+        response.writeHead(supported ? 200 : 400, { "content-type": "application/json" });
+        response.end(JSON.stringify(supported ? unreadState : { error: "Mark unread requires protocol 3." }));
+        return;
+      }
       response.writeHead(200, { "content-type": "application/json" });
       response.end("{}");
     });
@@ -268,6 +275,32 @@ describe("TeamWebRtcHostGateway", () => {
       ).toHaveLength(2),
     );
     fetchRequest.mockRestore();
+    bridge.emit(
+      "data",
+      "peer-1",
+      "rpc",
+      encodeTeamProtocolV2Frame({
+        version: 2,
+        type: "request",
+        requestId: "mark-unread",
+        operation: "http.request",
+        payload: {
+          method: "POST",
+          path: "/v1/agents/bot-1/conversation/unread",
+          body: {},
+          capabilities: [TEAM_AGENT_ACTIVITY_CAPABILITY, "conversation-unread"],
+        },
+      }),
+    );
+    const unreadReply = () =>
+      bridge.sent.find(
+        (message) => message.peerId === "peer-1" && isString(message.data) && message.data.includes('"mark-unread"'),
+      );
+    await vi.waitFor(() => expect(unreadReply()).toBeDefined());
+    expect(decodeTeamProtocolV2RpcFrame(unreadReply()?.data)).toMatchObject({
+      type: "response",
+      result: { status: 200, body: unreadState },
+    });
     bridge.emit("incoming", "peer-1", {
       hostId: "host-1",
       connectionId: "connection-2",

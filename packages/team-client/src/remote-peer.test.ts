@@ -20,6 +20,41 @@ afterEach(() => {
 });
 
 describe("browser remote peer recovery", () => {
+  it("sends without delay when the data channel drains before the low-buffer listener is registered", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const network = await setupNetwork();
+    await network.connect();
+    try {
+      const channel = network.connection().channel(TEAM_PROTOCOL_V2_CHANNELS.rpc);
+      channel.bufferedAmount = 8 * 1024 * 1024;
+      const register = channel.addEventListener.bind(channel);
+      vi.spyOn(channel, "addEventListener").mockImplementation((type, listener, options) => {
+        if (type === "bufferedamountlow") {
+          channel.bufferedAmount = 0;
+          channel.dispatchEvent(new Event("bufferedamountlow"));
+        }
+        register(type, listener, options);
+      });
+      let result: { ok: boolean } | undefined;
+      const reading = network.runtime
+        .execute({
+          id: "drained-buffer",
+          type: "request",
+          method: "GET",
+          path: "/v1/agents",
+          body: {},
+        })
+        .then((value) => {
+          result = value;
+        });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(result).toMatchObject({ ok: true, status: 200, body: [] });
+      await reading;
+    } finally {
+      await network.runtime.dispose();
+    }
+  });
+
   it("rejects a malformed bootstrap response instead of leaving the bot loader pending forever", async () => {
     const network = await setupNetwork();
     await network.connect();

@@ -114,6 +114,10 @@ and Signal resume credentials remain short-lived. Each logical remote session is
 originating account credential. An atomic D1 trigger ends that credential's remote sessions and
 queues disconnects on logout/device revoke; other phones stay connected. Legacy unbound sessions
 are ended account-wide on revocation because their originating credential is unknown.
+Mobile sign-out keeps the encrypted credential and local session until the account API confirms
+revocation. If the DELETE response fails, mobile validates that same token: a 401 confirms it is no
+longer active and completes sign-out immediately. A successful session check or an inconclusive
+network/service error keeps the credential for retry; a late result cannot clear a newer login.
 Hosts opt in with the additive Signal hello `multiplex` flag; legacy desktops keep their one-peer
 limit so a second phone cannot replace an existing client's connection. Signal multiplexes
 connections by logical session, and the hidden desktop renderer owns a separate

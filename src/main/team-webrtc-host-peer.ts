@@ -19,6 +19,7 @@ import { createTeamProtocolV2Event } from "@openbot/contracts/team-protocol/v2-a
 import {
   decodeTeamProtocolV3WebRtcHttpRequest,
   encodeTeamProtocolV3WebRtcHttpResponse,
+  isTeamProtocolV3OnlyRoute,
 } from "@openbot/contracts/team-protocol/v3-webrtc-adapter";
 import type * as Ws from "ws";
 import type { VerifiedRemoteSessionTicket } from "./central-auth-manager";
@@ -414,7 +415,7 @@ export class TeamWebRtcHostPeer {
       headers: {
         Authorization: `Bearer ${this.#localSessionToken}`,
         "Content-Type": uploaded?.mimeType ?? input.contentType ?? "application/json",
-        "OpenBot-Protocol-Version": /^\/v1\/agents\/[^/]+\/duplicate$/u.test(url.pathname) ? "3" : "1",
+        "OpenBot-Protocol-Version": isTeamProtocolV3OnlyRoute(input.method, input.path) ? "3" : "1",
         "OpenBot-App-Version": this.#appVersion,
         "OpenBot-Capabilities": [...this.#peerCapabilities].join(","),
         ...(this.#localSessionId ? { "X-OpenBot-WebRTC-Session": this.#localSessionId } : {}),

@@ -653,16 +653,22 @@ export function createRemoteTeamPeer(actions: ActionsRef) {
   function waitForWritable(channel: RTCDataChannel): Promise<void> {
     if (channel.bufferedAmount <= 4 * 1024 * 1024) return Promise.resolve();
     return new Promise((resolve, reject) => {
+      let settled = false;
       const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
         channel.removeEventListener("bufferedamountlow", onLow);
         reject(new Error("The WebRTC channel stayed under backpressure."));
       }, 60_000);
       const onLow = () => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
         channel.removeEventListener("bufferedamountlow", onLow);
         resolve();
       };
       channel.addEventListener("bufferedamountlow", onLow);
+      if (channel.bufferedAmount <= channel.bufferedAmountLowThreshold) onLow();
     });
   }
 

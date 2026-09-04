@@ -14,7 +14,7 @@ export function encodeTeamProtocolV3WebRtcHttpRequest(
   value: unknown,
   options: { preserveSemanticTags?: boolean } = {},
 ): TeamProtocolV2Json {
-  return currentRoute(method, path)
+  return isTeamProtocolV3OnlyRoute(method, path)
     ? wireJson(decodeTeamProtocolV3CurrentHttpRequest(method, path, value ?? {}))
     : encodeTeamProtocolV2CurrentHttpRequest(method, path, value, options);
 }
@@ -25,7 +25,7 @@ export function decodeTeamProtocolV3WebRtcHttpRequest(
   value: unknown,
   options: { preserveSemanticTags?: boolean } = {},
 ): TeamProtocolV2Json {
-  return currentRoute(method, path)
+  return isTeamProtocolV3OnlyRoute(method, path)
     ? wireJson(decodeTeamProtocolV3CurrentHttpRequest(method, path, value ?? {}))
     : decodeTeamProtocolV2CurrentHttpRequest(method, path, value, options);
 }
@@ -37,7 +37,7 @@ export function encodeTeamProtocolV3WebRtcHttpResponse(
   value: unknown,
   options: { preserveSemanticTags?: boolean } = {},
 ): TeamProtocolV2Json {
-  return currentRoute(method, path)
+  return isTeamProtocolV3OnlyRoute(method, path)
     ? wireJson(decodeTeamProtocolV3CurrentHttpResponse(method, path, status, value ?? null))
     : encodeTeamProtocolV2CurrentHttpResponse(method, path, status, value, options);
 }
@@ -48,12 +48,13 @@ export function decodeTeamProtocolV3WebRtcHttpResponse(
   status: number,
   value: unknown,
 ): TeamProtocolV2Json {
-  return currentRoute(method, path)
+  return isTeamProtocolV3OnlyRoute(method, path)
     ? wireJson(decodeTeamProtocolV3CurrentHttpResponse(method, path, status, value ?? null))
     : decodeTeamProtocolV2CurrentHttpResponse(method, path, status, value);
 }
 
-function currentRoute(method: string, path: string): boolean {
+// The host's local HTTP protocol selection must match the WebRTC codec selection.
+export function isTeamProtocolV3OnlyRoute(method: string, path: string): boolean {
   if (isConversationUnreadRoute(method, path)) return true;
   const pathname = new URL(path, "http://openbot.invalid").pathname;
   return method === "POST" && /^\/v1\/agents\/[^/]+\/duplicate$/u.test(pathname);
