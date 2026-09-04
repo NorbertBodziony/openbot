@@ -6,7 +6,10 @@ import { join } from "node:path";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { VoiceModelStatus, VoiceTranscriptionResult } from "@openbot/contracts/ipc";
 import { isString } from "@openbot/contracts/runtime-values";
+import { createOpenBotLogger } from "@openbot/logging";
 import { VoiceModelService } from "./voice-model-service";
+
+const logger = createOpenBotLogger("voice-transcription-service");
 
 const TRANSCRIPTION_TIMEOUT_MS = 180_000;
 
@@ -82,10 +85,10 @@ export class VoiceTranscriptionService extends EventEmitter<VoiceTranscriptionEv
       ]);
       const text = (await readFile(`${outputPath}.txt`, "utf8")).trim();
       if (text.length > INPUT_LIMITS.messageText) throw new Error("The voice transcript is too long.");
-      console.info(`Voice transcription completed in ${Date.now() - startedAt}ms.`);
+      logger.info(`Voice transcription completed in ${Date.now() - startedAt}ms.`);
       return { text };
     } catch (error) {
-      console.error(`Voice transcription failed after ${Date.now() - startedAt}ms.`, errorCategory(error));
+      logger.error(`Voice transcription failed after ${Date.now() - startedAt}ms.`, errorCategory(error));
       throw userFacingError(error);
     } finally {
       this.activeChild = null;

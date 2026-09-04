@@ -2,11 +2,14 @@ import { lstat, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, parse, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { createOpenBotLogger, toLogValue } from "@openbot/logging";
 import { type DevelopmentProfile, developmentUserDataName } from "../src/main/development-profile";
 import { resolveDevelopmentAppDataRoot } from "./development-state-paths";
 import { cleanupSeedOwnedTransfers } from "./seed-dev-state";
 
 export { resolveDevelopmentAppDataRoot } from "./development-state-paths";
+
+const logger = createOpenBotLogger("reset-dev-state");
 
 const developmentProfiles = ["app", "test-client"] as const satisfies readonly DevelopmentProfile[];
 const legacyDevelopmentStateNames = ["OpenBot Dev Host"] as const;
@@ -55,16 +58,16 @@ async function main(): Promise<void> {
   const deletedPaths = await resetDevelopmentState(appDataRoot);
 
   if (deletedPaths.length === 0) {
-    console.log("No OpenBot development state was found.");
+    logger.info("No OpenBot development state was found.");
   } else {
-    console.log("OpenBot development state reset:");
+    logger.info("OpenBot development state reset:");
     for (const deletedPath of deletedPaths) {
-      console.log(`- ${deletedPath}`);
+      logger.info(`- ${deletedPath}`);
     }
   }
 
-  console.log("Seed-owned transfer files were removed. Other shared files were not changed.");
-  console.log("Agent workspaces, ~/.codex, and ~/.claude were not changed.");
+  logger.info("Seed-owned transfer files were removed. Other shared files were not changed.");
+  logger.info("Agent workspaces, ~/.codex, and ~/.claude were not changed.");
 }
 
 function isMissing(error: unknown): error is NodeJS.ErrnoException {
@@ -78,7 +81,7 @@ function isMainModule(): boolean {
 
 if (isMainModule()) {
   main().catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : String(error));
+    logger.error(toLogValue(error));
     process.exitCode = 1;
   });
 }

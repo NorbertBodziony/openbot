@@ -10,6 +10,7 @@
     "src/backend/**/*.ts",
     "src/main/**/*.ts",
     "src/preload/**/*.ts",
-    "packages/contracts/src/**/*.ts"
+    "packages/contracts/src/**/*.ts",
+    "packages/logging/src/**/*.ts"
   ]
 }

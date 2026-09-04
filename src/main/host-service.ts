@@ -35,6 +35,7 @@ import type {
   UpdateHostIdentityInput,
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
+import { createOpenBotLogger, toLogValue } from "@openbot/logging";
 import type { AgentService } from "../backend/agent-service";
 import type { TeamChatStore } from "../backend/team-chat-store";
 import type { VerifiedRemoteSessionTicket } from "./central-auth-manager";
@@ -47,6 +48,8 @@ import type { TeamWebRtcBridge } from "./team-webrtc-bridge";
 import { TeamWebRtcHostGateway } from "./team-webrtc-host-gateway";
 
 export const DEVELOPMENT_REMOTE_CLIENT_USERNAME = "openbot-dev-client";
+
+const logger = createOpenBotLogger("host-service");
 
 interface HostEvents {
   changed: [status: HostStatus];
@@ -888,7 +891,7 @@ export class HostService extends EventEmitter<HostEvents> {
     try {
       await step();
     } catch (error) {
-      console.error("Unable to stop the host runtime while switching accounts:", error);
+      logger.error("Unable to stop the host runtime while switching accounts:", toLogValue(error));
     }
   }
 

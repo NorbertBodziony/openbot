@@ -5,6 +5,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { FuseV1Options, getCurrentFuseWire } from "@electron/fuses";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
+import { createOpenBotLogger, toLogValue } from "@openbot/logging";
+
+const logger = createOpenBotLogger("verify-windows-package");
 
 const FUSE_DISABLED = 48;
 const FUSE_ENABLED = 49;
@@ -113,8 +116,8 @@ for (const [fuse, expected] of expectedFuses) {
 
 await verifyLaunch(executablePath);
 
-console.log(`Verified ${appPath}`);
-console.log(
+logger.info(`Verified ${appPath}`);
+logger.info(
   `OpenBot ${packageJson.version} · Windows x64 · metadata · GPL remote runtime · ASAR integrity · hardened fuses · launch`,
 );
 
@@ -198,7 +201,7 @@ async function verifyLaunch(executable: string): Promise<void> {
     try {
       await rm(userDataPath, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
     } catch (error) {
-      console.warn(`Could not remove the temporary Windows profile: ${String(error)}`);
+      logger.warn("Could not remove the temporary Windows profile:", toLogValue(error));
     }
   }
 }

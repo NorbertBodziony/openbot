@@ -37,6 +37,7 @@ export default defineConfig({
             "src/renderer/**/*.test.ts",
             "scripts/**/*.test.ts",
             "packages/contracts/**/*.test.ts",
+            "packages/logging/**/*.test.ts",
             "packages/team-client/**/*.test.ts",
             "apps/mobile/src/features/auth/api/*.test.ts",
           ],

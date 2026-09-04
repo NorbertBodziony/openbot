@@ -2,6 +2,9 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { normalizeEmailAddress } from "@openbot/contracts/validation";
+import { createOpenBotLogger, toLogValue } from "@openbot/logging";
+
+const logger = createOpenBotLogger("backfill-openpanel-identities");
 
 const DEFAULT_OPENPANEL_API_URL = "https://analytics.openbot.run/api";
 const MAX_RETRIES = 3;
@@ -293,7 +296,7 @@ function nextArgument(args: readonly string[], index: number, flag: string): str
 const scriptPath = process.argv[1] ? fileURLToPath(import.meta.url) : "";
 if (scriptPath && process.argv[1] === scriptPath) {
   void main().catch((error) => {
-    console.error(error instanceof Error ? error.message : "OpenPanel backfill failed.");
+    logger.error("OpenPanel backfill failed.", toLogValue(error));
     process.exitCode = 1;
   });
 }

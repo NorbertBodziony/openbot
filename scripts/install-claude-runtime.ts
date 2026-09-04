@@ -2,9 +2,12 @@ import { execFileSync } from "node:child_process";
 import { chmod, copyFile, cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { createOpenBotLogger } from "@openbot/logging";
 import { z } from "zod";
 import { type AgentRuntimeLock, loadAgentRuntimeLock } from "./agent-runtime-lock";
 import { rejectNonRegularFiles, sha256 } from "./remote-desktop-runtime-release";
+
+const logger = createOpenBotLogger("install-claude-runtime");
 
 export type ClaudeRuntimeTarget = "darwin-arm64" | "win32-x64";
 
@@ -40,7 +43,7 @@ export async function installClaudeRuntime(
 
   if (await isCurrentInstallation(targetRoot, target, lock)) {
     await writeMetadata(outputRoot, targetRoot, lock);
-    console.log(`Using verified bundled Claude Code ${lock.claude.version} for ${target}.`);
+    logger.info(`Using verified bundled Claude Code ${lock.claude.version} for ${target}.`);
     return "current";
   }
 
@@ -74,7 +77,7 @@ export async function installClaudeRuntime(
   }
 
   await writeMetadata(outputRoot, targetRoot, lock);
-  console.log(`Installed bundled Claude Code ${lock.claude.version} for ${target}.`);
+  logger.info(`Installed bundled Claude Code ${lock.claude.version} for ${target}.`);
   return "installed";
 }
 

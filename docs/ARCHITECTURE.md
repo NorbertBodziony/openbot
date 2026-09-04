@@ -10,6 +10,7 @@ apps/
   auth-api/          Cloudflare Worker, account login, remote membership, and connection tickets
 packages/
   contracts/         Process and network boundary types, limits, and pure validation
+  logging/           ts-log Logger interface plus the redacting console/file implementation
 src/
   backend/           Agent runtime, provider adapters, event storage, queues, and browser host
   main/              Electron lifecycle, trusted IPC, host server, and operating-system adapters
@@ -77,6 +78,25 @@ renderer ──► @openbot/contracts ◄── preload ◄── main ──►
    renders, and passes a value down as a prop when two of them would otherwise derive it twice. A
    component that assembles another one's props is how the god controller grew back last time.
 9. Do not add temporary compatibility paths without a removal condition and a test for that condition. Released Team API protocol adapters are permanent by default and follow the policy below.
+10. Log through `@openbot/logging` (`ts-log` Logger), never bare `console.*` - Biome's `noConsole`
+    enforces this in `src`, `scripts` and `packages`. The remote-desktop build recipe files listed in
+    the `Require a recipe version bump` step of `.github/workflows/remote-desktop-runtime.yml` are
+    exempt: any edit to them, cosmetic or not, forces `remoteDesktop.recipeVersion` up and a full
+    native runtime rebuild, so their logging is frozen until the recipe changes for a real reason. Every line is timestamped, prefixed and
+    secret-redacted, and redaction covers a serialized payload passed as one string, not only a
+    structured param. `info` and above is written by default; `OPENBOT_LOG_LEVEL` lowers the
+    threshold. Machine-readable stdout (piped JSON, tags, harness URLs) uses
+    `process.stdout.write` with a `// Machine-readable:` comment instead. Dev automation
+    (`scripts/dev-automation`, `bun run dev:automation`) drives the already-running dev app over its
+    remote-debugging CDP port and never launches a second instance, seeds, or resets the dev profile.
+    Because several worktrees run dev side by side, each instance publishes its worktree, profile,
+    renderer port and debugging port to a registry in the per-user temporary directory
+    (`scripts/dev-automation/instance-registry.ts`); automation resolves the record of the worktree
+    it runs in, verifies the renderer port and the `window.openbot` preload bridge before driving a
+    page, and refuses `click` or `type` on an instance it only inferred. Every dev window stays
+    reachable: `pages` lists the targets and `--page=<target-id|url-substring>` drives any of them, so
+    the app window is the default rather than a limit. Page URLs reach the diagnostics and the
+    snapshot document only through `describeTarget`.
 
 SQLite migration history starts at the frozen version 8 compatibility baseline. Keep the baseline
 schema unchanged, append every later migration in numeric order, and update the separate latest

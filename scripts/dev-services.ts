@@ -5,7 +5,16 @@ import { createServer } from "node:net";
 import { type NetworkInterfaceInfo, networkInterfaces } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createOpenBotLogger, toLogValue } from "@openbot/logging";
+import { developmentUserDataName, readDevelopmentInstanceId } from "../src/main/development-profile";
+import {
+  type DevInstanceRecord,
+  removeDevInstanceRecord,
+  writeDevInstanceRecord,
+} from "./dev-automation/instance-registry";
 import { prepareDevelopmentEnvironment } from "./prepare-dev-environment";
+
+const logger = createOpenBotLogger("dev-services");
 
 export type DevelopmentService = "api" | "remote" | "app" | "test-client";
 type DevelopmentTarget = Exclude<DevelopmentService, "remote"> | "all";
@@ -130,6 +139,33 @@ export function createDevelopmentServiceSpec(
   };
 }
 
+// The ports in the spec are the ones this instance actually won, after
+// `findAvailablePort` walked past whatever a sibling worktree already held.
+// Publishing them is what lets `dev:automation` find this instance instead of
+// guessing 9333, so the record carries the worktree it belongs to as well.
+export function createDevInstanceRecord(
+  spec: DevelopmentServiceSpec,
+  pid: number,
+  startedAt: number,
+): DevInstanceRecord | null {
+  if (spec.name !== "app" && spec.name !== "test-client") return null;
+  const rendererPort = readPort(spec.env.OPENBOT_DEV_RENDERER_PORT);
+  const remoteDebuggingPort = readPort(spec.env.OPENBOT_DEV_REMOTE_DEBUGGING_PORT);
+  if (!rendererPort || !remoteDebuggingPort) return null;
+  const instanceId = readDevelopmentInstanceId(spec.env.OPENBOT_DEV_INSTANCE_ID);
+  const profileKind = spec.name === "test-client" ? "test-client" : "app";
+  return {
+    service: spec.name,
+    instanceId: instanceId ?? "default",
+    profile: developmentUserDataName(profileKind, instanceId),
+    projectRoot: spec.cwd,
+    rendererPort,
+    remoteDebuggingPort,
+    pid,
+    startedAt,
+  };
+}
+
 export function parseDevelopmentTarget(args: string[]): {
   target: DevelopmentTarget;
   dryRun: boolean;
@@ -178,18 +214,18 @@ async function main(): Promise<void> {
       sharedEnvironment.REMOTE_SESSION_SECRET ??= randomBytes(32).toString("hex");
       sharedEnvironment.TURN_SHARED_SECRET ??= randomBytes(32).toString("hex");
       if (signalPort !== DEFAULT_REMOTE_SIGNAL_PORT) {
-        console.log(`Signal port ${DEFAULT_REMOTE_SIGNAL_PORT} is busy. Using ${signalPort}.`);
+        logger.info(`Signal port ${DEFAULT_REMOTE_SIGNAL_PORT} is busy. Using ${signalPort}.`);
       }
       if (healthPort !== DEFAULT_REMOTE_HEALTH_PORT) {
-        console.log(`Signal health port ${DEFAULT_REMOTE_HEALTH_PORT} is busy. Using ${healthPort}.`);
+        logger.info(`Signal health port ${DEFAULT_REMOTE_HEALTH_PORT} is busy. Using ${healthPort}.`);
       }
     }
     configureMobileConnectDevelopmentNetwork(services, sharedEnvironment, networkInterfaces());
     if (sharedEnvironment.OPENBOT_MOBILE_AUTH_API_URL) {
-      console.log(`Mobile Connect API: ${sharedEnvironment.OPENBOT_MOBILE_AUTH_API_URL}`);
+      logger.info(`Mobile Connect API: ${sharedEnvironment.OPENBOT_MOBILE_AUTH_API_URL}`);
     }
     if (apiPort !== DEFAULT_API_PORT) {
-      console.log(`API port ${DEFAULT_API_PORT} is busy. Using ${apiPort}.`);
+      logger.info(`API port ${DEFAULT_API_PORT} is busy. Using ${apiPort}.`);
     }
   }
 
@@ -206,7 +242,7 @@ async function main(): Promise<void> {
       environment.OPENBOT_DEV_RENDERER_PORT = String(rendererPort);
       if (rendererPort !== defaultPort) {
         environment.OPENBOT_DEV_INSTANCE_ID ??= String(rendererPort);
-        console.log(`Renderer port ${defaultPort} is busy. Using ${rendererPort} for ${service}.`);
+        logger.info(`Renderer port ${defaultPort} is busy. Using ${rendererPort} for ${service}.`);
       }
 
       const defaultRemoteDebuggingPort = DEFAULT_REMOTE_DEBUGGING_PORTS[service];
@@ -217,7 +253,7 @@ async function main(): Promise<void> {
       reservedPorts.add(remoteDebuggingPort);
       environment.OPENBOT_DEV_REMOTE_DEBUGGING_PORT = String(remoteDebuggingPort);
       if (remoteDebuggingPort !== defaultRemoteDebuggingPort) {
-        console.log(
+        logger.info(
           `Electron debug port ${defaultRemoteDebuggingPort} is busy. Using ${remoteDebuggingPort} for ${service}.`,
         );
       }
@@ -228,18 +264,27 @@ async function main(): Promise<void> {
 
   if (dryRun) {
     for (const spec of specs) {
-      console.log(`[${spec.name}]`, JSON.stringify([spec.executable, ...spec.args]));
+      logger.info(`[${spec.name}]`, JSON.stringify([spec.executable, ...spec.args]));
     }
     return;
   }
 
-  console.log(`Starting: ${specs.map((spec) => spec.name).join(", ")}`);
+  logger.info(`Starting: ${specs.map((spec) => spec.name).join(", ")}`);
   const processes = new Map<DevelopmentService, ChildProcess>();
+  const publishedInstances: DevInstanceRecord[] = [];
   let stopping = false;
+
+  const unpublishInstances = (): void => {
+    while (publishedInstances.length > 0) {
+      const record = publishedInstances.pop();
+      if (record) removeDevInstanceRecord(record);
+    }
+  };
 
   const stopAll = async (signal: NodeJS.Signals): Promise<void> => {
     if (stopping) return;
     stopping = true;
+    unpublishInstances();
     await stopOwnedProcesses([...processes.values()], signal);
   };
 
@@ -257,8 +302,16 @@ async function main(): Promise<void> {
         detached: process.platform !== "win32",
       });
       processes.set(spec.name, child);
+      const instance = child.pid ? createDevInstanceRecord(spec, child.pid, Date.now()) : null;
+      if (instance) {
+        writeDevInstanceRecord(instance);
+        publishedInstances.push(instance);
+        logger.info(
+          `[${spec.name}] dev:automation can reach this instance with --instance=${instance.instanceId} (:${instance.remoteDebuggingPort}).`,
+        );
+      }
       child.once("error", (error) => {
-        console.error(`[${spec.name}] Could not start:`, error.message);
+        logger.error(`[${spec.name}] Could not start:`, error.message);
         void stopAll("SIGTERM").then(() => {
           process.exitCode = 1;
         });
@@ -266,7 +319,7 @@ async function main(): Promise<void> {
       child.once("exit", (code, signal) => {
         if (stopping) return;
         const result = signal ? `signal ${signal}` : `code ${code ?? 1}`;
-        console.log(`[${spec.name}] stopped with ${result}. Stopping the other services.`);
+        logger.info(`[${spec.name}] stopped with ${result}. Stopping the other services.`);
         void stopAll("SIGTERM").then(() => {
           process.exitCode = code ?? 1;
         });
@@ -520,7 +573,7 @@ function isUnavailableProcess(error: unknown, platform: NodeJS.Platform): error 
 const invokedFile = process.argv[1] ? resolve(process.argv[1]) : "";
 if (invokedFile === fileURLToPath(import.meta.url)) {
   void main().catch((error) => {
-    console.error(error instanceof Error ? error.message : error);
+    logger.error(error instanceof Error ? error.message : toLogValue(error));
     process.exitCode = 1;
   });
 }

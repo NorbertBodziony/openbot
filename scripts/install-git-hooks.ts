@@ -1,8 +1,11 @@
 import { spawnSync } from "node:child_process";
+import { createOpenBotLogger } from "@openbot/logging";
+
+const logger = createOpenBotLogger("install-git-hooks");
 
 const repositoryRoot = runGit(["rev-parse", "--show-toplevel"], false);
 if (repositoryRoot === undefined) {
-  console.log("Skipping Git hook setup because this directory is not a Git repository.");
+  logger.info("Skipping Git hook setup because this directory is not a Git repository.");
   process.exit(0);
 }
 
@@ -15,7 +18,7 @@ if (result.status !== 0) {
   process.exit(result.status ?? 1);
 }
 
-console.log("Git hooks enabled from .githooks.");
+logger.info("Git hooks enabled from .githooks.");
 
 function runGit(args: string[], inheritOutput: boolean): string | undefined {
   const result = spawnSync("git", args, {

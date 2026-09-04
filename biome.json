@@ -100,6 +100,26 @@
       }
     },
     {
+      "includes": [
+        "src/**/*.ts",
+        "src/**/*.tsx",
+        "scripts/**/*.ts",
+        "packages/**/*.ts",
+        "!scripts/build-remote-desktop-runtime.ts",
+        "!scripts/create-remote-desktop-release-manifest.ts",
+        "!scripts/native-runtime-lock.ts",
+        "!scripts/package-remote-desktop-runtime.ts",
+        "!scripts/remote-desktop-runtime-release.ts"
+      ],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noConsole": "error"
+          }
+        }
+      }
+    },
+    {
       "includes": ["**/*.test.ts", "**/*.test.tsx"],
       "plugins": [
         "./tools/biome/anti-slop/rules/no-class-assertions.grit",

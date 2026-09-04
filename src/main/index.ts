@@ -12,6 +12,7 @@ import {
   type MacPermissionId,
   type VoiceModelStatus,
 } from "@openbot/contracts/ipc";
+import { createOpenBotLogger, toLogValue } from "@openbot/logging";
 import {
   app,
   BrowserWindow,
@@ -52,6 +53,7 @@ import {
   developmentUserDataName,
   readDevelopmentInstanceId,
   readDevelopmentProfile,
+  readDevelopmentRemoteDebuggingPort,
   shouldAutoStartHost,
   shouldShowDevelopmentWindow,
 } from "./development-profile";
@@ -103,6 +105,8 @@ import { supportsInstalledUpdates, UpdateService } from "./update-service";
 import { WHISPER_MODEL_NAME, WHISPER_MODEL_URL } from "./voice-model-service";
 import { VoiceTranscriptionService } from "./voice-transcription-service";
 
+const logger = createOpenBotLogger("main");
+
 const commandLineUserDataDirectory = app.commandLine.getSwitchValue("user-data-dir").trim();
 const developmentProfile = !app.isPackaged ? readDevelopmentProfile(process.env.OPENBOT_DEV_PROFILE) : null;
 const developmentRemoteRole =
@@ -114,8 +118,11 @@ const developmentTestClientEnabled = !app.isPackaged && process.env.OPENBOT_DEV_
 const developmentInviteLinkOptions = {
   allowLocalDevelopmentApiUrl: developmentRemoteRole !== null,
 };
-if (!app.isPackaged && /^\d{4,5}$/u.test(process.env.OPENBOT_DEV_REMOTE_DEBUGGING_PORT ?? "")) {
-  app.commandLine.appendSwitch("remote-debugging-port", process.env.OPENBOT_DEV_REMOTE_DEBUGGING_PORT);
+const developmentRemoteDebuggingPort = !app.isPackaged
+  ? readDevelopmentRemoteDebuggingPort(process.env.OPENBOT_DEV_REMOTE_DEBUGGING_PORT)
+  : null;
+if (developmentRemoteDebuggingPort) {
+  app.commandLine.appendSwitch("remote-debugging-port", developmentRemoteDebuggingPort);
   app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
 }
 if (commandLineUserDataDirectory) {
@@ -397,22 +404,26 @@ function createWindow(): BrowserWindow {
       systemSessionEndFlushStarted = true;
       updateService?.stop();
       void flushMainWindowBounds().catch((error) =>
-        console.error("Unable to save the main window position before Windows session end:", error),
+        logger.error("Unable to save the main window position before Windows session end:", toLogValue(error)),
       );
       void browserHost
         ?.flushPersistentStorage()
-        .catch((error) => console.error("Unable to flush browser storage before Windows session end:", error));
+        .catch((error) =>
+          logger.error("Unable to flush browser storage before Windows session end:", toLogValue(error)),
+        );
       void providerRuntimeManager?.stop();
     });
     window.on("session-end", () => {
       systemSessionEnding = true;
       isQuitting = true;
       void flushMainWindowBounds().catch((error) =>
-        console.error("Unable to save the main window position during Windows session end:", error),
+        logger.error("Unable to save the main window position during Windows session end:", toLogValue(error)),
       );
       void browserHost
         ?.flushPersistentStorage()
-        .catch((error) => console.error("Unable to flush browser storage during Windows session end:", error));
+        .catch((error) =>
+          logger.error("Unable to flush browser storage during Windows session end:", toLogValue(error)),
+        );
       void providerRuntimeManager?.stop();
     });
   }
@@ -491,7 +502,7 @@ function rememberMainWindowBounds(bounds: Rectangle): void {
   mainWindowBoundsWriteTimer = setTimeout(() => {
     mainWindowBoundsWriteTimer = null;
     void queueMainWindowBoundsWrite().catch((error) =>
-      console.error("Unable to save the main window position:", error),
+      logger.error("Unable to save the main window position:", toLogValue(error)),
     );
   }, 250);
 }
@@ -500,7 +511,7 @@ function queueMainWindowBoundsWrite(): Promise<void> {
   if (!mainWindowBounds) return mainWindowBoundsWrite;
   const bounds = { ...mainWindowBounds };
   mainWindowBoundsWrite = mainWindowBoundsWrite
-    .catch((error) => console.error("Unable to save the previous main window position:", error))
+    .catch((error) => logger.error("Unable to save the previous main window position:", toLogValue(error)))
     .then(() => writeMainWindowBounds(join(app.getPath("userData"), MAIN_WINDOW_STATE_FILE), bounds));
   return mainWindowBoundsWrite;
 }
@@ -782,7 +793,7 @@ function forwardCentralAuth(state: CentralAuthState): void {
         try {
           await remoteServerManager?.disconnectRemoteSessions();
         } catch (error) {
-          console.error("Unable to disconnect the previous account's remote sessions:", error);
+          logger.error("Unable to disconnect the previous account's remote sessions:", toLogValue(error));
         }
       }
       // Rechecked after the disconnect: another account can be announced while it awaits,
@@ -796,7 +807,7 @@ function forwardCentralAuth(state: CentralAuthState): void {
           try {
             await hostService?.stop(false);
           } catch (error) {
-            console.error("Unable to stop the host while signing out:", error);
+            logger.error("Unable to stop the host while signing out:", toLogValue(error));
           }
           await hostService?.applySignedInAccount(null);
         }
@@ -819,12 +830,12 @@ function forwardCentralAuth(state: CentralAuthState): void {
       try {
         await remoteServerManager?.syncRemoteHosts();
       } catch (error) {
-        console.error("Unable to synchronize the joined servers:", error);
+        logger.error("Unable to synchronize the joined servers:", toLogValue(error));
       }
       if (host && shouldAutoStartHost({ ...host.getStatus(), remoteRole: developmentRemoteRole })) await host.start();
     })
     .catch((error) => {
-      console.error("Unable to synchronize the signed-in account:", error);
+      logger.error("Unable to synchronize the signed-in account:", toLogValue(error));
     });
   if (!mainWindow || mainWindow.isDestroyed()) return;
   sendToRenderer(mainWindow, IPC_CHANNELS.authEvent, state);
@@ -905,7 +916,7 @@ if (!hasSingleInstanceLock) {
       configureRendererPermissions();
       mainWindowBounds = await readMainWindowBounds(join(app.getPath("userData"), MAIN_WINDOW_STATE_FILE)).catch(
         (error) => {
-          console.error("Unable to restore the main window position:", error);
+          logger.error("Unable to restore the main window position:", toLogValue(error));
           return null;
         },
       );
@@ -1018,7 +1029,7 @@ if (!hasSingleInstanceLock) {
       providerRuntimeManager.on("status", forwardProviderRuntimeStatus);
       providerRuntimeManager.on("ready", (provider) => {
         void service.refreshProvider(provider).catch((error) => {
-          console.error(`Unable to refresh ${provider} after runtime installation:`, error);
+          logger.error(`Unable to refresh ${provider} after runtime installation:`, toLogValue(error));
         });
       });
       const skillMarketplace = new SkillMarketplaceService(
@@ -1353,13 +1364,13 @@ if (!hasSingleInstanceLock) {
       configureApplicationMenu(service, updateService);
       await dynamicIslandController
         .initialize()
-        .catch((error) => console.error("Unable to initialize Dynamic Island:", error));
+        .catch((error) => logger.error("Unable to initialize Dynamic Island:", toLogValue(error)));
       await loadRenderer(mainWindow);
       remoteServers.startEventConnections();
       const reconcileDynamicIsland = () =>
         void dynamicIslandController
           ?.reconcileWindow()
-          .catch((error) => console.error("Unable to reconcile Dynamic Island displays:", error));
+          .catch((error) => logger.error("Unable to reconcile Dynamic Island displays:", toLogValue(error)));
       screen.on("display-added", reconcileDynamicIsland);
       screen.on("display-removed", reconcileDynamicIsland);
       screen.on("display-metrics-changed", reconcileDynamicIsland);
@@ -1374,10 +1385,10 @@ if (!hasSingleInstanceLock) {
       ) {
         void centralAuthInitialization
           .then(() => host.start())
-          .catch((error) => console.error("Unable to republish this OpenBot:", error));
+          .catch((error) => logger.error("Unable to republish this OpenBot:", toLogValue(error)));
       }
       void agentInitialization.start().catch((error) => {
-        console.error("Unable to initialize the local agent backend:", error);
+        logger.error("Unable to initialize the local agent backend:", toLogValue(error));
       });
 
       app.on("activate", () => {
@@ -1387,12 +1398,12 @@ if (!hasSingleInstanceLock) {
         }
         void ensureMainWindow()
           .then(showMainWindow)
-          .catch((error) => console.error("Unable to open the main window:", error));
+          .catch((error) => logger.error("Unable to open the main window:", toLogValue(error)));
       });
     })
     .catch((error) => {
       const message = error instanceof Error ? error.message : String(error);
-      console.error("OpenBot failed to start:", error);
+      logger.error("OpenBot failed to start:", toLogValue(error));
       dialog.showErrorBox(
         "OpenBot couldn’t start",
         `${message}\n\nYour local data was not reset or overwritten. See the troubleshooting guide for recovery steps.`,
@@ -1481,7 +1492,9 @@ async function prepareForShutdown(browserAlreadyDestroyed = false): Promise<void
   shutdownStarted = true;
   isQuitting = true;
   updateService?.stop();
-  await flushMainWindowBounds().catch((error) => console.error("Unable to save the main window position:", error));
+  await flushMainWindowBounds().catch((error) =>
+    logger.error("Unable to save the main window position:", toLogValue(error)),
+  );
   dynamicIslandController?.destroy();
   dynamicIslandController = null;
   macHapticFeedback.destroy();

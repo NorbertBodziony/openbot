@@ -2,9 +2,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { createOpenBotLogger, toLogValue } from "@openbot/logging";
 import { z } from "zod";
 import { resolveRemoteDesktopRuntime } from "../src/main/remote-desktop-runtime-artifact";
 import { RemoteScreenGateway } from "../src/main/remote-screen-gateway";
+
+const logger = createOpenBotLogger("remote-desktop-browser-harness");
 
 const runtimePaths = await resolveRemoteDesktopRuntime({
   isPackaged: false,
@@ -35,7 +38,10 @@ const gateway = new RemoteScreenGateway({
   getRuntimeCredentials: async () => ({ username: "openbot-e2e", password: "openbot-local-e2e-only" }),
   getDisplays: () => [{ id: "1", label: "Primary display", width: 1920, height: 1080, primary: true }],
   getIceServers: async () => [{ urls: "stun:127.0.0.1:3478" }],
-  audit: (event) => console.log(`OPENBOT_REMOTE_E2E_AUDIT=${JSON.stringify(event)}`),
+  audit: (event) => {
+    // Machine-readable: the E2E runner parses OPENBOT_REMOTE_E2E_AUDIT lines.
+    process.stdout.write(`OPENBOT_REMOTE_E2E_AUDIT=${JSON.stringify(event)}\n`);
+  },
   onDiagnostic: (source, message) => process.stdout.write(`[${source}] ${message}`),
 });
 
@@ -69,8 +75,9 @@ for (let index = 0; index < clientCount; index += 1) {
     publicHttpBaseUrl: origin,
   });
   const viewerUrl = `${session.viewerUrl}#${session.viewerGrant}`;
-  if (index === 0) console.log(`OPENBOT_REMOTE_E2E_URL=${viewerUrl}`);
-  console.log(`OPENBOT_REMOTE_E2E_URL_${index + 1}=${viewerUrl}`);
+  // Machine-readable: the E2E runner parses OPENBOT_REMOTE_E2E_URL lines.
+  if (index === 0) process.stdout.write(`OPENBOT_REMOTE_E2E_URL=${viewerUrl}\n`);
+  process.stdout.write(`OPENBOT_REMOTE_E2E_URL_${index + 1}=${viewerUrl}\n`);
 }
 
 let stopping = false;
@@ -83,5 +90,5 @@ async function stop() {
 }
 process.once("SIGINT", () => void stop().finally(() => process.exit(0)));
 process.once("SIGTERM", () => void stop().finally(() => process.exit(0)));
-process.once("uncaughtException", (error) => void stop().finally(() => console.error(error)));
+process.once("uncaughtException", (error) => void stop().finally(() => logger.error(toLogValue(error))));
 await new Promise(() => undefined);

@@ -5,6 +5,9 @@
 // workflow reads the base prompt that way: a pull request must not be able to rewrite the
 // instructions used to review it.
 import { execFileSync } from "node:child_process";
+import { createOpenBotLogger } from "@openbot/logging";
+
+const logger = createOpenBotLogger("compose-review-prompt");
 
 const FRAGMENT_DIRECTORY = ".github/review";
 
@@ -108,7 +111,7 @@ function readChangedFiles(argv: string[], baseSha: string, headSha: string): str
 if (import.meta.main) {
   const [baseSha, headSha] = process.argv.slice(2);
   if (!baseSha || !headSha) {
-    console.error("usage: bun scripts/compose-review-prompt.ts <base-sha> <head-sha> [--files-from <file>]");
+    logger.error("usage: bun scripts/compose-review-prompt.ts <base-sha> <head-sha> [--files-from <file>]");
     process.exit(2);
   }
   process.stdout.write(composeFragments(baseSha, readChangedFiles(process.argv, baseSha, headSha)));

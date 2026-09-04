@@ -1,5 +1,8 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { isDynamicRecord, isOneOf, isString } from "@openbot/contracts/runtime-values";
+import { createOpenBotLogger } from "@openbot/logging";
+
+const logger = createOpenBotLogger("prepare-release");
 
 type Increment = "major" | "minor" | "patch";
 
@@ -31,7 +34,7 @@ await Promise.all([
   writeFile("CHANGELOG.md", nextChangelog),
 ]);
 
-console.log(`Prepared OpenBot v${nextVersion}. Review, commit, push, run preflight, then tag it.`);
+logger.info(`Prepared OpenBot v${nextVersion}. Review, commit, push, run preflight, then tag it.`);
 
 function bumpVersion(version: string, selectedIncrement: Increment): string {
   const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);

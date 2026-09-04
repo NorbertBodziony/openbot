@@ -1,6 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
+import { createOpenBotLogger } from "@openbot/logging";
+
+const logger = createOpenBotLogger("release-preflight");
 
 const packageJson = JSON.parse(await readFile("package.json", "utf8"));
 if (!isDynamicRecord(packageJson) || !isString(packageJson.version)) {
@@ -41,12 +44,12 @@ for (const name of [
 }
 
 if (failures.length > 0) {
-  console.error("OpenBot release preflight failed:\n");
-  for (const failure of failures) console.error(`- ${failure}`);
-  console.error("\nNo release tag was created.");
+  logger.error("OpenBot release preflight failed:\n");
+  for (const failure of failures) logger.error(`- ${failure}`);
+  logger.error("\nNo release tag was created.");
   process.exitCode = 1;
 } else {
-  console.log(`OpenBot v${packageJson.version} release preflight passed.`);
+  logger.info(`OpenBot v${packageJson.version} release preflight passed.`);
 }
 
 function run(command: string, args: string[]): string {

@@ -3,6 +3,7 @@ import {
   developmentUserDataName,
   readDevelopmentInstanceId,
   readDevelopmentProfile,
+  readDevelopmentRemoteDebuggingPort,
   shouldAutoStartHost,
   shouldShowDevelopmentWindow,
 } from "./development-profile";
@@ -21,6 +22,15 @@ describe("development profile", () => {
   it("isolates a fallback dev instance without accepting arbitrary path content", () => {
     expect(readDevelopmentInstanceId("5174")).toBe("5174");
     expect(developmentUserDataName("app", "5174")).toBe("OpenBot Dev 5174");
+  });
+
+  it("only accepts a remote-debugging port inside the range automation connects to", () => {
+    expect(readDevelopmentRemoteDebuggingPort("9333")).toBe("9333");
+    expect(readDevelopmentRemoteDebuggingPort(" 9333 ")).toBe("9333");
+    expect(readDevelopmentRemoteDebuggingPort("0000")).toBeNull();
+    expect(readDevelopmentRemoteDebuggingPort("99999")).toBeNull();
+    expect(readDevelopmentRemoteDebuggingPort("80")).toBeNull();
+    expect(readDevelopmentRemoteDebuggingPort(undefined)).toBeNull();
   });
 
   it.each([undefined, null, "host"] as const)("restores published hosting after restart for role %s", (remoteRole) => {

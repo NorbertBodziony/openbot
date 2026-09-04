@@ -34,6 +34,7 @@ import {
   teamProtocolV1HttpRoute,
 } from "@openbot/contracts/team-protocol/v1";
 import { TEAM_PROTOCOL_V3 } from "@openbot/contracts/team-protocol/v3";
+import { createOpenBotLogger } from "@openbot/logging";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OpenBotDatabase } from "../backend/openbot-database";
 import { SidebarLayoutStore } from "../backend/sidebar-layout-store";
@@ -513,12 +514,12 @@ describe("TeamApiServer routing", () => {
       sidebarLayout,
       mailbox: createMailbox(),
       browser: createBrowser(),
+      logger: createOpenBotLogger("test", () => undefined),
     });
     const port = await api.start();
     const base = `http://127.0.0.1:${port}`;
     // The point is which paths route, not what the stubs do once reached, so the failures they raise
     // are expected here and their logging would bury the assertion.
-    const requestFailures = vi.spyOn(console, "error").mockImplementation(() => {});
 
     try {
       const login = await jsonRequest<{ sessionToken: string }>(base, TEAM_API_ROUTES.auth.login, {
@@ -562,7 +563,6 @@ describe("TeamApiServer routing", () => {
 
       expect(unrouted).toEqual([]);
     } finally {
-      requestFailures.mockRestore();
       await api.stop();
     }
   });
@@ -1100,6 +1100,7 @@ describe("TeamApiServer administration", () => {
     await store.initialize();
     await store.configure("Studio Mac", "owner", "correct horse battery");
     const internalError = Object.assign(new Error("EACCES: /Users/private/openbot.db"), { code: "EACCES" });
+    const lines: string[] = [];
     const api = new TeamApiServer({
       store,
       agents: createAgents({
@@ -1109,8 +1110,8 @@ describe("TeamApiServer administration", () => {
       }),
       mailbox: createMailbox(),
       browser: createBrowser(),
+      logger: createOpenBotLogger("test", (line) => lines.push(line)),
     });
-    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const port = await api.start();
     const base = `http://127.0.0.1:${port}`;
 
@@ -1123,7 +1124,7 @@ describe("TeamApiServer administration", () => {
       });
       expect(response.status).toBe(500);
       await expect(response.json()).resolves.toEqual({ error: "Request failed." });
-      expect(errorLog).toHaveBeenCalledWith("Team API request failed:", internalError);
+      expect(lines.some((line) => line.includes("Team API request failed:"))).toBe(true);
 
       const invalidLogin = await fetch(`${base}/v1/auth/login`, {
         method: "POST",
@@ -1134,7 +1135,6 @@ describe("TeamApiServer administration", () => {
       await expect(invalidLogin.json()).resolves.toEqual({ error: "The username or password is incorrect." });
     } finally {
       await api.stop();
-      errorLog.mockRestore();
     }
   });
 

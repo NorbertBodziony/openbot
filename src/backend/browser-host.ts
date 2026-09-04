@@ -15,6 +15,7 @@ import type {
   BrowserVisibilityInput,
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isNumber, isString } from "@openbot/contracts/runtime-values";
+import { createOpenBotLogger, toLogValue } from "@openbot/logging";
 import { app, type BrowserWindow, type Session, session, type WebContents, WebContentsView } from "electron";
 import { embeddedBrowserUserAgent, embeddedBrowserUserAgentForUrl } from "./browser-identity";
 import { isCloseBrowserTabShortcut, isGlobalSearchShortcut, isToggleDevToolsShortcut } from "./browser-shortcuts";
@@ -26,6 +27,8 @@ interface BrowserHostEvents {
   changed: [tabs: BrowserTab[], activeTabId: string | null];
   controlChanged: [state: BrowserControlState];
 }
+
+const logger = createOpenBotLogger("browser-host");
 
 interface InternalTab {
   id: string;
@@ -831,7 +834,7 @@ export class BrowserHost {
 
   #schedulePersist(): void {
     void this.#persistState().catch((error) => {
-      console.error("Unable to persist browser tabs:", error);
+      logger.error("Unable to persist browser tabs:", toLogValue(error));
     });
   }
 

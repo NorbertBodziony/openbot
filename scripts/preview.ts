@@ -1,6 +1,9 @@
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createOpenBotLogger } from "@openbot/logging";
+
+const logger = createOpenBotLogger("preview");
 
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const executable = join(
@@ -17,7 +20,7 @@ const child = spawn(executable, ["preview", ...process.argv.slice(2)], {
 });
 
 child.once("error", (error) => {
-  console.error("Could not start electron-vite preview:", error.message);
+  logger.error("Could not start electron-vite preview:", error.message);
   process.exitCode = 1;
 });
 child.once("exit", (code, signal) => {

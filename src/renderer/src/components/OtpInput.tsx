@@ -179,8 +179,17 @@ export function OtpInput(props: OtpInputProps) {
 
   return (
     <div class="otp-input" data-status={status()}>
+      {/*
+        The native input is cleared on every keystroke, so the slot characters
+        below are the only copy of the code in the accessibility tree. Naming
+        this group is what lets both consumers tell what those loose characters
+        are: assistive tech announces the context, and `dev:automation`
+        recognizes the subtree whose text it must not print into an agent
+        transcript.
+      */}
       <fieldset
         class="otp-input-fieldset"
+        aria-label="One-time code entry"
         aria-disabled={disabled() ? "true" : undefined}
         onPointerDown={handlePointerDown}
       >
