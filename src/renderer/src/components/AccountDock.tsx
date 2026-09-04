@@ -6,9 +6,10 @@ import type {
   ExternalDestination,
   UpdateStatus,
 } from "@openbot/contracts/ipc";
-import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { presentUpdateStatus } from "../update-status";
 import { AccountUpdateIsland } from "./AccountUpdateIsland";
+import { TypingDots } from "./TypingDots";
 import {
   Badge,
   Button,
@@ -35,6 +36,9 @@ interface AccountDockProps {
   appInfo: AppInfo | null;
   agentStatus: AgentStatus;
   accountUsage: AccountUsage | null;
+  usageTargetKey: string | null;
+  usageRefreshRevision: number;
+  usageReady: boolean;
   updateStatus: UpdateStatus;
   compact: boolean;
   withServerRail: boolean;
@@ -47,6 +51,41 @@ interface AccountDockProps {
   onOpenSkills: () => void;
 }
 
+function AnimatedUsagePercentage(props: { value: number | null }) {
+  let digitGroup: HTMLSpanElement | undefined;
+  const characters = () => (props.value === null ? ["—"] : `${props.value}%`.split(""));
+
+  createEffect(
+    () => props.value,
+    (value) => {
+      if (value === null || !digitGroup) return;
+
+      digitGroup.classList.remove("is-animating");
+      void digitGroup.offsetHeight;
+      digitGroup.classList.add("is-animating");
+    },
+  );
+
+  return (
+    <span ref={digitGroup} class="t-digit-group" aria-hidden="true">
+      <For each={characters()}>
+        {(character, index) => {
+          const stagger = () => {
+            if (index() === characters().length - 2) return "1";
+            if (index() === characters().length - 1) return "2";
+            return undefined;
+          };
+          return (
+            <span class="t-digit" data-stagger={stagger()}>
+              {character}
+            </span>
+          );
+        }}
+      </For>
+    </span>
+  );
+}
+
 export function AccountDock(props: AccountDockProps) {
   const [menuOpen, setMenuOpen] = createSignal(false);
   const [usageOpen, setUsageOpen] = createSignal(false);
@@ -57,8 +96,10 @@ export function AccountDock(props: AccountDockProps) {
   const [menuError, setMenuError] = createSignal<string | null>(null);
   const [updateError, setUpdateError] = createSignal<string | null>(null);
   const [loggingOut, setLoggingOut] = createSignal(false);
-  let initialUsageRequested = false;
   let usageRefreshTimer: number | undefined;
+  let usageRequestGeneration = 0;
+  let usageRequestTargetKey: string | null = null;
+  let usageRequestRevision = -1;
   let legacyTrigger: HTMLButtonElement | undefined;
   let menuTrigger: HTMLButtonElement | undefined;
   let usageTrigger: HTMLButtonElement | undefined;
@@ -69,14 +110,11 @@ export function AccountDock(props: AccountDockProps) {
     () => props.account.name?.trim() || props.account.email.split("@")[0] || props.account.email,
   );
   const weeklyUsage = createMemo(() => {
-    const limit =
-      props.accountUsage?.limits.find((candidate) => candidate.id === "codex") ?? props.accountUsage?.limits[0];
-    if (!limit) return null;
-    return (
-      [limit.primary, limit.secondary].find((window) => window?.windowDurationMins === 10_080) ??
-      limit.secondary ??
-      limit.primary
-    );
+    for (const limit of props.accountUsage?.limits ?? []) {
+      const weekly = [limit.primary, limit.secondary].find((window) => isWeeklyWindow(window?.windowDurationMins));
+      if (weekly) return weekly;
+    }
+    return null;
   });
   const weeklyUsageRemaining = createMemo(() => {
     const usage = weeklyUsage();
@@ -99,6 +137,7 @@ export function AccountDock(props: AccountDockProps) {
     return `Weekly usage, ${weeklyUsageRemaining()}% left`;
   });
   const usageRefreshActive = createMemo(() => usageLoading() || usageRefreshAcknowledging());
+  const usageRefreshDisabled = createMemo(() => usageRefreshActive() || !props.usageReady || !props.usageTargetKey);
   const weeklyUsageReset = createMemo(() => {
     const resetsAt = weeklyUsage()?.resetsAt;
     if (resetsAt === null || resetsAt === undefined) return null;
@@ -121,10 +160,26 @@ export function AccountDock(props: AccountDockProps) {
   });
 
   createEffect(
-    () => [hybridLayout(), props.agentStatus.phase, props.accountUsage] as const,
-    ([hybrid, agentPhase, accountUsage]) => {
-      if (!hybrid || agentPhase !== "ready" || accountUsage || initialUsageRequested) return;
-      initialUsageRequested = true;
+    () =>
+      [
+        props.usageTargetKey,
+        props.usageReady,
+        props.usageRefreshRevision,
+        hybridLayout(),
+        menuOpen(),
+        usageOpen(),
+      ] as const,
+    ([targetKey, ready, revision, hybrid, menu, usage]) => {
+      if (!targetKey || !ready) {
+        usageRequestGeneration += 1;
+        usageRequestTargetKey = null;
+        usageRequestRevision = -1;
+        setUsageLoading(false);
+        setUsageError(null);
+        return;
+      }
+      if (!hybrid && !menu && !usage) return;
+      if (usageRequestTargetKey === targetKey && usageRequestRevision === revision) return;
       void refreshUsage();
     },
   );
@@ -147,20 +202,34 @@ export function AccountDock(props: AccountDockProps) {
   }
 
   async function refreshUsage() {
-    if (usageLoading() || props.agentStatus.phase !== "ready") return;
+    const targetKey = props.usageTargetKey;
+    const revision = props.usageRefreshRevision;
+    if (
+      !targetKey ||
+      !props.usageReady ||
+      (usageLoading() && usageRequestTargetKey === targetKey && usageRequestRevision === revision)
+    )
+      return;
+    const generation = ++usageRequestGeneration;
+    usageRequestTargetKey = targetKey;
+    usageRequestRevision = revision;
     setUsageLoading(true);
     setUsageError(null);
     try {
       await props.onRefreshUsage();
     } catch (cause) {
-      setUsageError(cause instanceof Error ? cause.message : "Usage is unavailable.");
+      if (generation === usageRequestGeneration && props.usageTargetKey === targetKey) {
+        setUsageError(cause instanceof Error ? cause.message : "Usage is unavailable.");
+      }
     } finally {
-      setUsageLoading(false);
+      if (generation === usageRequestGeneration && props.usageTargetKey === targetKey) {
+        setUsageLoading(false);
+      }
     }
   }
 
   function refreshUsageWithFeedback() {
-    if (usageRefreshActive()) return;
+    if (usageRefreshDisabled()) return;
     setUsageRefreshAcknowledging(true);
     if (usageRefreshTimer !== undefined) window.clearTimeout(usageRefreshTimer);
     usageRefreshTimer = window.setTimeout(() => {
@@ -216,7 +285,7 @@ export function AccountDock(props: AccountDockProps) {
               class="account-menu-row"
               aria-label={usageButtonLabel()}
               onClick={refreshUsageWithFeedback}
-              disabled={usageRefreshActive() || props.agentStatus.phase !== "ready"}
+              disabled={usageRefreshDisabled()}
             >
               <Gauge class="account-menu-icon" aria-hidden="true" />
               <span>Weekly usage</span>
@@ -457,7 +526,14 @@ export function AccountDock(props: AccountDockProps) {
               >
                 <span class="account-dock-usage-chip">
                   <Gauge aria-hidden="true" />
-                  <strong>{weeklyUsageRemaining() === null ? "—" : `${weeklyUsageRemaining()}%`}</strong>
+                  <strong>
+                    <Show
+                      when={usageLoading() && weeklyUsageRemaining() === null}
+                      fallback={<AnimatedUsagePercentage value={weeklyUsageRemaining()} />}
+                    >
+                      <TypingDots class="account-dock-usage-loading" />
+                    </Show>
+                  </strong>
                 </span>
               </Popover.Trigger>
               <Popover.Portal>
@@ -478,7 +554,7 @@ export function AccountDock(props: AccountDockProps) {
                       aria-label={usageRefreshActive() ? "Refreshing" : usageError() ? "Try again" : "Refresh"}
                       title="Refresh usage"
                       onClick={refreshUsageWithFeedback}
-                      disabled={usageRefreshActive() || props.agentStatus.phase !== "ready"}
+                      disabled={usageRefreshDisabled()}
                     >
                       <RefreshCw
                         class={usageRefreshActive() ? "account-menu-icon-spinning" : undefined}
@@ -571,4 +647,8 @@ export function AccountDock(props: AccountDockProps) {
       </Show>
     </div>
   );
+}
+
+function isWeeklyWindow(durationMins: number | null | undefined): boolean {
+  return durationMins !== null && durationMins !== undefined && Math.abs(durationMins - 10_080) <= 10_080 * 0.05;
 }

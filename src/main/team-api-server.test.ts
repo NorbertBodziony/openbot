@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
+  AccountUsage,
   BotMemory,
   BotSummary,
   CentralAuthUser,
@@ -419,6 +420,7 @@ const ROUTE_METHODS: Record<string, string> = {
   "agents.models": "GET",
   "agents.conversationReads": "GET",
   "agent.one": "PATCH",
+  "agent.usage": "GET",
   "agent.skills": "GET",
   "agent.duplicate": "POST",
   "agent.avatar": "GET",
@@ -474,9 +476,10 @@ const ROUTES_WITHOUT_A_CLASSIFIED_JSON_BODY = new Set([
   // The v1 codec short-circuits this one ahead of classification, to keep a skill list it has no
   // contract for intact.
   "agent.skills",
-  // Protocol v3 only: its own adapter names this route before delegating the rest to v1. A v1 peer
-  // that calls it anyway is answered 500 rather than a protocol error - see the PR body.
+  // Protocol v3 only: its own adapter names these routes before delegating the rest to v1. A v1 peer
+  // that calls either anyway is answered 500 rather than a protocol error - see the PR body.
   "agent.duplicate",
+  "agent.usage",
 ]);
 
 const ROUTE_SAMPLE_IDS = ["route-sample", "route-sample-other"];
@@ -1924,6 +1927,16 @@ describe("TeamApiServer administration", () => {
       messageId: "message-tagged",
       deliveries: [],
     }));
+    const usage: AccountUsage = {
+      limits: [
+        {
+          id: "codex",
+          primary: null,
+          secondary: { usedPercent: 40, windowDurationMins: 10_080, resetsAt: 1_788_825_600 },
+        },
+      ],
+    };
+    const getUsage = vi.fn(async () => usage);
     const readConversationPageFor = vi.fn(async (...args: unknown[]) => {
       const options = isDynamicRecord(args[4]) ? args[4] : {};
       const messages = localConversation.messages.filter((message) => {
@@ -1958,6 +1971,7 @@ describe("TeamApiServer administration", () => {
     }));
     const agents = createAgents({
       listBots: () => localBots,
+      getUsage,
       createBot,
       listConversationReads,
       markConversationUnread,
@@ -2009,6 +2023,14 @@ describe("TeamApiServer administration", () => {
       });
       expect(createBot).toHaveBeenCalledWith(createInput);
       await expect(jsonRequest(base, "/v1/agents", { token: login.sessionToken })).resolves.toEqual(localBots);
+      await expect(
+        jsonRequest(base, "/v1/agents/chief/usage", {
+          token: login.sessionToken,
+          capabilities: [...TEAM_CURRENT_CAPABILITIES],
+          protocol: TEAM_PROTOCOL_V3,
+        }),
+      ).resolves.toEqual(usage);
+      expect(getUsage).toHaveBeenCalledWith("chief");
       await expect(jsonRequest(base, "/v1/agents/chief/conversation", { token: login.sessionToken })).resolves.toEqual({
         ...legacyConversation,
         messages: [legacyConversation.messages[0]],

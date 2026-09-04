@@ -970,6 +970,9 @@ export class TeamApiServer {
       if (agentMatch) {
         const botId = pathIdentifier(agentMatch[1], "botId");
         const action = agentMatch[2] ?? "";
+        if (method === "GET" && action === "usage") {
+          return this.#json(response, 200, await this.#options.agents.getUsage(botId));
+        }
         if (method === "GET" && action === "skills") {
           return this.#json(response, 200, (await this.#options.skills?.listInstalledForChatTags(botId)) ?? []);
         }

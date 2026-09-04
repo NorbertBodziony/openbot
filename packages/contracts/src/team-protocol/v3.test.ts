@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { TEAM_AGENT_ACTIVITY_CAPABILITY, TEAM_CURRENT_CAPABILITIES } from "./current";
+import {
+  TEAM_AGENT_ACTIVITY_CAPABILITY,
+  TEAM_CURRENT_CAPABILITIES,
+  TEAM_MODEL_SCOPED_USAGE_CAPABILITY,
+} from "./current";
 import requestFixture from "./fixtures/v3/client-http-request.json";
 import responseFixture from "./fixtures/v3/host-http-response.json";
 import {
@@ -18,6 +22,7 @@ import {
 import { decodeTeamProtocolV3WebRtcHttpResponse, encodeTeamProtocolV3WebRtcHttpRequest } from "./v3-webrtc-adapter";
 
 const duplicatePath = "/v1/agents/bot-source/duplicate";
+const scopedUsagePath = "/v1/agents/bot-source/usage";
 
 describe("Team protocol v3", () => {
   it("adds explicit mark-unread without changing the frozen read operation", () => {
@@ -70,6 +75,26 @@ describe("Team protocol v3", () => {
     expect(TEAM_PROTOCOL_V1_CAPABILITIES).not.toContain(TEAM_AGENT_ACTIVITY_CAPABILITY);
     expect(TEAM_PROTOCOL_V3_CAPABILITIES).not.toContain(TEAM_AGENT_ACTIVITY_CAPABILITY);
     expect(TEAM_CURRENT_CAPABILITIES).toContain(TEAM_AGENT_ACTIVITY_CAPABILITY);
+    expect(TEAM_PROTOCOL_V1_CAPABILITIES).not.toContain(TEAM_MODEL_SCOPED_USAGE_CAPABILITY);
+    expect(TEAM_PROTOCOL_V3_CAPABILITIES).not.toContain(TEAM_MODEL_SCOPED_USAGE_CAPABILITY);
+    expect(TEAM_CURRENT_CAPABILITIES).toContain(TEAM_MODEL_SCOPED_USAGE_CAPABILITY);
+  });
+
+  it("adds model-scoped usage only to the current adapter", () => {
+    const usage = {
+      limits: [
+        {
+          id: "claude",
+          primary: null,
+          secondary: { usedPercent: 37, windowDurationMins: 10_080, resetsAt: 1_788_825_600 },
+        },
+      ],
+    };
+    expect(decodeTeamProtocolV3CurrentHttpRequest("GET", scopedUsagePath, {})).toEqual({});
+    expect(JSON.parse(encodeTeamProtocolV3CurrentHttpResponse("GET", scopedUsagePath, 200, usage))).toEqual(usage);
+    expect(() => decodeTeamProtocolV1HttpRequest("GET", scopedUsagePath, {})).toThrow(
+      "Invalid Team protocol v1 HTTP request",
+    );
   });
 
   it("registers the v3 route on the WebRTC adapter", () => {
@@ -77,6 +102,12 @@ describe("Team protocol v3", () => {
     expect(decodeTeamProtocolV3WebRtcHttpResponse("POST", duplicatePath, 201, responseFixture)).toEqual(
       responseFixture,
     );
+    expect(encodeTeamProtocolV3WebRtcHttpRequest("GET", scopedUsagePath, undefined)).toEqual({});
+    expect(
+      decodeTeamProtocolV3WebRtcHttpResponse("GET", scopedUsagePath, 200, {
+        limits: [{ id: "claude", primary: null, secondary: null }],
+      }),
+    ).toEqual({ limits: [{ id: "claude", primary: null, secondary: null }] });
   });
 
   it("reports both update directions when no common protocol exists", () => {

@@ -1909,6 +1909,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     return this.#compatibility.get(serverId)?.capabilities.includes(capability) ?? false;
   }
 
+  supportsCapability(serverId: string, capability: TeamCurrentCapability): boolean {
+    return this.#supportsCapability(serverId, capability);
+  }
+
   #supportsRuntimeSnapshots(serverId: string, socket: WebSocket): boolean {
     return this.#appVersion
       ? this.#supportsCapability(serverId, "agent-runtime-snapshots")

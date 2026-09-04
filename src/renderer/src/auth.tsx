@@ -1,5 +1,5 @@
 import type { AccountUsage, AvatarImageInput, CentralAuthState } from "@openbot/contracts/ipc";
-import { createMemo, createSignal, flush, onCleanup, onSettled } from "solid-js";
+import { createMemo, createSignal, createStore, flush, onCleanup, onSettled } from "solid-js";
 import { desktopAnalytics } from "./analytics";
 import { createSimpleContext } from "./simple-context";
 
@@ -56,7 +56,12 @@ const Auth = createSimpleContext({
   init: () => {
     const [centralAuth, setCentralAuth] = createSignal<CentralAuthState>({ status: "loading" });
     const [authSuccessVisible, setAuthSuccessVisible] = createSignal(false);
-    const [accountUsage, setAccountUsage] = createSignal<AccountUsage | null>(null);
+    const [accountUsageState, setAccountUsageState] = createStore<{
+      targetKey: string | null;
+      data: AccountUsage | null;
+      refreshRevision: number;
+    }>({ targetKey: null, data: null, refreshRevision: 0 });
+    let accountUsageRequestGeneration = 0;
     let authSuccessTimer: ReturnType<typeof setTimeout> | undefined;
 
     onCleanup(() => {
@@ -175,9 +180,35 @@ const Auth = createSimpleContext({
       applyCentralAuthState(await window.openbot.auth.updateName(name));
     }
 
-    async function refreshAccountUsage(): Promise<AccountUsage> {
-      const usage = await window.openbot.agent.getUsage();
-      setAccountUsage(usage);
+    const accountUsage = () => accountUsageState.data;
+    const accountUsageRefreshRevision = () => accountUsageState.refreshRevision;
+
+    function selectAccountUsageTarget(targetKey: string | null): void {
+      if (accountUsageState.targetKey === targetKey) return;
+      accountUsageRequestGeneration += 1;
+      setAccountUsageState((state) => {
+        state.targetKey = targetKey;
+        state.data = null;
+      });
+    }
+
+    function invalidateAccountUsage(): void {
+      accountUsageRequestGeneration += 1;
+      setAccountUsageState((state) => {
+        state.data = null;
+        state.refreshRevision += 1;
+      });
+    }
+
+    async function refreshAccountUsage(botId: string, targetKey: string): Promise<AccountUsage> {
+      selectAccountUsageTarget(targetKey);
+      const generation = ++accountUsageRequestGeneration;
+      const usage = await window.openbot.agent.getUsage(botId);
+      if (generation === accountUsageRequestGeneration && accountUsageState.targetKey === targetKey) {
+        setAccountUsageState((state) => {
+          state.data = usage;
+        });
+      }
       return usage;
     }
 
@@ -205,8 +236,9 @@ const Auth = createSimpleContext({
       signedInAccount,
       visibleSignedInAccount,
       accountUsage,
-      /** The agent process reports usage too, on its own event stream. */
-      setAccountUsage,
+      accountUsageRefreshRevision,
+      selectAccountUsageTarget,
+      invalidateAccountUsage,
       refreshAccountUsage,
       requestEmailCode,
       retryCentralAccount,

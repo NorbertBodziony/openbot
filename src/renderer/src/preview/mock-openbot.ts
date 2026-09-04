@@ -217,6 +217,8 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
   let remoteDesktopSessions = clone(options.remoteDesktopSessions ?? [STORY_REMOTE_DESKTOP_SESSION]);
   let updateStatus = clone(options.updateStatus ?? STORY_UPDATE_STATUS);
   const usage = clone(options.usage ?? STORY_USAGE);
+  const usageTarget = bots[0];
+  const usageTargetKey = usageTarget ? `${usageTarget.provider}:${usageTarget.model}` : null;
   let botCounter = bots.length;
   let messageCounter = 10;
   let directMessageCounter = 10;
@@ -574,7 +576,10 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
     },
     agent: {
       getStatus: async () => clone(agentStatus),
-      getUsage: async () => clone(usage),
+      getUsage: async (botId) => {
+        const bot = bots.find((candidate) => candidate.id === botId);
+        return clone(bot && `${bot.provider}:${bot.model}` === usageTargetKey ? usage : { limits: [] });
+      },
       listModels: async () => clone(models),
       listBots: async () => clone(bots),
       listInstalledSkills: async () => [],

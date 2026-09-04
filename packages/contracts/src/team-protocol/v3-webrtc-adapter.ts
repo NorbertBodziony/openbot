@@ -57,7 +57,10 @@ export function decodeTeamProtocolV3WebRtcHttpResponse(
 export function isTeamProtocolV3OnlyRoute(method: string, path: string): boolean {
   if (isConversationUnreadRoute(method, path)) return true;
   const pathname = new URL(path, "http://openbot.invalid").pathname;
-  return method === "POST" && /^\/v1\/agents\/[^/]+\/duplicate$/u.test(pathname);
+  return (
+    (method === "POST" && /^\/v1\/agents\/[^/]+\/duplicate$/u.test(pathname)) ||
+    (method === "GET" && /^\/v1\/agents\/[^/]+\/usage$/u.test(pathname))
+  );
 }
 
 function wireJson(value: unknown): TeamProtocolV2Json {
