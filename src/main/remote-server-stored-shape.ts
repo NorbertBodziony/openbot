@@ -10,9 +10,11 @@
 // arrived with. Dropping one would be the same data loss one step later: a server with an intact
 // token and a single field this build does not recognise -- written by a newer build, or by a hand
 // edit -- would vanish on the next write, and the build that understands it would never see it
-// again. This build refuses to *use* such an entry. It does not get to delete it, and neither does
-// anything downstream of a *reconciliation*: only the user removing the server, or joining one with
-// the same id, retires a preserved entry. `RemoteServerStore` owns both of those and nothing else.
+// again. This build refuses to *use* such an entry, and it does not get to delete it: only the user
+// removing the server, or joining one with the same id, retires a preserved entry, and
+// `RemoteServerStore` owns both of those. The one thing that displaces an entry without retiring it
+// is a readable server arriving on the same id -- see `serializeStoredRemoteServers`, which writes
+// the readable one because a file with two entries under one id is worse than either alone.
 //
 // The same applies to the selection. If the active server is a preserved entry, this build cannot
 // select it, so it runs on the local server -- but the id stays in the file, so the build that can
@@ -118,10 +120,13 @@ export function readStoredRemoteServers(value: unknown): StoredRemoteServers | n
   };
 }
 
-// The on-disk object. Every unreadable entry rejoins `servers`, in the slot it came from: this
-// function cannot tell a user who rejoined the server from `replaceServers` recreating the id off a
-// directory advertisement, and dropping the entry in the second case would destroy a pinned key and
-// fingerprint that nothing else holds. `RemoteServerStore` retires them where the intent is known.
+// The on-disk object. Every unreadable entry rejoins `servers`, in the slot it came from -- unless a
+// readable server now holds its id, in which case the readable one is written and the preserved copy
+// is not. Two entries sharing an id is not a file any build can act on: the newer build that can
+// finally decode the preserved entry would list the server twice, and its `reorder` rejects any
+// ordering whose ids are not unique, so the sidebar becomes unarrangeable and stays that way. The
+// identity is not lost by dropping the copy: `reconcileWebRtcHosts` carries the pinned key and
+// fingerprint into the entry that takes the id, which is where the pin has to live to be honoured.
 //
 // The slot matters because `servers` order is the sidebar order the user dragged into place. Writing
 // the preserved entries last would let any unrelated write reshuffle a list this build cannot even
@@ -132,13 +137,26 @@ export function serializeStoredRemoteServers(state: StoredRemoteServers): {
   servers: (StoredRemoteServer | DynamicRecord)[];
   hiddenHostIds: string[];
 } {
-  const servers: (StoredRemoteServer | DynamicRecord)[] = [...state.servers];
-  // In their original order, each one just before the server it used to precede. Two that shared a
-  // successor stay in sequence, because the first is already in place when the second is inserted.
+  const readableIds = new Set(state.servers.map((server) => server.id));
+  // Only a readable server anchors a slot. An opaque entry cannot: this build did not read its `id`,
+  // so treating one as an anchor would let a field it rejected decide where another entry lands --
+  // and two trailing entries whose `id` happens to be null would anchor on each other and swap.
+  const pending = state.unreadableServers.filter((preserved) => {
+    const id = idOf(preserved.entry);
+    return id === null || !readableIds.has(id);
+  });
+  const servers: (StoredRemoteServer | DynamicRecord)[] = [];
+  for (const server of state.servers) {
+    // In their original order, each one just before the server it used to precede. Several that
+    // shared a successor come out in the order they were read.
+    for (const preserved of pending) {
+      if (preserved.beforeId === server.id) servers.push(preserved.entry);
+    }
+    servers.push(server);
+  }
   // A successor that is gone leaves the entry at the end, which is the most its slot can still mean.
-  for (const preserved of state.unreadableServers) {
-    const at = servers.findIndex((server) => "id" in server && server.id === preserved.beforeId);
-    servers.splice(at === -1 ? servers.length : at, 0, preserved.entry);
+  for (const preserved of pending) {
+    if (preserved.beforeId === null || !readableIds.has(preserved.beforeId)) servers.push(preserved.entry);
   }
   return {
     version: state.version,
@@ -146,6 +164,10 @@ export function serializeStoredRemoteServers(state: StoredRemoteServers): {
     servers,
     hiddenHostIds: state.hiddenHostIds,
   };
+}
+
+function idOf(entry: DynamicRecord): string | null {
+  return isString(entry.id) ? entry.id : null;
 }
 
 export function readStoredRemoteServer(value: unknown): StoredRemoteServer | null {

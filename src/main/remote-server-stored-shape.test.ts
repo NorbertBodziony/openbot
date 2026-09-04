@@ -2,7 +2,11 @@
 
 import { LOCAL_SERVER_ID } from "@openbot/contracts/ipc";
 import { describe, expect, it } from "vitest";
-import { readStoredRemoteServers, type StoredRemoteServer } from "./remote-server-stored-shape";
+import {
+  readStoredRemoteServers,
+  type StoredRemoteServer,
+  serializeStoredRemoteServers,
+} from "./remote-server-stored-shape";
 
 function storedServer(overrides: Partial<StoredRemoteServer> & { id: string }): StoredRemoteServer {
   return {
@@ -57,6 +61,26 @@ describe("stored remote servers", () => {
       expect(stored).toMatchObject({ version: 3, activeServerId: "alpha", hiddenHostIds: [] });
       expect(stored?.servers).toHaveLength(1);
     }
+  });
+
+  it("keeps unreadable entries in the order they arrived, whatever they call themselves", () => {
+    // Neither of these names a successor -- both were last -- and neither names itself in a way this
+    // build read. An entry it could not read must not get to say where another one lands, or a field
+    // it rejected decides the sidebar order of the build that can display them.
+    const first = { id: null, name: "first", role: "overlord" };
+    const second = { name: "second", role: "overlord" };
+    const stored = readStoredRemoteServers({
+      version: 3,
+      activeServerId: LOCAL_SERVER_ID,
+      servers: [storedServer({ id: "alpha" }), first, second],
+      hiddenHostIds: [],
+    });
+
+    expect(stored && serializeStoredRemoteServers(stored).servers).toEqual([
+      expect.objectContaining({ id: "alpha" }),
+      first,
+      second,
+    ]);
   });
 
   it("refuses a file written by a newer build", () => {

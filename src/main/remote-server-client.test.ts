@@ -283,4 +283,37 @@ describe("WebRTC request decoding", () => {
     expect(status.state).toBe("error");
     expect(status.issue?.code).toBe("protocol_error");
   });
+
+  // Compatibility is the first thing a WebRTC request asks for, so a host that answers it with
+  // nonsense fails before any route decoder runs. `refreshWebRtcCompatibility` has the same problem
+  // and no caller to throw to -- it is driven by the transport's `connected` event -- so it has to
+  // record the failure itself or the host stays healthy and reconnectable forever.
+  it("fails a host closed when its compatibility answer does not decode", async () => {
+    const server = storedHttpsServer("host", { transport: "webrtc-v2", apiUrl: "webrtc://host" });
+    const connections = new RemoteServerConnections({
+      appVersion: null,
+      onChanged: () => undefined,
+      onReconnectSuspended: () => undefined,
+    });
+    const client = new RemoteServerClient({
+      appVersion: "0.4.0",
+      servers: { require: () => server, token: () => "token" },
+      connections,
+      transport: {
+        request: async () => ({ protocol: "as-new-as-you-like" }),
+        requestResponse: async () => {
+          throw new Error("unused");
+        },
+      },
+    });
+
+    await expect(client.request("host", "/api/team/agents", () => null)).rejects.toThrow(
+      "invalid compatibility information",
+    );
+    expect(connections.statusFor("host")).toMatchObject({ state: "error", issue: { code: "protocol_error" } });
+
+    connections.forget("host");
+    await expect(client.refreshWebRtcCompatibility("host")).rejects.toThrow("invalid compatibility information");
+    expect(connections.statusFor("host")).toMatchObject({ state: "error", issue: { code: "protocol_error" } });
+  });
 });

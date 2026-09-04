@@ -89,11 +89,13 @@ describe("remote server store", () => {
     });
   });
 
-  it("keeps a preserved entry when reconciliation recreates its id, and drops it when the user rejoins", async () => {
+  it("never writes two entries under one id when reconciliation recreates a preserved one", async () => {
     // A WebRTC host whose entry this build cannot read is absent from `servers`, so the next host
-    // directory sync offers it as new and `replaceServers` mints a fresh entry with the same id. The
-    // preserved one holds the pinned key and fingerprint; nothing about a directory advertisement
-    // earns the right to delete them.
+    // directory sync offers it as new and `replaceServers` mints a fresh entry with the same id.
+    // Writing both would hand the build that *can* read the preserved one a duplicate it cannot
+    // arrange: its `reorder` refuses an ordering whose ids are not unique. The pinned key and
+    // fingerprint are not lost with the copy -- `reconcileWebRtcHosts` puts them on the entry that
+    // takes the id, which is the only place they are consulted from.
     const broken = { ...storedServer("beta"), role: "overlord" };
     const path = await storePath({
       version: 3,
@@ -107,15 +109,11 @@ describe("remote server store", () => {
     await store.replaceServers([storedServer("beta", { name: "Advertised" })]);
     expect(JSON.parse(await readFile(path, "utf8")).servers).toEqual([
       expect.objectContaining({ id: "beta", name: "Advertised" }),
-      broken,
     ]);
 
-    // Joining verifies the host's identity, so it does supersede the old entry. The WebRTC join
-    // path gets its entry from `replaceServers` rather than `adopt`, and says so separately.
-    await store.retireUnreadable("beta");
-    expect(JSON.parse(await readFile(path, "utf8")).servers).toEqual([
-      expect.objectContaining({ id: "beta", name: "Advertised" }),
-    ]);
+    // Still preserved in memory, so the identity it carries is still offered to reconciliation --
+    // displacing an entry from the file is not retiring it.
+    expect(store.preservedIdentities.map((identity) => identity.hostId)).toEqual(["beta"]);
   });
 
   it("retires a preserved entry when the user rejoins over it", async () => {
