@@ -17,7 +17,6 @@ import type {
   BotSummary,
   BrowserControlState,
   BrowserTab,
-  ConversationMessage,
   ConversationPage,
   ConversationPageAnchor,
   ConversationReadState,
@@ -40,9 +39,7 @@ import type {
   RespondToBrowserTakeoverInput,
   RespondToPromptInput,
   Routine,
-  RoutineConversationEventAction,
   RoutineRun,
-  RoutineRunConversationEventStatus,
   SendMessageInput,
   SetMessageReactionInput,
   SidebarLayoutSnapshot,
@@ -53,16 +50,11 @@ import type {
   UpdateQueuedMessageInput,
   UpdateRoutineInput,
 } from "@openbot/contracts/ipc";
-import {
-  AGENT_RUNTIME_TEXT_LIMIT,
-  isMessageReaction,
-  routineConversationEventItemType,
-  routineRunConversationEventItemType,
-} from "@openbot/contracts/ipc";
-import { isBoolean, isString } from "@openbot/contracts/runtime-values";
+import { AGENT_RUNTIME_TEXT_LIMIT, isMessageReaction } from "@openbot/contracts/ipc";
+import { isString } from "@openbot/contracts/runtime-values";
 import { AttentionRegistry } from "./agent/attention-registry";
 import { ContextCompaction } from "./agent/context-compaction";
-import { ConversationRuntime, withDatabaseTransaction } from "./agent/conversation-runtime";
+import { ConversationRuntime } from "./agent/conversation-runtime";
 import {
   agentNamesById,
   conversationContentSignature,
@@ -72,7 +64,6 @@ import {
   lastUserPrompt,
   renderHandoffMessage,
   responseAttachmentMessageId,
-  routineStatusForDelivery,
   summarizeOldMessages,
 } from "./agent/delivery-content";
 import { developerInstructions } from "./agent/developer-instructions";
@@ -87,15 +78,8 @@ import {
   markIncompleteImageGeneration,
 } from "./agent/image-generation";
 import { type AgentClientFactory, ProviderRuntime } from "./agent/provider-runtime";
-import {
-  localTimezone,
-  type OpenBotToolResponse,
-  openBotToolResult,
-  routineToolArguments,
-  routineToolBotId,
-  routineToolSchedule,
-  routineToolString,
-} from "./agent/routine-tools";
+import { type RoutineMutationOptions, RoutineScheduler } from "./agent/routine-scheduler";
+import { type OpenBotToolResponse, openBotToolResult } from "./agent/routine-tools";
 import { fitRuntimeSnapshot } from "./agent/runtime-snapshot";
 import {
   isArchivedThreadError,
@@ -110,7 +94,6 @@ import {
 } from "./agent/thread-items";
 import type { AgentClient, AgentProvider } from "./agent-client";
 import { AgentMemoryStore } from "./agent-memory-store";
-import { AgentRoutineStore } from "./agent-routine-store";
 import type { BotStore } from "./bot-store";
 import { BROWSER_DYNAMIC_TOOLS, OPENBOT_BROWSER_NAMESPACE } from "./browser-host";
 import { type ConversationMarkerExclusions, ConversationReadStore } from "./conversation-read-store";
@@ -139,7 +122,6 @@ import {
   type ResponseDecoder,
   type ThreadItem,
 } from "./protocol";
-import { nextRoutineOccurrence } from "./routine-schedule";
 import { isWithin, sharedPathFromInput, workspacePathFromInput } from "./workspace-paths";
 
 interface AgentServiceEvents {
@@ -177,11 +159,6 @@ interface ImageGenerationOperation {
   promise: Promise<void> | null;
 }
 
-export interface RoutineMutationOptions {
-  recordConversationEvent?: boolean;
-  turnId?: string;
-}
-
 type PendingMemoryMutation =
   | {
       callId: string;
@@ -208,7 +185,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #browser: AgentBrowserHost;
   readonly #conversationReads: ConversationReadStore;
   readonly #memories: AgentMemoryStore;
-  readonly #routines: AgentRoutineStore;
+  readonly #routines: RoutineScheduler;
   readonly #providers: ProviderRuntime;
   readonly #prepareBotWorkspace: (bot: BotSummary) => Promise<void>;
   readonly #hostedSites: HostedSiteCoordinator;
@@ -222,7 +199,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #drainingBots = new Set<string>();
   readonly #scheduledDrains = new Set<string>();
   readonly #drainTasks = new Map<string, Promise<void>>();
-  readonly #routineDeletionBots = new Set<string>();
   readonly #compaction: ContextCompaction;
   readonly #pendingHandoffs = new Map<string, string>();
   readonly #pendingRuntimeRefreshes = new Set<string>();
@@ -235,7 +211,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #responseAttachmentCommands = new Map<string, Promise<OpenBotToolResponse>>();
   readonly #memoryEpochs = new Map<string, number>();
   #duplicationCommitQueue: Promise<void> = Promise.resolve();
-  #routineTimer: NodeJS.Timeout | null = null;
   #initialized = false;
   #stopping = false;
 
@@ -258,13 +233,29 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#browser = browser;
     this.#conversationReads = new ConversationReadStore(store.database);
     this.#memories = new AgentMemoryStore(store.database);
-    this.#routines = new AgentRoutineStore(store.database);
     this.#prepareBotWorkspace = prepareBotWorkspace;
     this.#conversation = new ConversationRuntime(
       store,
       (event) => this.#emit(event),
       () => this.listBots(),
     );
+    this.#routines = new RoutineScheduler({
+      store,
+      mailbox,
+      conversation: this.#conversation,
+      hooks: {
+        emit: (event) => this.#emit(event),
+        emitError: (code, error, botId) => this.#emitError(code, error, botId),
+        emitQueue: (botId) => this.#emitQueue(botId),
+        scheduleDrain: (botId) => this.#scheduleDrain(botId),
+        interrupt: (botId, turnId) => this.interrupt(botId, turnId),
+        awaitDrain: (botId) => this.#drainTasks.get(botId),
+        syncMailboxMessages: (snapshot) => this.#syncMailboxMessages(snapshot),
+        listBots: () => this.listBots(),
+        pendingDuplicateBots: () => this.#pendingDuplicateBots,
+        isRunning: () => this.#initialized && !this.#stopping,
+      },
+    });
     this.#hostedSites = new HostedSiteCoordinator({
       store,
       conversation: this.#conversation,
@@ -312,10 +303,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       conversation: this.#conversation,
       browser: this.#browser,
       hostedSites: this.#hostedSites,
-      routines: {
-        markNeedsAttention: (turnId) => this.#markRoutineNeedsAttention(turnId),
-        markRunningForTurn: (turnId) => this.#markRoutineRunningForTurn(turnId),
-      },
+      routines: this.#routines,
       emit: (event) => this.#emit(event),
       emitError: (code, error, botId) => this.#emitError(code, error, botId),
       emitRuntimeSnapshot: () => this.#emitRuntimeSnapshot(),
@@ -431,120 +419,27 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   listRoutines(botId: string): Routine[] {
-    this.#conversation.requireKnownBot(botId);
     return this.#routines.list(botId);
   }
 
   createRoutine(input: CreateRoutineInput, options: RoutineMutationOptions = {}): Routine {
-    this.#conversation.requireKnownBot(input.botId);
-    const routine =
-      options.recordConversationEvent === false
-        ? this.#routines.create(input)
-        : this.#mutateRoutineWithConversation(
-            input.botId,
-            "created",
-            () => this.#routines.create(input),
-            (created) => created,
-            options.turnId,
-          );
-    this.#routineStateChanged(input.botId);
-    this.#armRoutineTimer();
-    return routine;
+    return this.#routines.create(input, options);
   }
 
   updateRoutine(input: UpdateRoutineInput, options: RoutineMutationOptions = {}): Routine {
-    this.#conversation.requireKnownBot(input.botId);
-    const routine =
-      options.recordConversationEvent === false
-        ? this.#routines.update(input)
-        : this.#mutateRoutineWithConversation(
-            input.botId,
-            "updated",
-            () => this.#routines.update(input),
-            (updated) => updated,
-            options.turnId,
-          );
-    this.#routineStateChanged(input.botId);
-    this.#armRoutineTimer();
-    return routine;
+    return this.#routines.update(input, options);
   }
 
-  async deleteRoutine(input: DeleteRoutineInput, options: RoutineMutationOptions = {}): Promise<void> {
-    this.#conversation.requireKnownBot(input.botId);
-    const routine = this.#routines.get(input.botId, input.routineId);
-    if (!routine) throw new Error("This routine no longer exists.");
-    if (this.#routineDeletionBots.has(input.botId)) {
-      throw new Error("Another routine deletion is already in progress for this agent.");
-    }
-    this.#routineDeletionBots.add(input.botId);
-    try {
-      const activeRuns = await this.#interruptRoutineRunsBeforeDeletion(
-        input.botId,
-        this.#routines.activeRuns(input.botId, input.routineId),
-      );
-      if (options.recordConversationEvent === false) {
-        withDatabaseTransaction(
-          this.#store.database,
-          () => {
-            for (const run of activeRuns) {
-              if (run.status === "queued" && run.deliveryId) {
-                if (this.#mailbox.getDelivery(run.deliveryId)?.delivery.status === "queued") {
-                  this.#mailbox.cancelNow(input.botId, run.deliveryId);
-                }
-              }
-              this.#routines.updateRunStatus(run.id, "cancelled");
-            }
-            this.#routines.delete(input.botId, input.routineId);
-          },
-          // Deliberately narrower than the conversation variants: this branch records no
-          // conversation event, so there is no snapshot to restore — only the mailbox.
-          () => this.#mailbox.restorePersistedState(),
-        );
-      } else {
-        this.#mutateRoutineWithConversation(
-          input.botId,
-          "deleted",
-          () => this.#routines.delete(input.botId, input.routineId),
-          () => routine,
-          options.turnId,
-          {
-            beforeMutate: (snapshot) => {
-              for (const run of activeRuns) {
-                if (run.status === "queued" && run.deliveryId) {
-                  if (this.#mailbox.getDelivery(run.deliveryId)?.delivery.status === "queued") {
-                    this.#mailbox.cancelNow(input.botId, run.deliveryId);
-                  }
-                }
-                this.#appendRoutineRunTransition(snapshot, run, "cancelled");
-              }
-            },
-            onRollback: () => this.#mailbox.restorePersistedState(),
-          },
-        );
-      }
-      this.#emitQueue(input.botId);
-      this.#routineStateChanged(input.botId);
-      this.#armRoutineTimer();
-    } finally {
-      this.#routineDeletionBots.delete(input.botId);
-      if (this.#mailbox.nextQueued(input.botId)) this.#scheduleDrain(input.botId);
-    }
+  deleteRoutine(input: DeleteRoutineInput, options: RoutineMutationOptions = {}): Promise<void> {
+    return this.#routines.delete(input, options);
   }
 
-  async testRoutine(input: TestRoutineInput): Promise<RoutineRun> {
-    this.#conversation.requireKnownBot(input.botId);
-    const routine = this.#routines.get(input.botId, input.routineId);
-    if (!routine) throw new Error("This routine no longer exists.");
-    const run = this.#routines.createRun(routine, null, "manual", new Date().toISOString());
-    await this.#enqueueRoutineRun(run);
-    this.#routineStateChanged(input.botId);
-    return this.#routines.listRuns(input.botId, input.routineId, 1)[0] ?? run;
+  testRoutine(input: TestRoutineInput): Promise<RoutineRun> {
+    return this.#routines.test(input);
   }
 
   listRoutineRuns(input: ListRoutineRunsInput): RoutineRun[] {
-    this.#conversation.requireKnownBot(input.botId);
-    if (!this.#routines.get(input.botId, input.routineId)) throw new Error("This routine no longer exists.");
-    return this.#routines.listRuns(input.botId, input.routineId, input.limit);
+    return this.#routines.listRuns(input);
   }
 
   listModels(): AgentModelOption[] {
@@ -652,7 +547,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       } catch (caught) {
         rollbackError = caught;
       }
-      this.#armRoutineTimer();
+      this.#routines.arm();
       if (rollbackError) {
         throw new AggregateError(
           [error, rollbackError],
@@ -682,8 +577,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.#pendingDuplicateOperations.delete(botId);
       this.#emit({ type: "bots-changed", bots: this.listBots() });
       if (this.#memories.list(result.bot.id).length > 0) this.#memoryStateChanged(result.bot.id);
-      if (this.#routines.list(result.bot.id).length > 0) this.#routineStateChanged(result.bot.id);
-      this.#armRoutineTimer();
+      if (this.#routines.listFor(result.bot.id).length > 0) this.#routines.stateChanged(result.bot.id);
+      this.#routines.arm();
       return result;
     } finally {
       this.#pendingDuplicateReleases.delete(botId);
@@ -820,7 +715,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#pendingDuplicateBots.delete(botId);
     this.#pendingDuplicateOperations.delete(botId);
     if (!wasPendingDuplicate) this.#emit({ type: "bots-changed", bots: this.listBots() });
-    this.#armRoutineTimer();
+    this.#routines.arm();
   }
 
   #assertBotIdleForDuplication(botId: string): void {
@@ -847,7 +742,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return JSON.stringify({
       bot: this.#conversation.requireKnownBot(botId),
       memories: this.#memories.list(botId),
-      routines: this.#routines.list(botId),
+      routines: this.#routines.listFor(botId),
     });
   }
 
@@ -897,8 +792,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#initialized = true;
     await this.#providers.start();
     for (const bot of this.#store.list()) this.#emitQueue(bot.id);
-    await this.#resumePendingRoutineRuns();
-    this.#armRoutineTimer();
+    await this.#routines.resumePendingRuns();
+    this.#routines.arm();
   }
 
   setPreferredProvider(provider: AgentProvider): Promise<void> {
@@ -932,8 +827,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   async stop(): Promise<void> {
     this.#stopping = true;
     this.#initialized = false;
-    if (this.#routineTimer) clearTimeout(this.#routineTimer);
-    this.#routineTimer = null;
+    this.#routines.dispose();
     this.#hostedSites.dispose();
     this.#compaction.dispose();
     for (const pending of this.#pendingDeltas.values()) {
@@ -1475,113 +1369,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       };
     }
 
-    if (params.tool === "list_routines") {
-      const args = routineToolArguments(params.arguments, ["botId"]);
-      const botId = routineToolBotId(args, senderBotId);
-      return openBotToolResult({ routines: this.listRoutines(botId) });
-    }
-
-    if (params.tool === "create_routine") {
-      const args = routineToolArguments(params.arguments, [
-        "botId",
-        "name",
-        "instruction",
-        "schedule",
-        "active",
-        "timezone",
-      ]);
-      const botId = routineToolBotId(args, senderBotId);
-      const active = args.active === undefined ? true : args.active;
-      if (!isBoolean(active)) throw new Error("active must be a boolean.");
-      const timezone =
-        args.timezone === undefined
-          ? localTimezone()
-          : routineToolString(args.timezone, "timezone", 128, "A routine timezone is required.");
-      const routine = this.createRoutine(
-        {
-          botId,
-          name: routineToolString(args.name, "name", INPUT_LIMITS.routineName, "A routine name is required."),
-          instruction: routineToolString(
-            args.instruction,
-            "instruction",
-            INPUT_LIMITS.routineInstruction,
-            "A routine instruction is required.",
-          ),
-          active,
-          timezone,
-          schedule: routineToolSchedule(args.schedule),
-        },
-        { turnId: botId === senderBotId ? params.turnId : undefined },
-      );
-      return openBotToolResult(routine);
-    }
-
-    if (params.tool === "update_routine") {
-      const args = routineToolArguments(params.arguments, [
-        "botId",
-        "routineId",
-        "name",
-        "instruction",
-        "schedule",
-        "active",
-      ]);
-      const input: UpdateRoutineInput = {
-        botId: routineToolBotId(args, senderBotId),
-        routineId: routineToolString(args.routineId, "routineId", INPUT_LIMITS.identifier, "routineId is required."),
-      };
-      let hasUpdate = false;
-      if (args.name !== undefined) {
-        input.name = routineToolString(args.name, "name", INPUT_LIMITS.routineName, "A routine name is required.");
-        hasUpdate = true;
-      }
-      if (args.instruction !== undefined) {
-        input.instruction = routineToolString(
-          args.instruction,
-          "instruction",
-          INPUT_LIMITS.routineInstruction,
-          "A routine instruction is required.",
-        );
-        hasUpdate = true;
-      }
-      if (args.active !== undefined) {
-        if (!isBoolean(args.active)) throw new Error("active must be a boolean.");
-        input.active = args.active;
-        hasUpdate = true;
-      }
-      if (args.schedule !== undefined) {
-        input.schedule = routineToolSchedule(args.schedule);
-        hasUpdate = true;
-      }
-      if (!hasUpdate) throw new Error("At least one routine update is required.");
-      return openBotToolResult(
-        this.updateRoutine(input, { turnId: input.botId === senderBotId ? params.turnId : undefined }),
-      );
-    }
-
-    if (params.tool === "delete_routine") {
-      const args = routineToolArguments(params.arguments, ["botId", "routineId"]);
-      const botId = routineToolBotId(args, senderBotId);
-      const routineId = routineToolString(
-        args.routineId,
-        "routineId",
-        INPUT_LIMITS.identifier,
-        "routineId is required.",
-      );
-      await this.deleteRoutine({ botId, routineId }, { turnId: botId === senderBotId ? params.turnId : undefined });
-      return openBotToolResult({ deleted: true, botId, routineId });
-    }
-
-    if (params.tool === "test_routine") {
-      const args = routineToolArguments(params.arguments, ["botId", "routineId"]);
-      const botId = routineToolBotId(args, senderBotId);
-      const routineId = routineToolString(
-        args.routineId,
-        "routineId",
-        INPUT_LIMITS.identifier,
-        "routineId is required.",
-      );
-      return openBotToolResult(await this.testRoutine({ botId, routineId }));
-    }
+    const routineResult = await this.#routines.handleTool(params, senderBotId);
+    if (routineResult) return routineResult;
 
     if (params.tool === "remember") {
       const args = params.arguments;
@@ -1891,10 +1680,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.#stopping ||
       !this.#providers.isReady() ||
       this.#pendingDuplicateBots.has(botId) ||
-      this.#routineDeletionBots.has(botId) ||
       this.#drainingBots.has(botId) ||
       this.#scheduledDrains.has(botId) ||
-      !this.#compaction.mayDrain(botId)
+      !this.#compaction.mayDrain(botId) ||
+      !this.#routines.mayDrain(botId)
     ) {
       return;
     }
@@ -1913,9 +1702,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (
       this.#stopping ||
       this.#pendingDuplicateBots.has(botId) ||
-      this.#routineDeletionBots.has(botId) ||
       this.#drainingBots.has(botId) ||
       !this.#compaction.mayDrain(botId) ||
+      !this.#routines.mayDrain(botId) ||
       !this.#providers.isReady()
     )
       return;
@@ -2285,18 +2074,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const queue = this.#mailbox.listQueue(botId);
     let routinesChanged = false;
     for (const delivery of queue.deliveries) {
-      if (delivery.sender.kind !== "routine") continue;
-      const run = this.#routines.runForDelivery(delivery.id);
-      if (!run) continue;
-      const status = routineStatusForDelivery(delivery.status);
-      if (run.status === "needs-attention" && ["starting", "running"].includes(delivery.status)) continue;
-      if (run.status === status && run.error === delivery.error) continue;
-      if (status === "queued") this.#routines.updateRunStatus(run.id, status, delivery.error);
-      else this.#transitionRoutineRunWithConversation(run, status, delivery.error);
-      routinesChanged = true;
+      if (this.#routines.reconcileDelivery(delivery)) routinesChanged = true;
     }
     this.#emit({ type: "queue-changed", snapshot: queue });
-    if (routinesChanged) this.#routineStateChanged(botId);
+    if (routinesChanged) this.#routines.stateChanged(botId);
     const affectedBots = new Set([botId, ...this.#mailbox.senderBotIdsForRecipient(botId)]);
     for (const affectedBotId of affectedBots) {
       const snapshot = this.#conversation.snapshot(affectedBotId);
@@ -2868,257 +2649,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     ].join("\n");
   }
 
-  async #enqueueRoutineRun(run: RoutineRun): Promise<void> {
-    const bot = await this.#store.getOrCreate(run.botId);
-    try {
-      const receipt = await this.#mailbox.enqueue({
-        sender: {
-          kind: "routine",
-          routineId: run.routineId,
-          runId: run.id,
-          routineName: run.routineName,
-          scheduledFor: run.scheduledFor,
-        },
-        recipientBotIds: [bot.id],
-        text: run.instruction,
-        draftIds: [],
-        replyToMessageId: null,
-        idempotencyKey: run.triggerId ? `routine:${run.triggerId}:${run.scheduledFor}` : `routine:manual:${run.id}`,
-      });
-      const deliveryId = receipt.deliveries[0]?.id;
-      if (!deliveryId) throw new Error("Unable to create the routine delivery.");
-      this.#routines.attachDelivery(run.id, deliveryId);
-      const snapshot = this.#conversation.ensureSnapshot(bot.id, bot.threadId);
-      this.#syncMailboxMessages(snapshot);
-      await this.#store.updatePreview(bot.id, run.instruction);
-      this.#emit({ type: "bots-changed", bots: this.listBots() });
-      this.#conversation.emitConversation(snapshot, "routine.run-queued", { routineId: run.routineId, runId: run.id });
-      this.#emitQueue(bot.id);
-      this.#scheduleDrain(bot.id);
-    } catch (error) {
-      this.#transitionRoutineRunWithConversation(run, "failed", error instanceof Error ? error.message : String(error));
-      this.#routineStateChanged(run.botId);
-      throw error;
-    }
-  }
-
-  async #resumePendingRoutineRuns(): Promise<void> {
-    for (const run of this.#routines.pendingRuns()) {
-      await this.#enqueueRoutineRun(run).catch((error) => {
-        this.#emitError("routine_delivery_recovery_failed", error, run.botId);
-      });
-    }
-  }
-
-  #armRoutineTimer(): void {
-    if (this.#routineTimer) clearTimeout(this.#routineTimer);
-    this.#routineTimer = null;
-    if (!this.#initialized || this.#stopping) return;
-    const nextDueAt = this.#routines.nextDueAt(this.#pendingDuplicateBots);
-    if (!nextDueAt) return;
-    const delay = Math.max(0, Math.min(new Date(nextDueAt).getTime() - Date.now(), 2_147_000_000));
-    this.#routineTimer = setTimeout(() => {
-      this.#routineTimer = null;
-      void this.#processDueRoutines();
-    }, delay);
-    this.#routineTimer.unref?.();
-  }
-
-  async #processDueRoutines(now = new Date()): Promise<void> {
-    const changedBots = new Set<string>();
-    try {
-      for (const due of this.#routines.due(now, this.#pendingDuplicateBots)) {
-        let scheduledFor = new Date(due.nextRunAt);
-        let nextRunAt = nextRoutineOccurrence(due.schedule, due.routine.timezone, scheduledFor);
-        while (nextRunAt.getTime() <= now.getTime()) {
-          scheduledFor = nextRunAt;
-          nextRunAt = nextRoutineOccurrence(due.schedule, due.routine.timezone, scheduledFor);
-        }
-        const run = this.#routines.createRun(due.routine, due.triggerId, "scheduled", scheduledFor.toISOString());
-        this.#routines.advanceTrigger(due.routine.id, due.triggerId, nextRunAt.toISOString());
-        changedBots.add(due.routine.botId);
-        if (!run.deliveryId) {
-          await this.#enqueueRoutineRun(run).catch((error) => {
-            this.#emitError("routine_delivery_failed", error, due.routine.botId);
-          });
-        }
-      }
-    } catch (error) {
-      this.#emitError("routine_scheduler_failed", error);
-    } finally {
-      for (const botId of changedBots) this.#routineStateChanged(botId);
-      this.#armRoutineTimer();
-    }
-  }
-
-  #markRoutineNeedsAttention(turnId: string | null): void {
-    if (!turnId) return;
-    const delivery = this.#mailbox.findDeliveryByTurn(turnId);
-    if (delivery?.delivery.sender.kind !== "routine") return;
-    const run = this.#routines.runForDelivery(delivery.delivery.id);
-    if (!run || run.status === "needs-attention") return;
-    this.#transitionRoutineInteractionWithReconciliation(run, "needs-attention");
-  }
-
-  async #interruptRoutineRunsBeforeDeletion(botId: string, runs: RoutineRun[]): Promise<RoutineRun[]> {
-    const startingRun = runs.find((run) => {
-      if (!run.deliveryId) return false;
-      const delivery = this.#mailbox.getDelivery(run.deliveryId)?.delivery;
-      return delivery?.status === "starting" && !delivery.turnId;
-    });
-    if (startingRun) await this.#drainTasks.get(botId);
-
-    const cancellableRuns: RoutineRun[] = [];
-    const activeTurnIds = new Set<string>();
-    for (const run of runs) {
-      if (!run.deliveryId) {
-        cancellableRuns.push(run);
-        continue;
-      }
-      const delivery = this.#mailbox.getDelivery(run.deliveryId)?.delivery;
-      if (!delivery) continue;
-      if (delivery.status === "queued") {
-        cancellableRuns.push(run);
-        continue;
-      }
-      if (delivery.status !== "starting" && delivery.status !== "running") continue;
-      if (!delivery.turnId) {
-        throw new Error("This routine run is still starting. Try again after its turn starts.");
-      }
-      cancellableRuns.push(run);
-      activeTurnIds.add(delivery.turnId);
-    }
-    if (activeTurnIds.size === 0) return cancellableRuns;
-    if (!this.#store.activeProviderSession(botId)) {
-      throw new Error("OpenBot cannot interrupt the active routine run because its provider session is unavailable.");
-    }
-    for (const turnId of activeTurnIds) await this.interrupt(botId, turnId);
-    return cancellableRuns;
-  }
-
-  #markRoutineRunningForTurn(turnId: string | null): void {
-    if (!turnId) return;
-    const delivery = this.#mailbox.findDeliveryByTurn(turnId);
-    if (delivery?.delivery.sender.kind !== "routine") return;
-    const run = this.#routines.runForDelivery(delivery.delivery.id);
-    if (run?.status !== "needs-attention") return;
-    this.#transitionRoutineInteractionWithReconciliation(run, "running");
-  }
-
-  #transitionRoutineInteractionWithReconciliation(run: RoutineRun, status: "needs-attention" | "running"): void {
-    try {
-      this.#transitionRoutineRunWithConversation(run, status);
-      this.#routineStateChanged(run.botId);
-    } catch (error) {
-      this.#emitError("delivery_reconciliation_pending", error, run.botId);
-      queueMicrotask(() => {
-        if (!run.deliveryId) return;
-        const current = this.#routines.runForDelivery(run.deliveryId);
-        if (!current || current.status === status) return;
-        if (status === "running" && current.status !== "needs-attention") return;
-        if (status === "needs-attention" && current.status !== "running") return;
-        try {
-          this.#transitionRoutineRunWithConversation(current, status);
-          this.#routineStateChanged(current.botId);
-        } catch (retryError) {
-          this.#emitError("delivery_reconciliation_pending", retryError, current.botId);
-        }
-      });
-    }
-  }
-
   #memoryStateChanged(botId: string): void {
     const bot = this.#conversation.requireKnownBot(botId);
     const session = this.#store.activeProviderSession(bot.id);
     if (session) this.#conversation.unloadThread(session.externalSessionId);
     this.#emit({ type: "memories-changed", botId });
-  }
-
-  #routineStateChanged(botId: string): void {
-    this.#emit({ type: "routines-changed", botId });
-  }
-
-  #transitionRoutineRunWithConversation(
-    run: RoutineRun,
-    status: RoutineRunConversationEventStatus,
-    error: string | null = null,
-  ): RoutineRun {
-    if (run.status === status && run.error === error) return run;
-    const database = this.#store.database;
-    return this.#conversation.withConversationTransaction(run.botId, ({ threadId, snapshot: nextSnapshot }) => {
-      const transition = this.#appendRoutineRunTransition(nextSnapshot, run, status, error);
-      sortConversationMessages(nextSnapshot.messages);
-      nextSnapshot.revision = database.appendConversationMessage({
-        botId: run.botId,
-        threadId,
-        activeTurnId: nextSnapshot.activeTurnId,
-        message: transition.message,
-        eventType: `routine.run-${status}`,
-        detail: { routineId: run.routineId, runId: run.id, status },
-      });
-      return { result: transition.run, snapshot: nextSnapshot };
-    });
-  }
-
-  #appendRoutineRunTransition(
-    snapshot: ConversationSnapshot,
-    run: RoutineRun,
-    status: RoutineRunConversationEventStatus,
-    error: string | null = null,
-  ): { run: RoutineRun; message: ConversationMessage } {
-    const updated = this.#routines.updateRunStatus(run.id, status, error);
-    const message: ConversationMessage = {
-      id: randomUUID(),
-      author: "system",
-      source: "system",
-      text: run.routineName,
-      createdAt: updated.updatedAt,
-      status: "completed",
-      itemType: routineRunConversationEventItemType(status, run.routineId, run.id),
-    };
-    snapshot.messages.push(message);
-    return { run: updated, message };
-  }
-
-  #mutateRoutineWithConversation<T>(
-    botId: string,
-    action: RoutineConversationEventAction,
-    mutate: () => T,
-    eventRoutine: (result: T) => Pick<Routine, "id" | "name">,
-    turnId?: string,
-    transactionHooks?: { beforeMutate?: (snapshot: ConversationSnapshot) => void; onRollback?: () => void },
-  ): T {
-    const database = this.#store.database;
-    return this.#conversation.withConversationTransaction(
-      botId,
-      ({ snapshot: nextSnapshot }) => {
-        transactionHooks?.beforeMutate?.(nextSnapshot);
-        const result = mutate();
-        const routine = eventRoutine(result);
-        const createdAt = new Date().toISOString();
-        const message: ConversationMessage = {
-          id: randomUUID(),
-          ...(turnId ? { turnId } : {}),
-          author: "system",
-          source: "system",
-          text: routine.name,
-          createdAt,
-          status: "completed",
-          itemType: routineConversationEventItemType(action, routine.id),
-        };
-        nextSnapshot.messages.push(message);
-        sortConversationMessages(nextSnapshot.messages);
-        // persistConversation returns a fresh snapshot, so the published one is not `nextSnapshot`.
-        const persisted = database.persistConversation(nextSnapshot, `routine.${action}`, {
-          action,
-          routineId: routine.id,
-          routineName: routine.name,
-          messageId: message.id,
-        });
-        return { result, snapshot: persisted };
-      },
-      transactionHooks?.onRollback,
-    );
   }
 
   #emitError(code: string, error: unknown, botId?: string): void {
