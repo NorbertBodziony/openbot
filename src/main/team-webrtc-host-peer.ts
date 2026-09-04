@@ -2,6 +2,7 @@ import { createHash, randomBytes, verify } from "node:crypto";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
+import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { supportsTeamSemanticTags, TEAM_CURRENT_CAPABILITIES } from "@openbot/contracts/team-protocol/current";
 import { encodeTeamProtocolV1ClientEvent } from "@openbot/contracts/team-protocol/v1";
 import {
@@ -468,7 +469,7 @@ export class TeamWebRtcHostPeer {
   #connectLocalEvents(token: string): void {
     if (!this.#localApiPort) return;
     this.#eventsSocket?.close();
-    const socket = new webSockets.WebSocket(`ws://127.0.0.1:${this.#localApiPort}/v1/events`, [
+    const socket = new webSockets.WebSocket(`ws://127.0.0.1:${this.#localApiPort}${TEAM_API_ROUTES.events}`, [
       "openbot-team-v1",
       `openbot-token.${token}`,
     ]);

@@ -10,6 +10,7 @@ import type {
   RemoteDesktopIceServer,
   RemoteDesktopSession,
 } from "@openbot/contracts/ipc";
+import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import type * as Ws from "ws";
 import { z } from "zod";
 import type { RemoteDesktopRuntimePaths } from "./remote-desktop-runtime-artifact";
@@ -155,7 +156,7 @@ export class RemoteScreenGateway {
     const snapshot: RemoteDesktopSession = {
       id,
       serverId: input.serverId,
-      viewerUrl: `${input.publicHttpBaseUrl}/v1/remote-screen/sessions/${id}/viewer`,
+      viewerUrl: `${input.publicHttpBaseUrl}${TEAM_API_ROUTES.remoteScreen.viewer(id)}`,
       viewerGrant,
       displays: structuredClone(this.#availableDisplays()),
       selectedDisplayId: this.#selectedDisplayId,
@@ -274,7 +275,7 @@ export class RemoteScreenGateway {
       const cookiePolicy =
         request.headers["x-forwarded-proto"] === "https" ? "; Secure; SameSite=None" : "; SameSite=Strict";
       response.writeHead(204, {
-        "Set-Cookie": `${VIEWER_COOKIE}=${cookie}; HttpOnly${cookiePolicy}; Path=/v1/remote-screen/sessions/${session.snapshot.id}/; Max-Age=86400`,
+        "Set-Cookie": `${VIEWER_COOKIE}=${cookie}; HttpOnly${cookiePolicy}; Path=${TEAM_API_ROUTES.remoteScreen.session(session.snapshot.id)}/; Max-Age=86400`,
         "Cache-Control": "no-store",
       });
       response.end();
@@ -493,7 +494,7 @@ export class RemoteScreenGateway {
     if (upstreamPath === "/config.js") {
       response.writeHead(200, { "Content-Type": "text/javascript", "Cache-Control": "no-store" });
       response.end(
-        `export default ${JSON.stringify({ path_prefix: `/v1/remote-screen/sessions/${session.snapshot.id}/moonlight` })}`,
+        `export default ${JSON.stringify({ path_prefix: `${TEAM_API_ROUTES.remoteScreen.session(session.snapshot.id)}/moonlight` })}`,
       );
       return;
     }
@@ -570,7 +571,7 @@ function sendViewer(
   streamerSlot: number,
   runtime: SunshineMoonlightRuntimeState,
 ): void {
-  const sessionPath = `/v1/remote-screen/sessions/${sessionId}`;
+  const sessionPath = TEAM_API_ROUTES.remoteScreen.session(sessionId);
   const hostId = runtime.hostIds[streamerSlot - 1] ?? runtime.hostId;
   const target = `${sessionPath}/moonlight/stream.html?hostId=${hostId}&appId=${runtime.desktopAppId}`;
   const html = `<!doctype html><meta charset="utf-8"><title>OpenBot Moonlight Remote</title><meta name="color-scheme" content="dark"><style>html,body{margin:0;width:100%;height:100%;background:#090b0c;color:#fff;font:14px system-ui}main{display:grid;place-items:center;height:100%}</style><main>Connecting…</main><script type="module">const grant=new URL(location.href).hash.slice(1);history.replaceState(null,"",location.pathname);const response=await fetch(${JSON.stringify(`${sessionPath}/authorize`)},{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({grant})});if(!response.ok){document.querySelector("main").textContent="Remote access expired";throw new Error("grant rejected")}location.replace(${JSON.stringify(target)});</script>`;
