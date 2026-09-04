@@ -1,3 +1,4 @@
+import { parseInviteUrl } from "@openbot/contracts/invite-links";
 import { router } from "expo-router";
 import { Button, Typography } from "heroui-native";
 import { Server } from "lucide-react-native";
@@ -11,10 +12,8 @@ import { SheetScrollView } from "@/shared/components/sheet-scroll-view";
 
 function normalizeInviteUrl(value: string): string | null {
   try {
-    const invitation = new URL(value.trim());
-    if (invitation.protocol !== "https:" && invitation.protocol !== "http:") return null;
-    if (!invitation.hostname) return null;
-    return invitation.toString();
+    parseInviteUrl(value.trim());
+    return value.trim();
   } catch {
     return null;
   }
@@ -25,6 +24,7 @@ export function AddServerScreen() {
   const [inviteLink, setInviteLink] = useState("");
   const [reviewedInvite, setReviewedInvite] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [joining, setJoining] = useState(false);
   const canReview = inviteLink.trim().length > 0;
 
   function reviewInvite(): void {
@@ -38,11 +38,17 @@ export function AddServerScreen() {
     setReviewedInvite(normalizedInvite);
   }
 
-  function joinServer(): void {
-    if (!reviewedInvite) return;
-    //! MOCK DATA RENDERED HERE
-    addRemoteServer({ inviteUrl: reviewedInvite });
-    router.back();
+  async function joinServer(): Promise<void> {
+    if (!reviewedInvite || joining) return;
+    setJoining(true);
+    setError(null);
+    try {
+      await addRemoteServer({ inviteUrl: reviewedInvite });
+      router.back();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "OpenBot could not join this server.");
+      setJoining(false);
+    }
   }
 
   const invitationHost = reviewedInvite ? new URL(reviewedInvite).hostname : null;
@@ -80,8 +86,14 @@ export function AddServerScreen() {
             </View>
           </View>
 
-          <Button size="lg" onPress={joinServer}>
-            <Button.Label className="font-sans font-semibold">Join server</Button.Label>
+          {error ? (
+            <Typography.Paragraph align="center" className="text-danger">
+              {error}
+            </Typography.Paragraph>
+          ) : null}
+
+          <Button size="lg" isDisabled={joining} onPress={() => void joinServer()}>
+            <Button.Label className="font-sans font-semibold">{joining ? "Joining…" : "Join server"}</Button.Label>
           </Button>
 
           <Pressable

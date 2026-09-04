@@ -14,10 +14,46 @@ import {
   testServer,
 } from "./app-test-harness";
 import { useConversation } from "./conversation";
+import { useServerScope } from "./server-scope";
 
 describe("OpenBot connected desktop shell", () => {
   beforeEach(() => {
     installOpenbotStub();
+  });
+
+  it("clears desktop unread state when the same member reads on another device", async () => {
+    vi.mocked(window.openbot.agent.readConversationPage).mockResolvedValue(
+      testConversationPage("chief", [], {
+        readState: { unreadCount: 1, firstUnreadMessageId: "reply", throughMessageId: null },
+      }),
+    );
+    let unreadCount = 1;
+    vi.mocked(window.openbot.agent.listConversationReads).mockImplementation(async () => ({
+      chief: {
+        unreadCount,
+        firstUnreadMessageId: unreadCount ? "reply" : null,
+        throughMessageId: unreadCount ? null : "reply",
+      },
+    }));
+    function Probe() {
+      const conversation = useConversation();
+      const scope = useServerScope();
+      return (
+        <output aria-label="Unread replies">
+          {scope.loaded() ? (conversation.conversationReads().chief?.unreadCount ?? -1) : "Loading"}
+        </output>
+      );
+    }
+    render(() => (
+      <AppProviders>
+        <Probe />
+      </AppProviders>
+    ));
+    await waitFor(() => expect(screen.getByLabelText("Unread replies")).toHaveTextContent("1"));
+    unreadCount = 0;
+    emitAgentEvent?.({ type: "conversation-invalidated", botId: "chief", revision: 1 });
+    await waitFor(() => expect(screen.getByLabelText("Unread replies")).toHaveTextContent("0"));
+    expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalled();
   });
 
   it("merges a refreshed remote conversation page without dropping loaded messages", async () => {

@@ -1,4 +1,5 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import type { AccountSession } from "@openbot/contracts/mobile-connect";
 import { describe, expect, it, vi } from "vitest";
 import { AuthService, generateOneTimeCode, normalizeOneTimeCode } from "../src/server/auth-service";
 import type {
@@ -257,6 +258,31 @@ class MemoryAuthRepository implements AuthRepository {
     });
   }
 
+  async listAccountSessions(userId: string, currentToken: string, now: number): Promise<AccountSession[]> {
+    return [...this.sessions.entries()]
+      .filter(([, session]) => session.user.id === userId && !session.revoked && session.expiresAt > now)
+      .map(([token, session]) => {
+        const device = this.mobileDevices.get(session.id);
+        return {
+          sessionId: session.id,
+          name: device?.name ?? "Desktop",
+          kind: device ? "mobile" : "desktop",
+          current: token === currentToken,
+          connectedAt: device?.connectedAt ?? 0,
+          lastActiveAt: device?.lastActiveAt ?? 0,
+        };
+      });
+  }
+
+  async revokeAccountSession(userId: string, sessionId: string): Promise<boolean> {
+    const session = [...this.sessions.values()].find(
+      (session) => session.id === sessionId && session.user.id === userId,
+    );
+    if (!session || session.revoked) return false;
+    session.revoked = true;
+    return true;
+  }
+
   async revokeMobileAuthDevice(userId: string, sessionId: string): Promise<boolean> {
     const device = this.mobileDevices.get(sessionId);
     if (!device || device.userId !== userId) return false;
@@ -358,6 +384,9 @@ describe("email one-time codes", () => {
     expect(await service.redeemMobileAuthTicket(crossPurposeTeamTicket.ticket, device, "203.0.113.5")).toBeNull();
     expect(await service.redeemMobileAuthTicket(replacedMobileTicket.ticket, device, "203.0.113.5")).toBeNull();
     const mobileSession = await service.redeemMobileAuthTicket(mobileTicket.ticket, device, "203.0.113.5");
+    await expect(
+      repository.authenticateMobileSession(mobileSession?.sessionToken ?? "missing", 10_000_000_000_000),
+    ).resolves.toMatchObject({ id: session.user.id });
     expect(mobileSession).toMatchObject({ user: { id: session.user.id, name: "Nörbert Bot" } });
     expect(await service.authenticateMobileSession(mobileSession?.sessionToken ?? "missing")).toMatchObject({
       id: session.user.id,

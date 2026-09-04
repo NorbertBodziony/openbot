@@ -1,3 +1,4 @@
+import type { BotAvatarHue } from "@openbot/contracts/ipc";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import {
@@ -29,6 +30,7 @@ interface AvatarRect {
 
 export interface BotPinTransitionState {
   botId: string;
+  avatarHue: BotAvatarHue | null;
   avatarSeed: string;
   from: AvatarRect;
   source: BotAvatarLocation;
@@ -150,6 +152,7 @@ export function BotPinTransitionProvider({ children }: PropsWithChildren) {
 
       const nextTransition: BotPinTransitionState = {
         botId,
+        avatarHue: bot.avatarHue,
         avatarSeed: bot.avatarSeed,
         from,
         source,
@@ -181,6 +184,7 @@ export function BotPinTransitionProvider({ children }: PropsWithChildren) {
       const to = avatarRects.get(botId)?.[target];
       const nextTransition: BotPinTransitionState = {
         botId,
+        avatarHue: bot.avatarHue,
         avatarSeed: bot.avatarSeed,
         from,
         source: "chat",
@@ -235,6 +239,7 @@ export function BotPinTransitionProvider({ children }: PropsWithChildren) {
         sourceNode.measureInWindow((x, y, width, height) => {
           const nextTransition: BotPinTransitionState = {
             botId,
+            avatarHue: bot.avatarHue,
             avatarSeed: bot.avatarSeed,
             from: { x: x - containerX, y: y - containerY, width, height },
             source,

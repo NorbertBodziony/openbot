@@ -1,3 +1,4 @@
+import type { AccountSession, MobileConnectHostBinding } from "@openbot/contracts/mobile-connect";
 import { sha256 } from "./crypto";
 import type {
   AuthRepository,
@@ -7,6 +8,7 @@ import type {
   EmailVerificationResult,
   MobileAuthDevice,
   MobileAuthDeviceIdentity,
+  MobileAuthSessionResult,
 } from "./types";
 
 interface UserRow {
@@ -307,6 +309,7 @@ export class D1AuthRepository implements AuthRepository {
   }
 
   async replaceMobileAuthTicket(input: {
+    host?: MobileConnectHostBinding;
     ticketHash: string;
     userId: string;
     serverId: string;
@@ -323,10 +326,18 @@ export class D1AuthRepository implements AuthRepository {
       this.database
         .prepare(
           `INSERT INTO team_auth_tickets(
-            ticket_hash, user_id, server_id, created_at, expires_at
-          ) VALUES (?, ?, ?, ?, ?)`,
+            ticket_hash, user_id, server_id, created_at, expires_at, mobile_host_id, mobile_host_fingerprint
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
         )
-        .bind(input.ticketHash, input.userId, input.serverId, input.createdAt, input.expiresAt),
+        .bind(
+          input.ticketHash,
+          input.userId,
+          input.serverId,
+          input.createdAt,
+          input.expiresAt,
+          input.host?.hostId ?? null,
+          input.host?.fingerprint ?? null,
+        ),
     ]);
   }
 
@@ -357,7 +368,29 @@ export class D1AuthRepository implements AuthRepository {
     now: number;
     session: { id: string; token: string; expiresAt: number };
     device: MobileAuthDeviceIdentity;
-  }): Promise<{ sessionToken: string; user: AuthUser } | null> {
+  }): Promise<MobileAuthSessionResult | null> {
+    const binding = await this.database
+      .prepare(
+        `SELECT t.mobile_host_id, t.mobile_host_fingerprint, h.device_public_key, h.owner_user_id, t.user_id
+       FROM team_auth_tickets t LEFT JOIN remote_hosts h ON h.host_id = t.mobile_host_id
+       WHERE t.ticket_hash = ? AND t.server_id = ? AND t.consumed_at IS NULL AND t.expires_at > ?`,
+      )
+      .bind(input.ticketHash, input.serverId, input.now)
+      .first<{
+        mobile_host_id: string | null;
+        mobile_host_fingerprint: string | null;
+        device_public_key: string | null;
+        owner_user_id: string | null;
+        user_id: string;
+      }>();
+    if (!binding) return null;
+    if (
+      binding.mobile_host_id &&
+      (!binding.device_public_key ||
+        binding.owner_user_id !== binding.user_id ||
+        (await sha256(binding.device_public_key)) !== binding.mobile_host_fingerprint)
+    )
+      return null;
     const tokenHash = await sha256(input.session.token);
     const [created, registered, , , consumed] = await this.database.batch([
       this.database
@@ -365,7 +398,12 @@ export class D1AuthRepository implements AuthRepository {
           `INSERT INTO auth_sessions(id, user_id, token_hash, expires_at, created_at, last_used_at)
            SELECT ?, user_id, ?, ?, ?, ?
            FROM team_auth_tickets
-           WHERE ticket_hash = ? AND server_id = ? AND consumed_at IS NULL AND expires_at > ?`,
+           WHERE ticket_hash = ? AND server_id = ? AND consumed_at IS NULL AND expires_at > ?
+             AND (mobile_host_id IS NULL OR EXISTS (
+               SELECT 1 FROM remote_hosts h
+               WHERE h.host_id = team_auth_tickets.mobile_host_id
+                 AND h.owner_user_id = team_auth_tickets.user_id AND h.device_public_key = ?
+             ))`,
         )
         .bind(
           input.session.id,
@@ -376,6 +414,7 @@ export class D1AuthRepository implements AuthRepository {
           input.ticketHash,
           input.serverId,
           input.now,
+          binding.device_public_key,
         ),
       this.database
         .prepare(
@@ -411,7 +450,15 @@ export class D1AuthRepository implements AuthRepository {
     ]);
     if (created.meta.changes !== 1 || registered.meta.changes !== 1 || consumed.meta.changes !== 1) return null;
     const user = await this.authenticate(input.session.token, input.now);
-    return user ? { sessionToken: input.session.token, user } : null;
+    return user
+      ? {
+          sessionToken: input.session.token,
+          user,
+          ...(binding.mobile_host_id && binding.mobile_host_fingerprint
+            ? { host: { hostId: binding.mobile_host_id, fingerprint: binding.mobile_host_fingerprint } }
+            : {}),
+        }
+      : null;
   }
 
   async authenticateMobileSession(sessionToken: string, now: number): Promise<AuthUser | null> {
@@ -460,6 +507,30 @@ export class D1AuthRepository implements AuthRepository {
       connectedAt: row.created_at,
       lastActiveAt: row.last_used_at,
     }));
+  }
+
+  async listAccountSessions(userId: string, currentToken: string, now: number): Promise<AccountSession[]> {
+    const result = await this.database
+      .prepare(`
+      SELECT a.id AS sessionId, COALESCE(m.device_name, 'Desktop') AS name,
+        CASE WHEN m.session_id IS NULL THEN 'desktop' ELSE 'mobile' END AS kind,
+        a.token_hash = ? AS is_current, a.created_at AS connectedAt, a.last_used_at AS lastActiveAt
+      FROM auth_sessions a LEFT JOIN mobile_auth_sessions m ON m.session_id = a.id
+      WHERE a.user_id = ? AND a.revoked_at IS NULL AND a.expires_at > ?
+      ORDER BY a.last_used_at DESC, a.created_at DESC
+    `)
+      .bind(await sha256(currentToken), userId, now)
+      .all<Omit<AccountSession, "current"> & { is_current: number }>();
+    return result.results.map(({ is_current, ...session }) => ({ ...session, current: is_current === 1 }));
+  }
+
+  async revokeAccountSession(userId: string, sessionId: string, now: number): Promise<boolean> {
+    // The migration's trigger ends remote sessions and enqueues their disconnect atomically.
+    const result = await this.database
+      .prepare("UPDATE auth_sessions SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL")
+      .bind(now, sessionId, userId)
+      .run();
+    return result.meta.changes === 1;
   }
 
   async revokeMobileAuthDevice(userId: string, sessionId: string, now: number): Promise<boolean> {

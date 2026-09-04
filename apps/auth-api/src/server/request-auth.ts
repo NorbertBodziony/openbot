@@ -13,7 +13,12 @@ import {
   type MarketplaceMutationKind,
   MarketplaceRateLimitError,
 } from "./marketplace-request-policy";
-import { RemoteControlPlane, RemoteControlPlaneError, verifyRemoteServiceSignature } from "./remote-control-plane";
+import {
+  deliverPendingRemoteAuthEvents,
+  RemoteControlPlane,
+  RemoteControlPlaneError,
+  verifyRemoteServiceSignature,
+} from "./remote-control-plane";
 import { SkillMarketplace, SkillMarketplaceError } from "./skill-marketplace";
 import { requireWorkerBindings, type TeamInviteEmailDelivery } from "./types";
 
@@ -24,6 +29,7 @@ export function requestAuthService(): AuthService {
     repository: new D1AuthRepository(bindings.DB),
     delivery: exposeDevelopmentCode ? null : createEmailCodeDelivery(bindings),
     exposeDevelopmentCode,
+    flushSessionRevocations: () => deliverPendingRemoteAuthEvents(bindings, Date.now()),
   });
 }
 

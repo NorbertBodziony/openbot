@@ -1,4 +1,5 @@
 import { isDynamicRecord } from "../runtime-values";
+import { isConversationUnreadRoute } from "./current";
 import type { TeamProtocolV1JsonObject, TeamProtocolV1JsonValue } from "./v1";
 import {
   decodeTeamProtocolV1CurrentHttpRequest,
@@ -14,6 +15,7 @@ export function encodeTeamProtocolV3CurrentHttpRequest(
   value: unknown,
   options: { preserveSemanticTags?: boolean } = {},
 ): string {
+  if (isConversationUnreadRoute(method, path)) return JSON.stringify(decodeUnreadRequest(value));
   if (scopedUsageRoute(method, path)) {
     return JSON.stringify(decodeScopedUsageRequest(value));
   }
@@ -28,6 +30,7 @@ export function decodeTeamProtocolV3CurrentHttpRequest(
   value: unknown,
   options: { preserveSemanticTags?: boolean } = {},
 ): TeamProtocolV1JsonObject {
+  if (isConversationUnreadRoute(method, path)) return decodeUnreadRequest(value);
   if (scopedUsageRoute(method, path)) {
     return decodeScopedUsageRequest(value);
   }
@@ -45,6 +48,8 @@ export function encodeTeamProtocolV3CurrentHttpResponse(
   value: unknown,
   options: { preserveSemanticTags?: boolean } = {},
 ): string {
+  if (isConversationUnreadRoute(method, path))
+    return encodeTeamProtocolV1CurrentHttpResponse(method, readPath(path), status, value, options);
   if (scopedUsageRoute(method, path)) {
     return encodeTeamProtocolV1CurrentHttpResponse(method, "/v1/agents/usage", status, value, options);
   }
@@ -61,11 +66,24 @@ export function decodeTeamProtocolV3CurrentHttpResponse(
   status: number,
   value: unknown,
 ): TeamProtocolV1JsonValue {
+  if (isConversationUnreadRoute(method, path))
+    return decodeTeamProtocolV1CurrentHttpResponse(method, readPath(path), status, value);
   if (scopedUsageRoute(method, path)) {
     return decodeTeamProtocolV1CurrentHttpResponse(method, "/v1/agents/usage", status, value);
   }
   if (!duplicateRoute(method, path)) return decodeTeamProtocolV1CurrentHttpResponse(method, path, status, value);
   return structuredClone(decodeTeamProtocolV3HttpResponse(method, path, status, value));
+}
+
+function decodeUnreadRequest(value: unknown): TeamProtocolV1JsonObject {
+  if (value === null || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== 0) {
+    throw new Error("Invalid conversation-unread request.");
+  }
+  return {};
+}
+
+function readPath(path: string): string {
+  return new URL(path, "http://openbot.invalid").pathname.replace(/\/unread$/u, "/read");
 }
 
 function scopedUsageRoute(method: string, path: string): boolean {

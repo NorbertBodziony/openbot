@@ -5,11 +5,16 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./bloub-avatar": "./src/bloub-avatar.ts",
     "./logo.css": "./src/logo.css"
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run --config vitest.config.ts"
+  },
+  "dependencies": {
+    "@norbert_bodziony/bloub": "catalog:",
+    "@openbot/contracts": "workspace:*"
   },
   "peerDependencies": {
     "@solidjs/web": "catalog:",

@@ -798,7 +798,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     options: ConversationMarkerExclusions = {},
   ): Promise<ConversationReadState> {
     const snapshot = await this.readConversation(botId);
-    return this.#conversationReads.markRead(memberId, snapshot, throughMessageId, options);
+    const previous = this.#conversationReads.readState(memberId, snapshot).throughMessageId;
+    const state = this.#conversationReads.markRead(memberId, snapshot, throughMessageId, options);
+    if (this.#conversationReads.readState(memberId, snapshot).throughMessageId !== previous) {
+      // Read cursors are shared by a member's devices, not by every team member.
+      // Invalidate without broadcasting a reader's cursor; each client reloads its own state.
+      this.#emit({ type: "conversation-invalidated", botId, revision: snapshot.revision });
+    }
+    return state;
+  }
+
+  async markConversationUnread(botId: string, memberId: string): Promise<ConversationReadState> {
+    const snapshot = await this.readConversation(botId);
+    const state = this.#conversationReads.markUnread(memberId, snapshot);
+    this.#emit({ type: "conversation-invalidated", botId, revision: snapshot.revision });
+    return state;
   }
 
   prepareAttachments(paths: string[]): Promise<DraftAttachment[]> {

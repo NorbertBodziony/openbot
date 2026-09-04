@@ -1,7 +1,14 @@
 import { Typography } from "heroui-native";
 import { X } from "lucide-react-native";
 import { forwardRef } from "react";
-import { Pressable, ScrollView, View, type ViewStyle } from "react-native";
+import {
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+  Pressable,
+  ScrollView,
+  View,
+  type ViewStyle,
+} from "react-native";
 
 import { getBloubAvatarColor } from "@/features/bots/components/bloub-avatar";
 import type { MobileBot } from "@/features/workspace/context/mobile-workspace-context";
@@ -27,6 +34,8 @@ interface ChatMessageListProps {
   raised: ViewStyle["backgroundColor"];
   showStarter: boolean;
   topInset: number;
+  onContentSizeChange: () => void;
+  onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   onDismissStarter: () => void;
   onSelectStarter: (value: string) => void;
 }
@@ -41,12 +50,14 @@ export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(func
     raised,
     showStarter,
     topInset,
+    onContentSizeChange,
+    onScroll,
     onDismissStarter,
     onSelectStarter,
   },
   ref,
 ) {
-  const userBubbleColor = getBloubAvatarColor(bot.avatarSeed);
+  const userBubbleColor = getBloubAvatarColor(bot.avatarSeed, bot.avatarHue);
 
   return (
     <ScrollView
@@ -63,6 +74,9 @@ export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(func
       contentInsetAdjustmentBehavior="never"
       keyboardDismissMode="interactive"
       keyboardShouldPersistTaps="handled"
+      onContentSizeChange={onContentSizeChange}
+      onScroll={onScroll}
+      scrollEventThrottle={16}
       showsVerticalScrollIndicator={false}
     >
       <Typography.Paragraph type="body-xs" align="center" className="pb-1 text-text-dim">

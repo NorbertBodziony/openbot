@@ -95,11 +95,9 @@ export function MobileSessionProvider({ children }: PropsWithChildren) {
   const signOut = useCallback(async () => {
     const current = sessionRef.current;
     if (!current) return;
-    setCurrentSession(null);
-    try {
-      await logoutMobileSession(current);
-    } catch {
-      // Local sign-out remains authoritative when the account service is unavailable.
+    await logoutMobileSession(current);
+    if (sessionRef.current?.sessionToken === current.sessionToken) {
+      setCurrentSession(null);
     }
   }, [setCurrentSession]);
 
