@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AgentEvent, BotSummary, DuplicateBotResult, SidebarLayoutSnapshot } from "@openbot/contracts/ipc";
-import type { BotStore } from "../bot-store";
+import { type BotStore, duplicationProfileSignature } from "../bot-store";
 import type { MailboxStore } from "../mailbox-store";
 import type { AgentMemories } from "./agent-memories";
 import type { ConversationRuntime } from "./conversation-runtime";
@@ -201,9 +201,13 @@ export class DuplicationGate {
     return release;
   }
 
+  /**
+   * Signs the same profile the store signs, so the two layers cannot disagree about what "changed"
+   * means — otherwise narrowing one of them just moves the identical error message one frame out.
+   */
   #sourceSignature(botId: string): string {
     return JSON.stringify({
-      bot: this.#conversation.requireKnownBot(botId),
+      bot: duplicationProfileSignature(this.#conversation.requireKnownBot(botId)),
       memories: this.#memories.listFor(botId),
       routines: this.#routines.listFor(botId),
     });

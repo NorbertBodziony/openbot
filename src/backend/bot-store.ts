@@ -216,7 +216,7 @@ export class BotStore {
       throw new Error(`A host can have up to ${INPUT_LIMITS.agents} agents.`);
     }
     const source = this.#requireBot(sourceId);
-    const sourceProfileSignature = JSON.stringify(source);
+    const sourceProfileSignature = duplicationProfileSignature(source);
     const sourceWorkspaceManifest = await workspaceMetadataFingerprint(source.workspacePath);
     const sourceAvatar = this.resolveAvatar(source.id);
     const sourceAvatarSignature = sourceAvatar ? await fileFingerprint(sourceAvatar.path) : null;
@@ -260,7 +260,7 @@ export class BotStore {
         record.avatarUrl = agentAvatarUrl(record.id, sourceAvatar.version, sourceAvatar.mimeType);
       }
       if (
-        JSON.stringify(source) !== sourceProfileSignature ||
+        duplicationProfileSignature(source) !== sourceProfileSignature ||
         (await workspaceMetadataFingerprint(source.workspacePath)) !== sourceWorkspaceManifest ||
         (stagedAvatarPath ? await fileFingerprint(stagedAvatarPath) : null) !== sourceAvatarSignature ||
         (sourceAvatar ? await fileFingerprint(sourceAvatar.path) : null) !== sourceAvatarSignature
@@ -676,6 +676,20 @@ function duplicateBotName(sourceName: string, bots: readonly StoredBot[]): strin
     if (!existing.has(candidate.toLocaleLowerCase())) return candidate;
   }
   throw new Error("OpenBot could not create a unique agent copy name.");
+}
+
+/**
+ * The part of an agent a copy is actually built from, which is what "the agent changed" has to mean.
+ *
+ * `preview`, `updatedAt` and `threadId` move on their own the moment a message lands, and a
+ * duplicate takes none of the three — it gets a fresh thread and its own empty preview. Signing them
+ * aborted duplications that were never incoherent, and copying a large workspace takes long enough
+ * for an incoming message to land inside the window. Everything else is signed by omission, so a new
+ * `BotSummary` field is guarded until someone decides otherwise here.
+ */
+export function duplicationProfileSignature(bot: BotSummary): string {
+  const { preview, updatedAt, threadId, ...copied } = bot;
+  return JSON.stringify(copied);
 }
 
 function duplicationCommandId(operationId: string): string {
