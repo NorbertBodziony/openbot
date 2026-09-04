@@ -334,4 +334,44 @@ describe("remote event connections", () => {
         .map((event) => event.snapshot.revision),
     ).toEqual([2, 2]);
   });
+  it("declares client capabilities when runtime snapshots are unavailable", async () => {
+    stubTeamFetch({
+      compatibility: { appVersion: "0.3.0", capabilities: ["direct-messages"] },
+      routes: { "/v1/agents": () => Response.json([]) },
+    });
+    const { sockets } = stubEventSockets();
+    const fixture = await createRemoteManager({ servers: [storedHttpsServer("scope")], appVersion: "0.4.0" });
+
+    fixture.manager.startEventConnections();
+    await vi.waitFor(() => expect(sockets[0]?.sent).not.toHaveLength(0));
+
+    expect(sockets[0]?.protocols).toContain("openbot-team-v1");
+    // The host cannot push a runtime snapshot, so the scope has to say what this client understands
+    // for the host to know which events are worth sending at all.
+    expect(sockets[0]?.sent).toContainEqual({
+      ...agentScope(true),
+      capabilities: expect.arrayContaining(["direct-messages"]),
+    });
+  });
+
+  it("ignores an unknown event and stops reconnecting after a malformed known one", async () => {
+    vi.useFakeTimers();
+    stubTeamFetch({ compatibility: { appVersion: "0.3.0", capabilities: ["agent-runtime-snapshots"] } });
+    const { sockets } = stubEventSockets();
+    const fixture = await createRemoteManager({ servers: [storedHttpsServer("known-events")], appVersion: "0.4.0" });
+
+    fixture.manager.startEventConnections();
+    await waitForServer(fixture, { state: "online", connectionSequence: 1 });
+
+    // An event this build has never heard of is a newer host, not a broken one.
+    sockets[0]?.emit({ type: "future-event" });
+    expect(sockets[0]?.close).not.toHaveBeenCalled();
+
+    // A known event whose payload does not decode is the opposite: the host is not speaking the
+    // protocol it agreed to, and retrying cannot fix that.
+    sockets[0]?.emit({ type: "team-presence", snapshot: {} });
+    await waitForServer(fixture, { issue: { code: "protocol_error" } });
+    await vi.advanceTimersByTimeAsync(REMOTE_EVENT_RECONNECT_TEST_MS * 4);
+    expect(sockets).toHaveLength(1);
+  });
 });
