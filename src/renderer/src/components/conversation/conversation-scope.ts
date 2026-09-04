@@ -284,9 +284,7 @@ export function createConversationViewScope(props: ConversationProps) {
     markUnreadMessages,
     jumpToUnreadMessages,
     jumpToLatestMessage,
-    getUnreadVisibilityFrame,
   } = scroll;
-  const unreadVisibilityFrame = getUnreadVisibilityFrame();
   const search = createSearchStore({
     props,
     chatSearchOpen,
@@ -594,7 +592,6 @@ export function createConversationViewScope(props: ConversationProps) {
       updateUnreadDividerVisibility();
     });
     return () => {
-      if (unreadVisibilityFrame !== undefined) cancelAnimationFrame(unreadVisibilityFrame);
       scrollResizeObserver?.disconnect();
       scrollResizeObserver = undefined;
       unsubscribeImport();
@@ -1224,7 +1221,6 @@ export function createConversationViewScope(props: ConversationProps) {
     submitting,
     unreadDividerVisible,
     unreadMessagesDivider,
-    unreadVisibilityFrame,
     unreferencedDraftAttachments,
     updateCurrentDraft,
     updateScrollFade,

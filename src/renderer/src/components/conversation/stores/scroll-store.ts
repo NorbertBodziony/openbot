@@ -1,4 +1,4 @@
-import { createSignal } from "solid-js";
+import { createSignal, onCleanup } from "solid-js";
 import type { ConversationProps } from "../../ConversationView";
 import { createScrollFades } from "../../createScrollFades";
 import { calculateChatScrollMargin, createChatVirtualizer } from "../createChatVirtualizer";
@@ -77,6 +77,11 @@ export function createScrollStore(deps: ScrollStoreDeps) {
     });
   }
 
+  onCleanup(() => {
+    if (unreadVisibilityFrame !== undefined) cancelAnimationFrame(unreadVisibilityFrame);
+    unreadVisibilityFrame = undefined;
+  });
+
   async function markUnreadMessages(): Promise<void> {
     if (deps.markingRead()) return;
     deps.setMarkingRead(true);
@@ -139,7 +144,6 @@ export function createScrollStore(deps: ScrollStoreDeps) {
     markUnreadMessages,
     jumpToUnreadMessages,
     jumpToLatestMessage,
-    getUnreadVisibilityFrame: () => unreadVisibilityFrame,
   };
 }
 
