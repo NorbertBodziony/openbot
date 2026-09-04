@@ -31,6 +31,7 @@ export const CONTEXT_ATTACHMENT_EXTENSIONS = [
   "css",
   "cts",
   "env",
+  "eml",
   "fish",
   "go",
   "gradle",
@@ -103,6 +104,8 @@ export function attachmentMimeTypeForName(name: string) {
       return "image/avif";
     case "pdf":
       return "application/pdf";
+    case "eml":
+      return "message/rfc822";
     case "doc":
       return "application/msword";
     case "docx":

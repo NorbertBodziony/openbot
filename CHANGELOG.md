@@ -5,6 +5,10 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Import EML messages as single, unchanged chat attachments for agents to inspect directly.
+
 ## [0.4.3] - 2026-09-02
 
 ### Added

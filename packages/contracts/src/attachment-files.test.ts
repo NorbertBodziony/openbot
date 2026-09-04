@@ -19,12 +19,18 @@ describe("attachment file whitelist", () => {
     expect(isSupportedAttachmentName("no-extension")).toBe(false);
   });
 
+  it("accepts EML as a single attachment", () => {
+    expect(isSupportedAttachmentName("message.eml")).toBe(true);
+    expect(ATTACHMENT_FILE_ACCEPT).toContain(".eml");
+  });
+
   it("assigns stable MIME types to supported formats", () => {
     expect(attachmentMimeTypeForName("README.md")).toBe("text/markdown");
     expect(attachmentMimeTypeForName("report.pdf")).toBe("application/pdf");
     expect(attachmentMimeTypeForName("report.docx")).toBe(
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     );
+    expect(attachmentMimeTypeForName("message.eml")).toBe("message/rfc822");
     expect(attachmentMimeTypeForName("bundle.zip")).toBe("application/octet-stream");
   });
 });
