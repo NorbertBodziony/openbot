@@ -15,7 +15,6 @@ import { type FilePreview, type ImportAttachmentsInput, IPC_CHANNELS } from "@op
 import { app, type BrowserWindow, dialog, type OpenDialogOptions, shell } from "electron";
 import type { AgentService } from "../../backend/agent-service";
 import type { MailboxStore } from "../../backend/mailbox-store";
-import { normalizeAttachmentImports } from "../attachment-import";
 import { filePreviewFromBytes, localFilePreview, mimeTypeForName } from "../file-preview";
 import type { RemoteServerManager } from "../remote-server-manager";
 import { handleTrusted } from "../trusted-ipc";
@@ -56,11 +55,17 @@ export function registerAttachmentIpcHandlers({
     };
     const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
     if (result.canceled) return [];
-    return routeImportAttachments(service, remoteServers, serverId, { paths: result.filePaths, data: [] });
+    return routeToServer(serverId, {
+      local: () => service.prepareAttachments(result.filePaths),
+      remote: (target) => uploadRemoteImports(remoteServers, target, { paths: result.filePaths, data: [] }),
+    });
   });
-  handleTrusted(IPC_CHANNELS.agentImportAttachments, parseAgentRequest, async (scoped) => {
+  handleTrusted(IPC_CHANNELS.agentImportAttachments, parseAgentRequest, (scoped) => {
     const parsed = parseImportAttachments(scoped.payload);
-    return routeImportAttachments(service, remoteServers, scoped.serverId, parsed);
+    return routeToServer(scoped.serverId, {
+      local: () => service.prepareImportedAttachments(parsed.paths, parsed.data),
+      remote: (serverId) => uploadRemoteImports(remoteServers, serverId, parsed),
+    });
   });
   handleTrusted(IPC_CHANNELS.agentDiscardDraftAttachment, parseAgentRequest, (scoped) => {
     const attachmentId = requireString(scoped.payload, "attachmentId");
@@ -162,19 +167,6 @@ export function registerAttachmentIpcHandlers({
         return filePreviewFromBytes(downloaded.name, downloaded.bytes);
       },
     });
-  });
-}
-
-async function routeImportAttachments(
-  service: AgentService,
-  remoteServers: RemoteServerManager,
-  serverId: string,
-  input: ImportAttachmentsInput,
-) {
-  const normalized = await normalizeAttachmentImports(input);
-  return routeToServer(serverId, {
-    local: () => service.prepareImportedAttachments(normalized.paths, normalized.data),
-    remote: (target) => uploadRemoteImports(remoteServers, target, normalized),
   });
 }
 

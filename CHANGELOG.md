@@ -7,8 +7,7 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ### Fixed
 
-- Import EML messages as readable chat attachments, including supported embedded files, with actionable errors for
-  malformed or unsafe content.
+- Import EML messages as single, unchanged chat attachments for agents to inspect directly.
 
 ## [0.4.3] - 2026-09-02
 

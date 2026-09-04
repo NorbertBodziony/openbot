@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  ATTACHMENT_FILE_ACCEPT,
-  attachmentMimeTypeForName,
-  isSupportedAttachmentImportName,
-  isSupportedAttachmentName,
-} from "./attachment-files";
+import { ATTACHMENT_FILE_ACCEPT, attachmentMimeTypeForName, isSupportedAttachmentName } from "./attachment-files";
 
 describe("attachment file whitelist", () => {
   it("accepts images, documents, text, Markdown, data, and source files", () => {
@@ -24,10 +19,8 @@ describe("attachment file whitelist", () => {
     expect(isSupportedAttachmentName("no-extension")).toBe(false);
   });
 
-  it("advertises EML as an import container without treating it as a leaf attachment", () => {
-    expect(isSupportedAttachmentImportName("message.eml")).toBe(true);
-    expect(isSupportedAttachmentImportName("bundle.zip")).toBe(false);
-    expect(isSupportedAttachmentName("message.eml")).toBe(false);
+  it("accepts EML as a single attachment", () => {
+    expect(isSupportedAttachmentName("message.eml")).toBe(true);
     expect(isSupportedAttachmentName("bundle.zip")).toBe(false);
     expect(ATTACHMENT_FILE_ACCEPT).toContain(".eml");
     expect(ATTACHMENT_FILE_ACCEPT).not.toContain(".zip");
