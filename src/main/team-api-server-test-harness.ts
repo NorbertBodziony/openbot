@@ -44,7 +44,7 @@ import type { TeamApiAgents, TeamApiBrowser, TeamApiMailbox, TeamApiOptions } fr
 import { TeamApiServer } from "./team-api-server";
 import { TeamStore } from "./team-store";
 
-export type { TeamApiOptions };
+export type { TeamApiAgents, TeamApiBrowser, TeamApiMailbox, TeamApiOptions };
 
 export function unimplemented(..._arguments_: unknown[]): never {
   throw new Error("This operation is not used by this test.");

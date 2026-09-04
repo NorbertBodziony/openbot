@@ -83,6 +83,14 @@ from the tests that appeared to cover them. `FakeEventSocket` gets that right on
 `foo.ts` / `foo.test.ts`; the `agent-service.*.test.ts` pattern in `src/backend` is not the model
 here, because that one divides the tests of a class that refused to divide.
 
+`team-api-server.*.test.ts` is the one place that pattern *is* right, and for the same reason it is
+wrong above: `TeamApiServer` is a class that will not divide. Every case drives real HTTP against a
+real listener on a real port, so the only seam between two cases is the route they call - which is
+why the suite is cut by domain, alongside the route modules, rather than by unit. Its fixtures are
+`team-api-server-test-harness.ts`, and its header says what the harness will not default for you and
+why each of those defaults would quietly change what a case tests. `host-service.test.ts` came out of
+the same file: it was the block testing a different class.
+
 `electron` cannot be imported outside an Electron process, so a test for anything in here mocks it.
 `trusted-ipc.test.ts` shows the pattern: `vi.hoisted` a registrations `Map`, `vi.mock("electron")`
 to capture into it, then invoke the captured listener with a fabricated sender frame. Mocking is
