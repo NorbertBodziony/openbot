@@ -1,5 +1,6 @@
 import { isDynamicRecord } from "../runtime-values";
 import { isConversationUnreadRoute } from "./current";
+import { toCurrentAgentKeys, toCurrentAgentKeysObjectForPath, toWireAgentKeys } from "./current-agent-keys";
 import type { TeamProtocolV1JsonObject, TeamProtocolV1JsonValue } from "./v1";
 import {
   decodeTeamProtocolV1CurrentHttpRequest,
@@ -20,8 +21,9 @@ export function encodeTeamProtocolV3CurrentHttpRequest(
     return JSON.stringify(decodeScopedUsageRequest(value));
   }
   if (!duplicateRoute(method, path)) return encodeTeamProtocolV1CurrentHttpRequest(method, path, value, options);
-  const wireValue = JSON.parse(JSON.stringify(value ?? null));
-  return JSON.stringify(decodeTeamProtocolV3HttpRequest(method, path, wireValue));
+  // The duplicate route reaches the frozen v3 codec directly, so the vocabulary swap happens here.
+  const currentValue: TeamProtocolV1JsonValue = JSON.parse(JSON.stringify(value ?? null));
+  return JSON.stringify(decodeTeamProtocolV3HttpRequest(method, path, toWireAgentKeys(currentValue)));
 }
 
 export function decodeTeamProtocolV3CurrentHttpRequest(
@@ -38,7 +40,7 @@ export function decodeTeamProtocolV3CurrentHttpRequest(
     if (options.preserveSemanticTags) return decodeTeamProtocolV1CurrentHttpRequest(method, path, value);
     return JSON.parse(encodeTeamProtocolV1CurrentHttpRequest(method, path, value));
   }
-  return structuredClone(decodeTeamProtocolV3HttpRequest(method, path, value));
+  return toCurrentAgentKeysObjectForPath(path, structuredClone(decodeTeamProtocolV3HttpRequest(method, path, value)));
 }
 
 export function encodeTeamProtocolV3CurrentHttpResponse(
@@ -56,8 +58,9 @@ export function encodeTeamProtocolV3CurrentHttpResponse(
   if (!duplicateRoute(method, path)) {
     return encodeTeamProtocolV1CurrentHttpResponse(method, path, status, value, options);
   }
-  const wireValue = JSON.parse(JSON.stringify(value ?? null));
-  return JSON.stringify(decodeTeamProtocolV3HttpResponse(method, path, status, wireValue));
+  // The duplicate route reaches the frozen v3 codec directly, so the vocabulary swap happens here.
+  const currentValue: TeamProtocolV1JsonValue = JSON.parse(JSON.stringify(value ?? null));
+  return JSON.stringify(decodeTeamProtocolV3HttpResponse(method, path, status, toWireAgentKeys(currentValue)));
 }
 
 export function decodeTeamProtocolV3CurrentHttpResponse(
@@ -72,7 +75,7 @@ export function decodeTeamProtocolV3CurrentHttpResponse(
     return decodeTeamProtocolV1CurrentHttpResponse(method, "/v1/agents/usage", status, value);
   }
   if (!duplicateRoute(method, path)) return decodeTeamProtocolV1CurrentHttpResponse(method, path, status, value);
-  return structuredClone(decodeTeamProtocolV3HttpResponse(method, path, status, value));
+  return toCurrentAgentKeys(structuredClone(decodeTeamProtocolV3HttpResponse(method, path, status, value)));
 }
 
 function decodeUnreadRequest(value: unknown): TeamProtocolV1JsonObject {
