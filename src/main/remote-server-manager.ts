@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { isValidAvatarImage } from "@openbot/contracts/avatar-images";
-import { createInviteUrl, parseInviteUrl } from "@openbot/contracts/invite-links";
+import { parseInviteUrl } from "@openbot/contracts/invite-links";
 import type {
   AgentEvent,
   AvatarImageInput,
@@ -63,19 +63,13 @@ import { RemoteEventRefresh } from "./remote-server-event-refresh";
 import { RemoteEventStream } from "./remote-server-event-stream";
 import { reconcileWebRtcHosts } from "./remote-server-host-directory";
 import { requestJson } from "./remote-server-http";
+import { RemotePresenceCache } from "./remote-server-presence";
 import { RemoteServerStore, type TokenCipher } from "./remote-server-store";
 import type { StoredRemoteServer } from "./remote-server-stored-shape";
 import { remoteServerSummaries } from "./remote-server-summaries";
 import { addRemotePreviewUrls, isLocalDevelopmentApi, pageQuery } from "./remote-server-urls";
-import {
-  decodeInvitePreview,
-  decodeInviteSummary,
-  decodeJoinResult,
-  decodeTeamInvites,
-  decodeTeamMember,
-  decodeTeamMembers,
-  decodeTeamPresenceSnapshot,
-} from "./remote-team-decoding";
+import { decodeInvitePreview, decodeJoinResult, decodeTeamPresenceSnapshot } from "./remote-team-decoding";
+import { RemoteTeamDirectory } from "./remote-team-directory";
 import { RemoteViewerProxy } from "./remote-viewer-proxy";
 import { fingerprint } from "./team-store";
 import {
@@ -126,6 +120,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #client: RemoteServerClient;
   readonly #refresh: RemoteEventRefresh;
   readonly #events: RemoteEventStream;
+  readonly #presence: RemotePresenceCache;
+  readonly #team: RemoteTeamDirectory;
   readonly #centralAccount: CentralAccountSession;
   readonly #allowLocalDevelopmentInvites: boolean;
   readonly #appVersion: string | null;
@@ -133,7 +129,6 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #webrtcTransport: TeamWebRtcClientTransport | null;
   readonly #getLocalHostId: () => string | null;
   readonly #remoteViewerProxy: RemoteViewerProxy | null;
-  #presence = new Map<string, TeamPresenceSnapshot>();
   #selectChain = Promise.resolve();
 
   constructor(
@@ -168,6 +163,19 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       emit: (serverId, event, bufferedLive) =>
         bufferedLive ? this.emit("agent", serverId, event, true) : this.emit("agent", serverId, event),
     });
+    this.#presence = new RemotePresenceCache({
+      fetchSnapshot: (serverId) => this.request(serverId, TEAM_API_ROUTES.team.presence, decodeTeamPresenceSnapshot),
+      onSnapshot: (serverId, snapshot) => this.emit("presence", serverId, snapshot),
+    });
+    this.#team = new RemoteTeamDirectory({
+      servers: this.#store,
+      request: (serverId, path, decoder, init) => this.#client.request(serverId, path, decoder, init),
+      transport: this.#webrtcTransport,
+      sendInviteEmail: (input) => {
+        if (!this.#centralAccount.sendTeamInviteEmail) throw new Error("Email delivery is unavailable.");
+        return this.#centralAccount.sendTeamInviteEmail(input);
+      },
+    });
     this.#events = new RemoteEventStream({
       appVersion: this.#appVersion,
       servers: this.#store,
@@ -178,10 +186,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       // The stream reports facts and this is where they become state: an identity is written, a
       // presence snapshot is cached, and the rest are forwarded to the renderer.
       onServerIdentity: (serverId, identity) => this.#applyServerIdentity(serverId, identity),
-      onPresence: (serverId, snapshot) => this.#cachePresence(serverId, snapshot),
+      onPresence: (serverId, snapshot) => this.#presence.accept(serverId, snapshot),
       onDirectMessage: (serverId, event) => this.emit("directMessage", serverId, event),
       onDirectTyping: (serverId, event) => this.emit("directTyping", serverId, event),
-      onOffline: (serverId) => this.#setPresenceOffline(serverId),
+      onOffline: (serverId) => this.#presence.markOffline(serverId),
       onChanged: () => this.#emitChanged(),
     });
     this.#remoteViewerProxy = this.#webrtcTransport
@@ -210,7 +218,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     });
     this.#webrtcTransport?.on("disconnected", (serverId) => {
       this.#connections.setState(serverId, "offline");
-      this.#setPresenceOffline(serverId);
+      this.#presence.markOffline(serverId);
       this.#emitChanged();
       this.#events.scheduleReconnect(serverId);
     });
@@ -494,7 +502,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#refresh.forget(serverId);
     this.#connections.forget(serverId);
     this.#client.forget(serverId);
-    this.#presence.delete(serverId);
+    this.#presence.forget(serverId);
   }
 
   // The server comes first because every caller knows which one it means, and the decoder sits next
@@ -578,21 +586,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   getPresence(serverId = this.#store.activeServerId): TeamPresenceSnapshot {
-    const cached = this.#presence.get(serverId);
-    if (cached) return structuredClone(cached);
-    return { serverId, members: [], updatedAt: new Date().toISOString() };
+    return this.#presence.get(serverId);
   }
 
-  async getPresenceFor(serverId: string): Promise<TeamPresenceSnapshot> {
-    try {
-      const snapshot = await this.request(serverId, TEAM_API_ROUTES.team.presence, decodeTeamPresenceSnapshot);
-      this.#presence.set(serverId, snapshot);
-      return structuredClone(snapshot);
-    } catch (error) {
-      const cached = this.#presence.get(serverId);
-      if (cached) return structuredClone(cached);
-      throw error;
-    }
+  getPresenceFor(serverId: string): Promise<TeamPresenceSnapshot> {
+    return this.#presence.refresh(serverId);
   }
 
   async refreshIdentity(serverId: string): Promise<ServerSummary> {
@@ -614,113 +612,27 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   listMembers(serverId: string): Promise<TeamMemberSummary[]> {
-    const server = this.#store.require(serverId);
-    if (server.transport === "webrtc-v2" && this.#webrtcTransport) {
-      return this.#webrtcTransport.listMembers(serverId).then((members) =>
-        members.map((member) => ({
-          id: member.membershipId,
-          username: member.email,
-          email: member.email,
-          name: member.name,
-          avatarUrl: member.avatarUrl,
-          role: member.role,
-          createdAt: new Date(member.createdAt).toISOString(),
-          disabled: member.status !== "active",
-        })),
-      );
-    }
-    return this.request(serverId, TEAM_API_ROUTES.team.members, decodeTeamMembers);
+    return this.#team.listMembers(serverId);
   }
 
   updateMember(serverId: string, input: UpdateTeamMemberInput): Promise<TeamMemberSummary> {
-    const server = this.#store.require(serverId);
-    if (server.transport === "webrtc-v2" && this.#webrtcTransport) {
-      const transport = this.#webrtcTransport;
-      return (async () => {
-        const members = await this.listMembers(serverId);
-        const current = members.find((member) => member.id === input.memberId);
-        if (!current || current.role === "owner") throw new Error("The remote member does not exist.");
-        if (input.disabled) await transport.removeMember(serverId, input.memberId);
-        else
-          await transport.updateMember(serverId, input.memberId, input.role ?? current.role, input.disabled === false);
-        const updated = (await this.listMembers(serverId)).find((member) => member.id === input.memberId);
-        if (!updated) throw new Error("The remote member does not exist.");
-        return updated;
-      })();
-    }
-    return this.request(serverId, TEAM_API_ROUTES.team.member(input.memberId), decodeTeamMember, {
-      method: "PATCH",
-      body: { role: input.role, disabled: input.disabled },
-    });
+    return this.#team.updateMember(serverId, input);
   }
 
   removeMember(serverId: string, memberId: string): Promise<void> {
-    const server = this.#store.require(serverId);
-    if (server.transport === "webrtc-v2" && this.#webrtcTransport)
-      return this.#webrtcTransport.removeMember(serverId, memberId);
-    return this.request(serverId, TEAM_API_ROUTES.team.member(memberId), decodeVoid, { method: "DELETE" });
+    return this.#team.removeMember(serverId, memberId);
   }
 
   listInvites(serverId: string): Promise<TeamInviteSummary[]> {
-    const server = this.#store.require(serverId);
-    if (server.transport === "webrtc-v2" && this.#webrtcTransport) {
-      return this.#webrtcTransport.listInvites(serverId).then((invites) =>
-        invites
-          .filter((invite) => invite.revokedAt === null)
-          .map((invite) => ({
-            id: invite.inviteId,
-            role: invite.role,
-            expiresAt: new Date(invite.expiresAt).toISOString(),
-            usedAt: invite.usedAt === null ? null : new Date(invite.usedAt).toISOString(),
-            email: invite.email,
-          })),
-      );
-    }
-    return this.request(serverId, TEAM_API_ROUTES.team.invites, decodeTeamInvites);
+    return this.#team.listInvites(serverId);
   }
 
   revokeInvite(serverId: string, inviteId: string): Promise<void> {
-    const server = this.#store.require(serverId);
-    if (server.transport === "webrtc-v2" && this.#webrtcTransport) return this.#webrtcTransport.revokeInvite(inviteId);
-    return this.request(serverId, TEAM_API_ROUTES.team.invite(inviteId), decodeVoid, { method: "DELETE" });
+    return this.#team.revokeInvite(serverId, inviteId);
   }
 
-  async createInvite(serverId: string, input: { role: "admin" | "member"; email?: string }): Promise<InviteSummary> {
-    const server = this.#store.require(serverId);
-    if (server.transport === "webrtc-v2" && this.#webrtcTransport) {
-      const transport = this.#webrtcTransport;
-      if (!server.fingerprint) throw new Error("The host must connect once before it can create invitations.");
-      const invite = await transport.createInvite(serverId, input);
-      const result: InviteSummary = {
-        id: invite.inviteId,
-        role: input.role,
-        expiresAt: new Date(invite.expiresAt).toISOString(),
-        usedAt: null,
-        email: input.email ?? null,
-        inviteUrl: createInviteUrl({
-          apiUrl: transport.controlPlaneUrl,
-          serverId,
-          fingerprint: server.fingerprint,
-          token: invite.token,
-        }),
-      };
-      if (input.email) {
-        try {
-          if (!this.#centralAccount.sendTeamInviteEmail) throw new Error("Email delivery is unavailable.");
-          await this.#centralAccount.sendTeamInviteEmail({
-            email: input.email,
-            serverName: server.name,
-            inviteUrl: result.inviteUrl,
-            role: input.role,
-          });
-        } catch (error) {
-          await transport.revokeInvite(invite.inviteId).catch(() => undefined);
-          throw error;
-        }
-      }
-      return result;
-    }
-    return this.request(serverId, TEAM_API_ROUTES.team.invites, decodeInviteSummary, { method: "POST", body: input });
+  createInvite(serverId: string, input: { role: "admin" | "member"; email?: string }): Promise<InviteSummary> {
+    return this.#team.createInvite(serverId, input);
   }
 
   setTyping(input: SetTeamTypingInput, serverId = this.#store.activeServerId): void {
@@ -984,7 +896,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     if (event.type === "team-identity") {
       this.#applyServerIdentity(serverId, event);
     } else if (event.type === "team-presence") {
-      this.#cachePresence(serverId, event.snapshot);
+      this.#presence.accept(serverId, event.snapshot);
     } else if (event.type === "team-direct-message") this.emit("directMessage", serverId, event);
     else if (event.type === "team-direct-typing") this.emit("directTyping", serverId, event);
     else this.#refresh.forward(serverId, event);
@@ -996,29 +908,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       .then(() => this.#emitChanged());
   }
 
-  #cachePresence(serverId: string, snapshot: TeamPresenceSnapshot): void {
-    this.#presence.set(serverId, snapshot);
-    this.emit("presence", serverId, structuredClone(snapshot));
-  }
-
   #emitChanged(): void {
     this.emit("changed", this.list());
-  }
-
-  #setPresenceOffline(serverId: string): void {
-    const current = this.#presence.get(serverId);
-    if (!current) return;
-    const snapshot: TeamPresenceSnapshot = {
-      ...current,
-      members: current.members.map((member) => ({
-        ...member,
-        online: false,
-        typingBotId: null,
-      })),
-      updatedAt: new Date().toISOString(),
-    };
-    this.#presence.set(serverId, snapshot);
-    this.emit("presence", serverId, structuredClone(snapshot));
   }
 }
 
