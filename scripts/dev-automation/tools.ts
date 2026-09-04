@@ -103,6 +103,38 @@ export function parseAutomationRole(value: string): AutomationRole {
   throw new Error(`Unknown role "${value}". Expected one of: ${AUTOMATION_ROLES.join(", ")}.`);
 }
 
+export interface WaitTarget {
+  role: AutomationRole;
+  name: string;
+}
+
+// `--wait-for=<role>,<name>`. Only the first comma is structural, because an
+// accessible name legitimately contains one ("Send to Alice, Bob").
+export function parseWaitTarget(value: string): WaitTarget {
+  const separator = value.indexOf(",");
+  if (separator < 1) {
+    throw new Error('--wait-for must be <role>,<name>, for example --wait-for=button,"New thread".');
+  }
+  const name = value.slice(separator + 1).trim();
+  if (name === "") throw new Error("--wait-for needs an accessible name after the role.");
+  return { role: parseAutomationRole(value.slice(0, separator).trim()), name };
+}
+
+// Without this every command was a race: a click returns as soon as the event
+// is dispatched, so the snapshot that follows shows the state before the
+// update landed, and the only workaround was re-running snapshot in a loop.
+// Waiting on an accessible role and name is the same contract the assertions
+// in this repository use - never on the clock.
+export async function waitForRole(
+  page: Page,
+  target: WaitTarget,
+  timeoutMs: number,
+  logger: Logger = dummyLogger,
+): Promise<void> {
+  logger.info(`wait-for role=${target.role} name=${target.name}`);
+  await page.getByRole(target.role, { name: target.name }).first().waitFor({ state: "visible", timeout: timeoutMs });
+}
+
 export interface AutomationSnapshot {
   url: string;
   title: string;

@@ -22,10 +22,15 @@ const LOG_LEVELS: LogLevel[] = ["trace", "debug", "info", "warn", "error", "sile
 // 200 KB body took tens of seconds. No real label approaches 64 characters.
 const SECRET_LABEL = `[A-Za-z0-9_.-]{0,64}(?:password|passwd|passphrase|secret|token|credential|authorization|cookie|api[_-]?key|private[_-]?key|signing[_-]?key)[A-Za-z0-9_.-]{0,64}`;
 
-// `Authorization: Basic <base64>` and `Bearer <token>` carry the secret after
-// a scheme word, so the assignment rule below cannot see it: its value stops
-// at the space.
-const AUTH_SCHEME_SECRET = /(?:Bearer|Basic|Digest|Token)\s+[A-Za-z0-9._~+/=-]{8,}/giu;
+// A scheme word carries the secret after it, so the assignment rule below
+// cannot see it: its value stops at the space.
+// `Bearer` is unambiguous enough to match anywhere - no English sentence puts
+// a 8+ character token after it. `Basic`, `Digest` and `Token` are ordinary
+// words, so they only count inside an `Authorization` header: without that
+// context `Token validation failed` became `[redacted] failed` and
+// `Basic authentication unavailable` lost its subject.
+const BEARER_SECRET = /Bearer\s+[A-Za-z0-9._~+/=-]{8,}/giu;
+const AUTH_HEADER_SECRET = /(authorization["']?\s*[=:]+\s*)(?:Bearer|Basic|Digest|Token)\s+[A-Za-z0-9._~+/=-]{8,}/giu;
 // Quotes are optional on both sides and around the separator, so a serialized
 // payload (`{"apiKey":"…"}`) redacts the same as a shell line (`apiKey=…`).
 // A quoted value is consumed whole; an unquoted one stops at the first
@@ -57,11 +62,17 @@ const JSON_BARE_KEY = /("keys?"\s*:\s*)(\[redacted\]|"[^"]*"|'[^']*'|[^\s,;)}\]]
 
 const MAX_PARAM_LENGTH = 2_000;
 
+// What a value becomes when reading it is itself the failure. A constant
+// rather than the thrown message: that message comes from the same
+// caller-controlled getter and would leak what redaction just refused to read.
+const UNSERIALIZABLE = "[unserializable]";
+
 export function redactText(value: string): string {
   const reparsed = redactSerializedJson(value);
   if (reparsed !== null) return reparsed;
   return value
-    .replace(AUTH_SCHEME_SECRET, "[redacted]")
+    .replace(AUTH_HEADER_SECRET, "$1[redacted]")
+    .replace(BEARER_SECRET, "[redacted]")
     .replace(CREDENTIAL_ASSIGNMENT, redactAssignedValue)
     .replace(JSON_BARE_KEY, redactAssignedValue)
     .replace(KNOWN_SECRET_PREFIXES, "[redacted]")
@@ -98,7 +109,7 @@ function redactSerializedJson(value: string): string | null {
 // cycle-safe: a revisited object becomes "[circular]" instead of overflowing,
 // so logging a rejection value can never hide the failure it reports.
 export function redactValue(value: LogValue): LogValue {
-  return convertValue(value, new Set<object>());
+  return convertSafely(value);
 }
 
 // Converts anything a catch block or an external boundary hands over into a
@@ -106,7 +117,18 @@ export function redactValue(value: LogValue): LogValue {
 // their `n` suffix because JSON cannot carry them; anything else falls back
 // to its string form rather than leaking through unredacted.
 export function toLogValue(value: unknown): LogValue {
-  return convertValue(value, new Set<object>());
+  return convertSafely(value);
+}
+
+// The last line of defence for both public entry points: whatever a caller
+// hands over, converting it must never become the exception that hides the one
+// being logged.
+function convertSafely<T>(value: T): LogValue {
+  try {
+    return convertValue(value, new Set<object>());
+  } catch {
+    return UNSERIALIZABLE;
+  }
 }
 
 // A cycle-free but very deep value - a nested array from an external payload -
@@ -122,7 +144,13 @@ function convertValue<T>(value: T, seen: Set<object>, depth = 0): LogValue {
   if (typeof value === "number" || typeof value === "boolean") return value;
   if (typeof value === "bigint") return `${value.toString()}n`;
   if (value instanceof Error) {
-    const converted: { [key: string]: LogValue } = { name: value.name, message: redactText(value.message) };
+    // The name is caller-controlled too - `new Error()` with a custom `name`,
+    // or a class named after the header it failed on - so it is no safer than
+    // the message.
+    const converted: { [key: string]: LogValue } = {
+      name: redactText(value.name),
+      message: redactText(value.message),
+    };
     if (typeof value.stack === "string") converted.stack = redactText(value.stack);
     return converted;
   }
@@ -136,14 +164,34 @@ function convertValue<T>(value: T, seen: Set<object>, depth = 0): LogValue {
     if (seen.has(value)) return "[circular]";
     if (depth >= MAX_CONVERSION_DEPTH) return "[too deep]";
     seen.add(value);
+    // `Object.entries` runs enumerable getters and proxy traps, so a rejection
+    // value like `{ get detail() { throw … } }` would throw from inside the
+    // logger and replace the failure the caller was reporting.
+    let entries: [string, unknown][];
+    try {
+      entries = Object.entries(value);
+    } catch {
+      return UNSERIALIZABLE;
+    }
     return Object.fromEntries(
-      Object.entries(value).map(([key, entry]): [string, LogValue] => [
-        key,
+      entries.map(([key, entry]): [string, LogValue] => [
+        // A key is as caller-controlled as a value: a payload keyed by an
+        // email address, or by the header that failed, leaks through a rule
+        // that only looks at values.
+        redactText(key),
         SECRET_KEY.test(key) ? "[redacted]" : convertValue(entry, seen, depth + 1),
       ]),
     );
   }
-  return String(value);
+  // A symbol description or a `toString` of a foreign object is text of
+  // unknown origin, so it goes through the same rules as any other string -
+  // and `String()` itself can throw for a null-prototype object or a
+  // throwing `toString`.
+  try {
+    return redactText(String(value));
+  } catch {
+    return UNSERIALIZABLE;
+  }
 }
 
 function formatParam(param: LogValue): string {

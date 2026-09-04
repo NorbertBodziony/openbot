@@ -6,7 +6,18 @@
 // debugging port. `dev:automation` reads it to drive the app of the worktree it
 // was started from instead of whichever instance won the race for 9333.
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { isDynamicRecord, isNumber, isOneOf, isString } from "@openbot/contracts/runtime-values";
@@ -62,10 +73,30 @@ function isPort(value: unknown): value is number {
 // undiscoverable until it restarts. `rename` within one directory is atomic,
 // so a reader sees either the old record or the whole new one.
 export function writeDevInstanceRecord(record: DevInstanceRecord, directory = devInstanceRegistryDirectory()): void {
-  mkdirSync(directory, { recursive: true });
+  // Owner-only, because the path is predictable and shared: on a multi-account
+  // Linux box the default 0755/0644 would let any local user read which
+  // worktree and profile a developer has open. `chmod` after `mkdir` covers a
+  // directory that already existed with wider modes; it can only fail when the
+  // directory belongs to someone else, and then the write below fails anyway.
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  try {
+    chmodSync(directory, 0o700);
+  } catch {
+    // Not ours to tighten. The open below decides whether we can publish.
+  }
   const target = recordPath(directory, record);
   const staging = `${target}.${process.pid}.tmp`;
-  writeFileSync(staging, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+  // Unlink first, then create exclusively: `wx` refuses to follow a
+  // pre-created symlink, so a leftover or planted staging path cannot redirect
+  // this write outside the registry. Unlinking a symlink removes the link, not
+  // its target.
+  rmSync(staging, { force: true });
+  const handle = openSync(staging, "wx", 0o600);
+  try {
+    writeFileSync(handle, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+  } finally {
+    closeSync(handle);
+  }
   renameSync(staging, target);
 }
 

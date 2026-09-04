@@ -60,6 +60,11 @@ describe("redactText", () => {
     expect(redactText("set-cookie: session=9f2b3c4d5e6f")).not.toContain("9f2b3c4d5e6f");
   });
 
+  it("leaves scheme words used as ordinary prose alone", () => {
+    expect(redactText("Token validation failed")).toBe("Token validation failed");
+    expect(redactText("Basic authentication unavailable")).toBe("Basic authentication unavailable");
+  });
+
   it("leaves an already redacted line unchanged when it passes through twice", () => {
     const once = redactText('{"password":"hunter2"}');
     expect(redactText(once)).toBe(once);
@@ -109,6 +114,32 @@ describe("toLogValue", () => {
     expect(lines[0]).toContain("provider failed");
     expect(lines[0]).toContain("Error");
     expect(lines[0]).not.toContain("abcdef123456");
+  });
+
+  it("redacts a secret carried by a key or an error name", () => {
+    expect(JSON.stringify(toLogValue({ "jan@example.com": "present" }))).not.toContain("jan@example.com");
+    const named = new Error("failed");
+    named.name = "Bearer abcdef123456";
+    expect(JSON.stringify(toLogValue(named))).not.toContain("abcdef123456");
+    expect(String(toLogValue(Symbol("jan@example.com")))).not.toContain("jan@example.com");
+  });
+
+  it("survives a value whose own getters throw", () => {
+    const hostile = {
+      get detail() {
+        throw new Error("boom");
+      },
+    };
+    expect(() => toLogValue(hostile)).not.toThrow();
+    const proxy = new Proxy(
+      {},
+      {
+        ownKeys: () => {
+          throw new Error("denied");
+        },
+      },
+    );
+    expect(toLogValue(proxy)).toBe("[unserializable]");
   });
 
   it("falls back to strings for values without a log shape", () => {

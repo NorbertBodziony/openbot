@@ -1,7 +1,7 @@
 // The registry exists because several worktrees run dev at once. What it has
 // to get right is which of them a command drives, and that a dead instance
 // never keeps offering its port to the next one.
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -173,5 +173,18 @@ describe("createDevInstanceRecord", () => {
     expect(
       createDevInstanceRecord({ name: "api", executable: "bun", args: [], cwd: "/worktrees/two", env: {} }, 77, 1_700),
     ).toBeNull();
+  });
+});
+
+describe("writeDevInstanceRecord permissions", () => {
+  it("keeps the registry directory and its records readable only by their owner", () => {
+    const directory = mkdtempSync(join(tmpdir(), "openbot-registry-mode-"));
+    writeDevInstanceRecord(record(), directory);
+    // The path is predictable and lives in a shared /tmp, so the mode is the
+    // only thing keeping another local account from reading which worktree a
+    // developer has open.
+    expect(statSync(directory).mode & 0o777).toBe(0o700);
+    expect(statSync(join(directory, "app-4242.json")).mode & 0o777).toBe(0o600);
+    rmSync(directory, { recursive: true, force: true });
   });
 });

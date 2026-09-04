@@ -1,7 +1,7 @@
 // AI-facing bridge to the live dev app. Read-only by default; anything that
 // changes app state needs --allow-mutations. This tool never seeds, resets or
 // copies openbot.db: it drives the instance you already have open.
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { createOpenBotLogger, redactText } from "@openbot/logging";
 import {
   assertMutationAllowed,
@@ -21,10 +21,13 @@ import {
 import {
   clickByRole,
   parseAutomationRole,
+  parseWaitTarget,
   resolveScreenshotPath,
   screenshotTo,
   snapshotPage,
   typeByRole,
+  type WaitTarget,
+  waitForRole,
 } from "./tools";
 
 // Diagnostics go to stderr so stdout carries only the final JSON document,
@@ -79,6 +82,16 @@ function readPageSelector(): string | null {
   return raw;
 }
 
+// Honoured by every command: before the capture for `snapshot` and
+// `screenshot`, after the action for `click` and `type`, which is where the
+// race actually is.
+function readWaitTarget(): WaitTarget | null {
+  const raw = flagValue("--wait-for");
+  if (raw === null) return null;
+  if (raw.trim() === "") throw new Error("--wait-for=<role>,<name> cannot be empty.");
+  return parseWaitTarget(raw);
+}
+
 function readService(): DevInstanceService {
   const raw = flagValue("--service");
   if (raw === null || raw === "app") return "app";
@@ -108,6 +121,17 @@ function resolveTarget(records: DevInstanceRecord[], service: DevInstanceService
   }
   if (explicitPort.explicit && requestedInstance === null) {
     const published = records.find((record) => record.remoteDebuggingPort === explicitPort.port);
+    // An explicit port is an instruction and stays authoritative - this is dev,
+    // and driving another worktree's app on purpose is legitimate. But a
+    // mistyped digit resolves silently to a different developer's profile,
+    // where a click or a keystroke lands in real conversations, so say whose
+    // app this is rather than refuse it.
+    if (published && resolve(published.projectRoot) !== resolve(process.cwd())) {
+      logger.warn(
+        `--port=${explicitPort.port} belongs to another worktree (${published.projectRoot}), not this one. ` +
+          "Mutations will change that instance's profile.",
+      );
+    }
     return {
       port: explicitPort.port,
       expectedRendererPort: published?.rendererPort ?? null,
@@ -202,25 +226,33 @@ async function main(): Promise<void> {
   const name = command === "click" || command === "type" ? requireFlagValue("--name") : null;
   const text = command === "type" ? requireTextFlag() : null;
   const timeoutMs = readTimeout();
+  const waitTarget = readWaitTarget();
   const session = await connectToDevApp(target.port, logger, {
     expectedRendererPort: target.expectedRendererPort,
     pageSelector: readPageSelector(),
   });
   try {
+    const settle = async (): Promise<void> => {
+      if (waitTarget) await waitForRole(session.page, waitTarget, timeoutMs, logger);
+    };
     if (command === "snapshot") {
+      await settle();
       const snapshot = await snapshotPage(session.page, logger);
       process.stdout.write(`${JSON.stringify(snapshot, null, 2)}\n`);
     } else if (command === "click" && role && name) {
       logger.info(`click role=${role} name=${name}`);
       await clickByRole(session.page, role, name, timeoutMs);
+      await settle();
       const snapshot = await snapshotPage(session.page, logger);
       process.stdout.write(`${JSON.stringify(snapshot, null, 2)}\n`);
     } else if (command === "type" && role && name && text !== null) {
       logger.info(`type role=${role} name=${name} chars=${text.length} submit=${hasFlag("--submit")}`);
       await typeByRole(session.page, role, name, text, timeoutMs, hasFlag("--submit"));
+      await settle();
       const snapshot = await snapshotPage(session.page, logger);
       process.stdout.write(`${JSON.stringify(snapshot, null, 2)}\n`);
     } else if (command === "screenshot") {
+      await settle();
       const out = resolveScreenshotPath(SCREENSHOT_ROOT, flagValue("--out"), Date.now());
       await screenshotTo(session.page, out, logger);
       process.stdout.write(`${JSON.stringify({ screenshot: out })}\n`);

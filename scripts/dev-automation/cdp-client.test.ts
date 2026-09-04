@@ -10,7 +10,7 @@ import {
   resolveAutomationPort,
 } from "./cdp-client";
 import { describeTarget, findMainPages, isMainAppUrl } from "./page-url";
-import { resolveScreenshotPath } from "./tools";
+import { parseWaitTarget, resolveScreenshotPath } from "./tools";
 
 describe("isOpenBotBrowser", () => {
   it("accepts the Electron user agent", () => {
@@ -170,5 +170,17 @@ describe("assertMutationAllowed", () => {
 
   it("allows a mutation that opts in and names its instance", () => {
     expect(() => assertMutationAllowed({ command: "click", allowMutations: true, instanceNamed: true })).not.toThrow();
+  });
+});
+
+describe("parseWaitTarget", () => {
+  it("splits on the first comma so a name may contain one", () => {
+    expect(parseWaitTarget("button,Send to Alice, Bob")).toEqual({ role: "button", name: "Send to Alice, Bob" });
+  });
+
+  it("rejects a target without a name or with an unknown role", () => {
+    expect(() => parseWaitTarget("button")).toThrow("<role>,<name>");
+    expect(() => parseWaitTarget("button,   ")).toThrow("accessible name");
+    expect(() => parseWaitTarget("buton,Send")).toThrow('Unknown role "buton"');
   });
 });
