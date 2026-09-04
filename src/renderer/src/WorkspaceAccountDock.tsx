@@ -35,7 +35,7 @@ export function WorkspaceAccountDock(props: { account: () => CentralAuthUser }) 
   const usageTargetKey = createMemo(() => {
     const bot = activeBot();
     if (!bot || !usageReady() || !activeServerSupportsCapability("model-scoped-usage")) return null;
-    return JSON.stringify([activeServerId(), bot.id, bot.provider, bot.model]);
+    return JSON.stringify([activeServerId(), bot.provider, bot.model]);
   });
 
   createEffect(

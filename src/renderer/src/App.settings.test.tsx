@@ -78,6 +78,24 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(window.openbot.agent.getUsage).toHaveBeenCalledWith("chief"));
   });
 
+  it("reuses usage when switching between Grok agents on the same model", async () => {
+    const grokBots: BotSummary[] = BOTS.map((bot) => ({
+      ...bot,
+      provider: "grok",
+      model: "grok-4",
+    }));
+    vi.mocked(window.openbot.agent.listBots).mockResolvedValue(grokBots);
+
+    render(() => <App />);
+    await waitFor(() => expect(window.openbot.agent.getUsage).toHaveBeenCalledWith("chief"));
+
+    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
+    await screen.findByRole("heading", { name: "Sales Outbound" });
+    await Promise.resolve();
+
+    expect(window.openbot.agent.getUsage).toHaveBeenCalledTimes(1);
+  });
+
   it("does not present a non-weekly provider limit as weekly usage", async () => {
     vi.mocked(window.openbot.agent.getUsage).mockResolvedValue({
       limits: [
