@@ -481,8 +481,13 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       // not happen and leave the server in `error` with a working token. The flag keeps its previous
       // value and `#refreshRemoteDesktop` corrects it later.
       if (signedIn) {
-        const remoteDesktopAvailable = await this.#client.probeRemoteDesktop(signedIn).catch(() => null);
-        if (remoteDesktopAvailable !== null) await this.#store.update(server.id, { remoteDesktopAvailable });
+        // Best effort in both halves. The probe may not reject the sign-in, and neither may writing
+        // its answer: the session token is already on disk, so a failure here would report a
+        // sign-in that did not fail and leave the server in `error` with working credentials.
+        await this.#client
+          .probeRemoteDesktop(signedIn)
+          .then((remoteDesktopAvailable) => this.#store.update(server.id, { remoteDesktopAvailable }))
+          .catch(() => undefined);
       }
     } catch (error) {
       this.#connections.reportError(server.id, error, "error");

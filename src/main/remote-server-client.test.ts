@@ -15,6 +15,7 @@ import { RemoteServerClient } from "./remote-server-client";
 import { RemoteServerConnections } from "./remote-server-connections";
 import {
   createRemoteManager,
+  deferredRoute,
   stopRemoteFixtures,
   storedHttpsServer,
   stubTeamFetch,
@@ -431,5 +432,53 @@ describe("HTTPS request decoding", () => {
 
     await expect(client.probeRemoteDesktop(server)).rejects.toThrow("invalid data");
     expect(connections.statusFor("host")).toMatchObject({ state: "error", issue: { code: "protocol_error" } });
+  });
+
+  // Negotiation and a request race whenever something forces a refresh -- signing in does, on its way
+  // to restarting the event stream -- because a caller with compatibility already on record does not
+  // wait for it. The answer to a question asked before the failure cannot be allowed to withdraw the
+  // failure, or the host that just failed closed is healthy again with nothing to show for it.
+  it("does not let a negotiation started earlier withdraw a failure recorded while it was out", async () => {
+    const server = storedHttpsServer("host");
+    const renegotiation = deferredRoute();
+    let compatibilityCalls = 0;
+    stubTeamFetch({
+      routes: {
+        "/v1/compatibility": (call) => {
+          compatibilityCalls += 1;
+          if (compatibilityCalls > 1) return renegotiation.handler(call);
+          return Response.json({
+            appVersion: "0.4.0",
+            protocol: { minimum: 1, maximum: 1 },
+            capabilities: ["remote-desktop"],
+          });
+        },
+        [TEAM_API_ROUTES.remoteScreen.capabilities]: () => Response.json({ malformed: true }),
+      },
+    });
+    const connections = new RemoteServerConnections({
+      appVersion: null,
+      onChanged: () => undefined,
+      onReconnectSuspended: () => undefined,
+    });
+    const client = new RemoteServerClient({
+      appVersion: "0.4.0",
+      servers: { require: () => server, token: () => "token" },
+      connections,
+      transport: null,
+    });
+
+    await client.ensureCompatibility(server);
+    const renegotiated = client.ensureCompatibility(server, true);
+    await renegotiation.arrived;
+
+    // The probe reuses the compatibility already on record, so it answers while the refresh is out.
+    await expect(client.probeRemoteDesktop(server)).rejects.toThrow("could not safely use");
+    renegotiation.resolve(
+      Response.json({ appVersion: "0.4.0", protocol: { minimum: 1, maximum: 1 }, capabilities: ["remote-desktop"] }),
+    );
+    await renegotiated;
+
+    expect(connections.statusFor("host")).toMatchObject({ issue: { code: "protocol_error" } });
   });
 });

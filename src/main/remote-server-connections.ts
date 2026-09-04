@@ -99,6 +99,16 @@ export class RemoteServerConnections {
     this.#mutable(serverId).issue = null;
   }
 
+  /**
+   * Clears the issue only while it is still the one the caller saw. A question asked before a
+   * failure was recorded must not erase that failure when its answer comes back: negotiation and a
+   * request race here, and the newer of the two is the one the user has to be told about.
+   */
+  clearStaleIssue(serverId: string, issue: { code: string; message: string } | null): void {
+    const status = this.#mutable(serverId);
+    if (status.issue === issue) status.issue = null;
+  }
+
   // A connection that just came up: online, no issue, nothing known about the host yet, and a new
   // sequence number so the renderer treats it as a reconnect rather than a continuing session.
   markConnected(serverId: string): void {

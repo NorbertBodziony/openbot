@@ -86,7 +86,7 @@ export interface RemoteConnectionSink {
   compatibilityFor: (serverId: string) => ServerCompatibility | null;
   issueFor: (serverId: string) => { code: string; message: string } | null;
   setCompatibility: (serverId: string, compatibility: ServerCompatibility) => void;
-  clearIssue: (serverId: string) => void;
+  clearStaleIssue: (serverId: string, issue: { code: string; message: string } | null) => void;
   reportError: (serverId: string, error: unknown) => void;
 }
 
@@ -278,6 +278,11 @@ export class RemoteServerClient {
     if (!refresh && current?.negotiatedProtocol) return current;
     const pending = this.#compatibilityRequests.get(server.id);
     if (pending) return pending;
+    // What the server was complaining about when this negotiation started. Only that complaint is
+    // this answer's to withdraw: a caller reusing the compatibility already on record -- the desktop
+    // probe does -- can record a protocol failure while this request is still out, and clearing it
+    // unconditionally on the way back is how a host that failed closed comes back healthy.
+    const issueAtStart = this.#connections.issueFor(server.id);
     const request = (
       server.transport === "webrtc-v2"
         ? this.#negotiateWebRtcCompatibility(server.id)
@@ -285,7 +290,7 @@ export class RemoteServerClient {
     )
       .then((compatibility) => {
         this.#connections.setCompatibility(server.id, compatibility);
-        this.#connections.clearIssue(server.id);
+        this.#connections.clearStaleIssue(server.id, issueAtStart);
         return compatibility;
       })
       .finally(() => {
