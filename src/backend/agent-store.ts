@@ -82,12 +82,15 @@ export const DEFAULT_AGENT_MODEL: AgentModelId = "gpt-5.6-luna";
 export const DEFAULT_AGENT_PROVIDER: AgentProviderId = "codex";
 export const DEFAULT_REASONING_EFFORT: AgentReasoningEffort = "medium";
 
-// These two strings are history, not vocabulary. The first is the file a release before the move to
+// These three strings are history, not vocabulary. The first is the file a release before the move to
 // SQLite wrote its state into, and is only ever read: renaming it means that file is never found and the
-// data of anyone who has not yet run the importing release is lost. The second is a `command_id` already
-// stamped into `orchestration_command_receipts` on every existing install, and is what stops the legacy
-// import running a second time. Neither follows the bot-to-agent rename.
+// data of anyone who has not yet run the importing release is lost. The second is the key that file's
+// agent array is stored under, and reading a different one discards every agent in it just as
+// silently. The third is a `command_id` already stamped into `orchestration_command_receipts` on
+// every existing install, and is what stops the legacy import running a second time. None of the
+// three follows the bot-to-agent rename.
 const LEGACY_AGENTS_STATE_FILE = "bots.json";
+const LEGACY_AGENTS_STATE_KEY = "bots";
 const LEGACY_AGENTS_IMPORT_COMMAND_ID = "legacy-import:bots:v1";
 
 export class BotStore {
@@ -602,18 +605,19 @@ export class BotStore {
   async #readState(): Promise<StoredState> {
     try {
       const parsed = JSON.parse(await readFile(this.#statePath, "utf8"));
-      if (!isRecord(parsed) || !isBoolean(parsed.examplesInitialized) || !Array.isArray(parsed.bots)) {
+      const stored = isRecord(parsed) ? parsed[LEGACY_AGENTS_STATE_KEY] : null;
+      if (!isRecord(parsed) || !isBoolean(parsed.examplesInitialized) || !Array.isArray(stored)) {
         throw new Error("Agent state is corrupt or from a newer OpenBot version; refusing to overwrite it.");
       }
-      if (parsed.bots.some((bot) => isRecord(bot) && "role" in bot)) {
+      if (stored.some((bot) => isRecord(bot) && "role" in bot)) {
         throw new Error("Stored agent profiles use the old role field; update the data before starting OpenBot.");
       }
 
       let bots: StoredBot[];
-      if (parsed.version === 1 && parsed.bots.every(isLegacyStoredBot)) {
-        bots = parsed.bots.map(migrateLegacyBot);
-      } else if (parsed.version === 2 && parsed.bots.every(isStoredBot)) {
-        bots = parsed.bots.map(normalizeStoredBot);
+      if (parsed.version === 1 && stored.every(isLegacyStoredBot)) {
+        bots = stored.map(migrateLegacyBot);
+      } else if (parsed.version === 2 && stored.every(isStoredBot)) {
+        bots = stored.map(normalizeStoredBot);
       } else {
         throw new Error("Agent state is corrupt or from a newer OpenBot version; refusing to overwrite it.");
       }
