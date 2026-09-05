@@ -48,9 +48,6 @@ which of these your change touched.**
 
 - **Desktop renderer** (`src/renderer`), **mobile** (`apps/mobile`), **public web**
   (`apps/auth-api` — there is no separate landing app).
-- **The three palettes.** `--openbot-*` is declared separately in `src/renderer/src/styles.css`,
-  `apps/auth-api/src/styles.css` and `apps/mobile/global.css`, with no shared package. Only the
-  desktop one is checked by `bun run check:ui`, so a new token is not available elsewhere for free.
 - **IPC contracts** in `packages/contracts`, and their second implementation
   `src/renderer/src/preview/mock-openbot.ts`, which Storybook and the preview run against.
 - **Reverse states.** Snooze needs unsnooze, pause resume, revoke reconnect, mute unmute. A state a

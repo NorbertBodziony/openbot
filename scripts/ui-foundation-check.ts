@@ -65,14 +65,16 @@ const manualCompositeCount = matches(
   /role=["'](?:dialog|alertdialog|menu|tablist|tab|tabpanel|listbox|option)["']/gu,
 );
 
-const stylesPath = resolve(rendererRoot, "styles.css");
-const styles = readFileSync(stylesPath, "utf8");
-const paletteEnd = styles.indexOf("\n}\n", styles.indexOf(":root"));
+// The palette moved to @openbot/brand, which is now the only file allowed to hold
+// a colour literal, so every stylesheet the renderer owns is scanned whole. This
+// used to slice styles.css after its :root block to spare the palette, which also
+// spared everything else declared in there.
+const styles = readFileSync(resolve(rendererRoot, "styles.css"), "utf8");
 const featureStyles = filesUnder(resolve(rendererRoot, "styles"))
   .filter((path) => path.endsWith(".css"))
   .map((path) => readFileSync(path, "utf8"))
   .join("\n");
-const legacyStyles = `${styles.slice(paletteEnd + 3)}\n${featureStyles}`;
+const legacyStyles = `${styles}\n${featureStyles}`;
 const colorLiteralCount =
   matches(legacyStyles, /#[\da-f]{3,8}|rgba?\([^)]*\)|hsla?\([^)]*\)/giu) +
   matches(legacyStyles, /(?<![-\w])(?:white|black|red|blue|green|yellow|purple|orange|gray|grey|pink)(?![-\w])/giu);

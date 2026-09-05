@@ -3,6 +3,9 @@
 
 @import "heroui-native/styles";
 
+@import "@openbot/brand/tokens.css";
+@import "@openbot/brand/tokens-native.css";
+
 @theme inline {
   --color-canvas: var(--openbot-bg-canvas);
   --color-sidebar: var(--openbot-bg-sidebar);
@@ -31,8 +34,8 @@
   --text-caption: 0.75rem;
   --text-caption--line-height: 1rem;
 
-  --tracking-openbot-tight: -0.02em;
-  --tracking-openbot-wide: 0.08em;
+  --tracking-openbot-tight: var(--openbot-tracking-tight);
+  --tracking-openbot-wide: var(--openbot-tracking-wide);
 }
 
 @layer theme {
@@ -77,74 +80,6 @@
     --surface-shadow: var(--openbot-shadow-card);
     --overlay-shadow: var(--openbot-shadow-overlay);
     --field-shadow: 0 0 0 0 transparent inset;
-
-    --openbot-duration-fast: 120ms;
-    --openbot-duration-normal: 160ms;
-    --openbot-duration-overlay: 240ms;
-    --openbot-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
-
-    @variant light {
-      --openbot-bg-canvas: #f5f5f7;
-      --openbot-bg-sidebar: #ffffff;
-      --openbot-bg-surface: #ffffff;
-      --openbot-bg-surface-raised: #f0f0f3;
-      --openbot-bg-control: #e9e9ed;
-      --openbot-bg-control-active: #dedee4;
-      --openbot-bg-overlay: rgba(20, 20, 20, 0.28);
-      --openbot-border: rgba(20, 20, 20, 0.1);
-      --openbot-border-strong: rgba(20, 20, 20, 0.16);
-      --openbot-text-primary: #141414;
-      --openbot-text-secondary: rgba(20, 20, 20, 0.72);
-      --openbot-text-muted: rgba(20, 20, 20, 0.52);
-      --openbot-text-dim: rgba(20, 20, 20, 0.34);
-      --openbot-text-on-accent: #ffffff;
-      --openbot-text-on-status: #07130c;
-      --openbot-action: #141414;
-      --openbot-action-foreground: #f2f2f2;
-      --openbot-accent: #6960f1;
-      --openbot-accent-text: #5b52df;
-      --openbot-logo-production: #cdadec;
-      --openbot-logo-eye: #040007;
-      --openbot-success: #32a85d;
-      --openbot-warning: #c58a23;
-      --openbot-danger: #d85f58;
-      --openbot-drawer-scrim: #000000;
-      --openbot-scroll-edge-overlay: rgba(245, 245, 247, 0.46);
-      --openbot-shadow-card: 0 1px 2px rgba(20, 20, 20, 0.05);
-      --openbot-shadow-overlay: 0 12px 32px rgba(20, 20, 20, 0.12);
-    }
-
-    @variant dark {
-      /* biome-ignore lint/suspicious/noDuplicateCustomProperties: Theme variants intentionally share semantic token names. */
-      --openbot-bg-canvas: #070707;
-      --openbot-bg-sidebar: var(--openbot-bg-canvas);
-      --openbot-bg-surface: #262626;
-      --openbot-bg-surface-raised: #2f2f2f;
-      --openbot-bg-control: #1b1b1b;
-      --openbot-bg-control-active: #3a3a3a;
-      --openbot-bg-overlay: rgba(7, 7, 7, 0.92);
-      --openbot-border: rgba(255, 255, 255, 0.08);
-      --openbot-border-strong: rgba(255, 255, 255, 0.14);
-      --openbot-text-primary: #f2f2f2;
-      --openbot-text-secondary: rgba(255, 255, 255, 0.72);
-      --openbot-text-muted: rgba(255, 255, 255, 0.48);
-      --openbot-text-dim: rgba(255, 255, 255, 0.32);
-      --openbot-text-on-accent: #ffffff;
-      --openbot-text-on-status: #07130c;
-      --openbot-action: #f0f0f0;
-      --openbot-action-foreground: #141414;
-      --openbot-accent: #6960f1;
-      --openbot-accent-text: #a49fff;
-      --openbot-logo-production: #d6adf2;
-      --openbot-logo-eye: #040007;
-      --openbot-success: #61c985;
-      --openbot-warning: #e3b866;
-      --openbot-danger: #e47d75;
-      --openbot-drawer-scrim: #202020;
-      --openbot-scroll-edge-overlay: rgba(0, 0, 0, 0.72);
-      --openbot-shadow-card: 0 0 0 transparent;
-      --openbot-shadow-overlay: 0 12px 32px rgba(0, 0, 0, 0.48);
-    }
   }
 }
 

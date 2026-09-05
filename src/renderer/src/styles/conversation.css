@@ -1781,7 +1781,6 @@
   margin: 0 0 8px;
   color: var(--openbot-text-muted);
   font-size: var(--openbot-text-sm);
-  font-weight: var(--openbot-weight-normal);
   line-height: var(--openbot-leading-sm);
 }
 
@@ -1805,7 +1804,6 @@
   padding: 10px 14px;
   color: var(--openbot-text-secondary);
   font-size: var(--openbot-text-md);
-  font-weight: var(--openbot-weight-normal);
   text-align: left;
 }
 

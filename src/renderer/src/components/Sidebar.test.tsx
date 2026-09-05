@@ -688,6 +688,9 @@ describe("Sidebar sections", () => {
     await fireEvent.input(renameInput, { target: { value: "Empty" } });
     await fireEvent.keyDown(renameInput, { key: "Enter" });
     expect(await screen.findByRole("alert")).toHaveTextContent("Section names must be unique");
+    // The rejected name has to stay editable: the editor keeps focus so the second attempt below is
+    // something the user could actually type.
+    expect(renameInput).toHaveFocus();
 
     await fireEvent.input(renameInput, { target: { value: "Core" } });
     await fireEvent.keyDown(renameInput, { key: "Enter" });

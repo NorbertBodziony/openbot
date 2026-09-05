@@ -42,7 +42,7 @@ Native ownership takes priority over HeroUI for navigation chrome. HeroUI owners
 
 ## Theme and visual consistency
 
-- `global.css` is the single source of truth for OpenBot mobile color, typography, radius, shadow, and motion tokens. HeroUI semantic aliases consume those tokens.
+- `packages/brand/src/tokens.css` is the single source of truth for OpenBot color, typography, radius, shadow, and motion tokens, shared with the desktop and web apps; `tokens-native.css` beside it carries the light and dark values for the tokens mobile themes. `global.css` imports both and declares none of its own — it maps them to Tailwind utilities and HeroUI semantic aliases.
 - Use HeroUI semantic variants and existing utility classes. Do not add raw colors, arbitrary radii, or one-off shadows to a screen when a token or component variant can express the intent.
 - Extend OpenBot tokens only for a new semantic role that will be reused. Keep HeroUI aliases mapped to OpenBot tokens rather than creating a second palette.
 - Support light and dark appearance, dynamic type, reduced motion, reduced transparency, and sufficient contrast.
