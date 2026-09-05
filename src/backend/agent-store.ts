@@ -565,10 +565,14 @@ export class AgentStore {
    * its UUID is a state the user can reach. Every caller here either deletes a directory recursively or
    * moves one, so a derived name that belongs to somebody else is the difference between tidying up after
    * the rename and destroying an agent nobody touched.
+   *
+   * An id the application never minted -- `chief`, or one the user chose -- keeps its spelling, and that is
+   * not the same as having nothing to do: the *root* moved as well, so its workspace is still sitting in
+   * `OpenBot/Bots` under exactly this name. Nobody else can hold it, because ids are unique.
    */
   #unclaimedLegacyId(id: string): string | null {
     const legacyId = legacyAgentId(id);
-    if (legacyId === id) return null;
+    if (legacyId === id) return id;
     return this.#state.agents.some((candidate) => candidate.id === legacyId) ? null : legacyId;
   }
 
@@ -606,7 +610,9 @@ export class AgentStore {
    */
   async #reconcileAvatarDirectory(agent: StoredAgent): Promise<void> {
     const legacyId = this.#unclaimedLegacyId(agent.id);
-    if (legacyId === null) return;
+    // An avatar directory is named after the id alone, so an id the rename left untouched has nowhere to
+    // move from. Only the workspace root changed for those.
+    if (legacyId === null || legacyId === agent.id) return;
     const currentPath = join(this.#avatarsRoot, agent.id);
     const legacyPath = join(this.#avatarsRoot, legacyId);
     if ((await probeDirectory(currentPath)) !== false || (await probeDirectory(legacyPath)) !== true) return;

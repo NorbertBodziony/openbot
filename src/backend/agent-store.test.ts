@@ -68,6 +68,8 @@ describe("AgentStore", () => {
     await store.initialize();
     const agent = await store.createAgent(AGENT_PROFILE_INPUT);
     await writeFile(join(agent.workspacePath, "notes.md"), "kept");
+    const chief = await store.getOrCreate("chief");
+    await writeFile(join(chief.workspacePath, "notes.md"), "kept too");
 
     // The disk a pre-rename build left behind: the workspace under `OpenBot/Bots/bot-<uuid>`, beside an
     // unfinished copy from a duplication that crashed. Migration v13 has already pointed the stored path
@@ -77,6 +79,10 @@ describe("AgentStore", () => {
     await mkdir(legacyRoot, { recursive: true });
     await rename(agent.workspacePath, legacyWorkspace);
     await mkdir(`${legacyWorkspace}.openbot-stage`, { recursive: true });
+    // An id the application never minted keeps its spelling across the rename, so nothing about its name
+    // says the directory moved -- but the root did, and a workspace nobody relocates stays in `Bots`
+    // forever while `PRIVACY.md` tells the user their files are under `Agents`.
+    await rename(chief.workspacePath, join(legacyRoot, chief.id));
 
     // An uploaded avatar is stored under the agent id, and `avatarUrl` derives that directory from the id
     // migration v13 has just rewritten. Left behind, the file is on disk under one name and looked for
@@ -88,6 +94,7 @@ describe("AgentStore", () => {
     await new AgentStore(userData, home).initialize();
 
     expect(await readFile(join(agent.workspacePath, "notes.md"), "utf8")).toBe("kept");
+    expect(await readFile(join(chief.workspacePath, "notes.md"), "utf8")).toBe("kept too");
     await expect(readFile(join(userData, "avatars", "agents", agent.id, "avatar.png"), "utf8")).resolves.toBe(
       "uploaded",
     );
