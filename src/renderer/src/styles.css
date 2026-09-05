@@ -15,11 +15,11 @@
 @import "./features/agents/first-agent-setup.css";
 @import "./styles/app-shell.css";
 @import "./features/account/account-update-island.css";
-@import "./styles/join-server-dialog.css";
+@import "./features/servers/join-server-dialog.css";
 @import "./features/conversation/conversation.css";
 @import "./features/settings/settings-modal.css";
 @import "./styles/computer-use.css";
-@import "./styles/server-settings-modal.css";
+@import "./features/servers/server-settings-modal.css";
 @import "./features/settings/skills-marketplace.css";
 
 :root {
