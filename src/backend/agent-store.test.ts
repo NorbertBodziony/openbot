@@ -392,6 +392,40 @@ describe("AgentStore", () => {
     await expect(readFile(join(source.workspacePath, "note.txt"), "utf8")).resolves.toBe("source\n");
   });
 
+  it("removes a pending duplicate a pre-rename release left half-copied", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-store-duplicate-recovery-legacy-"));
+    temporaryRoots.push(root);
+    const userData = join(root, "user-data");
+    const home = join(root, "home");
+    const store = new AgentStore(userData, home);
+    await store.initialize();
+    const source = await store.getOrCreate("chief");
+    const duplicate = await store.duplicateAgent(source.id);
+
+    // The build that crashed mid-copy was a pre-rename one, so it named the marker after the duplicate's
+    // old id and copied the workspace under the old root; migration v13 has since renamed the agent.
+    // Recovery has to resolve the agent through both spellings and then address it by the id it has now,
+    // or the half-made duplicate stays in the sidebar and its workspace stays on disk.
+    const legacyId = `bot-${duplicate.id.slice("agent-".length)}`;
+    const legacyWorkspace = join(home, "OpenBot", "Bots", legacyId);
+    await mkdir(join(home, "OpenBot", "Bots"), { recursive: true });
+    await rename(duplicate.workspacePath, legacyWorkspace);
+    const duplications = join(userData, "agent-duplications");
+    const pending = JSON.parse(await readFile(join(duplications, `${duplicate.id}.pending`), "utf8"));
+    await rm(join(duplications, `${duplicate.id}.pending`), { force: true });
+    await writeFile(
+      join(duplications, `${legacyId}.pending`),
+      `${JSON.stringify({ operationId: pending.operationId, sourceBotId: source.id })}\n`,
+    );
+
+    const recovered = new AgentStore(userData, home);
+    await recovered.initialize();
+
+    expect(recovered.list().map((agent) => agent.id)).toEqual([source.id]);
+    await expect(readdir(legacyWorkspace)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readdir(duplications)).resolves.toEqual([]);
+  });
+
   it("keeps a committed duplicate whose pending marker a pre-rename release wrote", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-store-duplicate-recovery-legacy-"));
     temporaryRoots.push(root);
