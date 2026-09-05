@@ -484,17 +484,21 @@ export class AgentStore {
       rm(`${join(this.#agentsRoot, id)}.openbot-stage`, { recursive: true, force: true }),
       rm(this.#duplicationMarkerPath(id), { force: true }),
     ]);
-    // A workspace that could not follow the rename legitimately sits under the pre-rename root, and
-    // deleting only the derived path would leave that agent's files behind. The path is derived rather than
+    // A workspace that could not follow the rename legitimately sits under the pre-rename root, and deleting
+    // only the derived path would leave that agent's files behind. Every path here is derived rather than
     // read from `workspacePath`, because that column comes out of the user's own database file and a
     // recursive delete must never follow a string this code did not build.
+    //
+    // The agent's own id is always safe to clear under the old root: nobody else can be stored under it.
+    // Migration v13 leaves a `bot-` id alone unless the application minted it, and a legacy `bots.json`
+    // import runs afterwards and keeps both the id and the `~/OpenBot/Bots/<id>` workspace it read, so an
+    // agent whose workspace is only ever there is a state the user can reach.
+    const legacyPaths = [join(this.#legacyAgentsRoot, id)];
     const legacyId = this.#unclaimedLegacyId(id);
     if (legacyId !== null) {
-      await Promise.all([
-        rm(join(this.#avatarsRoot, legacyId), { recursive: true, force: true }),
-        rm(join(this.#legacyAgentsRoot, legacyId), { recursive: true, force: true }),
-      ]);
+      legacyPaths.push(join(this.#avatarsRoot, legacyId), join(this.#legacyAgentsRoot, legacyId));
     }
+    await Promise.all(legacyPaths.map((path) => rm(path, { recursive: true, force: true })));
     return { ...agent };
   }
 

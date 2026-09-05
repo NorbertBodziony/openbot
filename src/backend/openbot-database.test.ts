@@ -1141,16 +1141,57 @@ describe("OpenBotDatabase", () => {
         )
         .get(),
     ).toEqual({ seed: legacyId, id: agentId });
-    // The whole-database substitution can make two rows equal. These two memories say the same sentence in
-    // the two spellings, so rewriting one duplicates the other under `UNIQUE(agent_id, normalized_text)`.
-    // Aborting would roll this migration back on every launch and lock the user out over a duplicated
-    // sentence, and skipping the row would leave a memory attached to an agent id that no longer exists.
-    // The pair collapses to one memory, still the agent's own.
-    expect(migrated.connection.prepare("SELECT agent_id, text FROM projection_agent_memories").all()).toEqual([
+    // A memory is the only free text this database indexes, under `UNIQUE(agent_id, normalized_text)`. These
+    // two say the same sentence in the two spellings, so rewriting one would duplicate the other: aborting
+    // locks the user out of a migration that has no backup, and collapsing the pair discards a record with
+    // its own origin and timestamps. Both survive with the sentence as written, both still the agent's own.
+    expect(
+      migrated.connection.prepare("SELECT agent_id, text FROM projection_agent_memories ORDER BY text").all(),
+    ).toEqual([
       { agent_id: agentId, text: `remember ${agentId} deploys` },
+      { agent_id: agentId, text: `remember ${legacyId} deploys` },
     ]);
     expect(migrated.connection.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     migrated.close();
+  });
+
+  it("rolls back a failed agent id rewrite and succeeds on retry", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-db-ids-rollback-"));
+    roots.push(root);
+    const database = new OpenBotDatabase(root);
+    await database.initialize();
+    database.close();
+
+    const legacyId = "bot-6d3e8b17-9c04-4f21-8a55-1b2c3d4e5f60";
+    const legacy = new DatabaseSync(database.path);
+    downgradeToV11(legacy);
+    seedLegacyAgent(legacy, legacyId, `/Users/dev/OpenBot/Bots/${legacyId}`);
+    // This migration rewrites every text column in the database with foreign keys switched off, which is
+    // the widest blast radius of any migration here and the one that runs on a file with no backup. The
+    // blocker makes it throw partway, once the substitution has already written rows.
+    legacy.exec("CREATE TABLE blocker (value TEXT CHECK(value NOT LIKE 'agent-%'))");
+    legacy.prepare("INSERT INTO blocker (value) VALUES (?)").run(legacyId);
+    legacy.close();
+
+    const failed = new OpenBotDatabase(root);
+    await expect(failed.initialize()).rejects.toThrow("migration to version 13 failed");
+
+    const rolledBack = new DatabaseSync(database.path);
+    expect(rolledBack.prepare("SELECT 1 FROM schema_migrations WHERE version = 13").get()).toBeUndefined();
+    expect(rolledBack.prepare("SELECT agent_id FROM projection_agents").all()).toEqual([{ agent_id: legacyId }]);
+    expect(rolledBack.prepare("SELECT thread_id FROM projection_thread_messages").all()).toEqual([
+      { thread_id: `openbot-thread-${legacyId}` },
+    ]);
+    rolledBack.exec("DROP TABLE blocker");
+    rolledBack.close();
+
+    const retried = new OpenBotDatabase(root);
+    await retried.initialize();
+    expect(retried.connection.prepare("SELECT agent_id FROM projection_agents").all()).toEqual([
+      { agent_id: `agent-${legacyId.slice("bot-".length)}` },
+    ]);
+    expect(retried.connection.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    retried.close();
   });
 
   it("leaves an agent id the application did not mint alone", async () => {

@@ -699,7 +699,12 @@ describe("AgentStore", () => {
     await expect(readFile(join(siblingLegacyWorkspace, "notes.md"), "utf8")).resolves.toBe("sibling data");
     await expect(readFile(join(userData, "avatars", sibling, "avatar.png"), "utf8")).resolves.toBe("sibling face");
 
+    // A legacy import keeps the id it read and the `~/OpenBot/Bots/<id>` workspace that came with it, so
+    // for that agent the pre-rename root is where its files actually are. Deleting only the derived
+    // directory would report success and leave the workspace on disk.
     await store.deleteAgent(sibling);
+    await expect(readFile(join(siblingLegacyWorkspace, "notes.md"))).rejects.toMatchObject({ code: "ENOENT" });
+
     const restored = new AgentStore(userData, home);
     await restored.initialize();
     expect(restored.list()).toEqual([]);

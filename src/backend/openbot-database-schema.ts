@@ -777,6 +777,19 @@ function jsonEscape(value: string): string {
 }
 
 /**
+ * A memory is a sentence the user or the model wrote, and it is the only free text this database indexes:
+ * `UNIQUE(agent_id, normalized_text)`. Two memories quoting the id in its two spellings become one sentence
+ * once the id is rewritten, and there is no good answer at that point -- aborting locks the user out of a
+ * migration that has no backup, and collapsing the pair throws away a record whose origin, source turn and
+ * timestamps were its own. So the sentence is left exactly as it was written. The row's identifiers are
+ * still rewritten around it, so the memory stays attached to its agent; only the quotation inside it keeps
+ * the pre-rename spelling, which is what the user typed anyway.
+ */
+function isPreservedText(table: string, column: string): boolean {
+  return table === "projection_agent_memories" && (column === "text" || column === "normalized_text");
+}
+
+/**
  * One statement per table, rewriting every TEXT column of a row together.
  *
  * Together is the point. A per-column statement lets the conflict resolution below act on one column of a
@@ -796,6 +809,7 @@ function textColumnStatements(db: DatabaseSync): readonly TextColumnStatement[] 
     for (const column of db.prepare(`PRAGMA table_info(${quoteSqlIdentifier(table.name)})`).all()) {
       if (!isDynamicRecord(column) || !isString(column.name) || !isString(column.type)) continue;
       if (column.type.toUpperCase() !== "TEXT") continue;
+      if (isPreservedText(table.name, column.name)) continue;
       columns.push(column.name);
     }
     if (columns.length === 0) continue;
