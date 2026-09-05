@@ -52,7 +52,10 @@ which also validates both Compose files and so needs Docker that CI does not hav
 own `check` needs nothing but Bun and finishes in three seconds, so the two halves are split —
 `typecheck:remote` and `test:remote` — and run in Surfaces and Tests beside the other non-desktop
 surfaces. `remote:check` is still the Docker-inclusive superset; run it when you touch a Compose
-file.
+file. Nothing in CI builds the image either, and its Dockerfile installs from a pruned checkout —
+one `COPY` per workspace — so a `workspace:*` dependency added to the root manifest breaks
+`remote:up` while every job stays green. `scripts/dependency-catalog.test.ts` is what notices now:
+it walks the workspace dependency graph and asserts a manifest is copied for each one it reaches.
 
 `remote/scripts` rides along in that same project. `check.ts` and `update.ts` are Bun scripts
 using `Bun.spawn` and `import.meta.dir`, and no `tsconfig` reached them: `tsconfig.node.json` stops
