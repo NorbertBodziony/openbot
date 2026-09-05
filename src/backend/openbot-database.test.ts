@@ -1160,20 +1160,26 @@ describe("OpenBotDatabase", () => {
     await database.initialize();
     database.close();
 
-    // `bot-` is not proof of a generated id. `bot-research` is a name a user or an imported `bots.json`
-    // chose, and `agent-research` is already taken -- renaming the first onto the second collides on the
-    // primary key, rolls the migration back, and repeats that on every launch, so the user never gets in.
+    // `bot-` is not proof of a generated id, and neither is a UUID after it. `bot-research` is a name a
+    // user or an imported `bots.json` chose; `bot-<uuid>` is one `getOrCreate` will accept from any caller.
+    // Either can be sitting beside the `agent-` spelling this migration would rename it to, and renaming
+    // one onto the other is a primary-key collision the substitution resolves by dropping a row -- so an
+    // agent nobody touched disappears on upgrade.
     const legacy = new DatabaseSync(database.path);
     downgradeToV11(legacy);
     seedLegacyAgent(legacy, "bot-research", "/Users/dev/OpenBot/Agents/bot-research");
     seedLegacyAgent(legacy, "agent-research", "/Users/dev/OpenBot/Agents/agent-research");
+    seedLegacyAgent(legacy, "bot-8c41d0f2-6b5a-4e93-8d17-2a0b3c4d5e6f", "/Users/dev/OpenBot/Agents/pair-legacy");
+    seedLegacyAgent(legacy, "agent-8c41d0f2-6b5a-4e93-8d17-2a0b3c4d5e6f", "/Users/dev/OpenBot/Agents/pair");
     legacy.close();
 
     const migrated = new OpenBotDatabase(root);
     await migrated.initialize();
 
     expect(migrated.connection.prepare("SELECT agent_id FROM projection_agents ORDER BY agent_id").all()).toEqual([
+      { agent_id: "agent-8c41d0f2-6b5a-4e93-8d17-2a0b3c4d5e6f" },
       { agent_id: "agent-research" },
+      { agent_id: "bot-8c41d0f2-6b5a-4e93-8d17-2a0b3c4d5e6f" },
       { agent_id: "bot-research" },
     ]);
     migrated.close();
