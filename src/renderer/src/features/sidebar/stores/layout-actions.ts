@@ -10,10 +10,9 @@ import {
   type SidebarLayoutAction,
   type TeamPresenceMember,
 } from "@openbot/contracts/ipc";
+import { teamMemberName } from "../../../components/TeamPersonAvatar";
 import type { AgentProfile } from "../../../data";
-import { type SidebarPinnedItem, sidebarPinnedItemKey } from "../../../sidebar-pins";
-import type { SidebarProps } from "../../Sidebar";
-import { teamMemberName } from "../../TeamPersonAvatar";
+import type { SidebarProps } from "../Sidebar";
 import type {
   AgentDropTarget,
   PersonDropTarget,
@@ -21,6 +20,7 @@ import type {
   SidebarDragSource,
   SidebarDropTarget,
 } from "../sidebar-drag-model";
+import { type SidebarPinnedItem, sidebarPinnedItemKey } from "../sidebar-pins";
 
 export function createSidebarLayoutActions(deps: {
   agentPinnedItems: () => SidebarPinnedItem[];

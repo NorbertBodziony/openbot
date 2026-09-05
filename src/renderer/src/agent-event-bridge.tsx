@@ -15,11 +15,11 @@ import { useConversation } from "./conversation";
 import { agentConversationKey, agentMessageKey, deleteAgentMessageBodies, promptRequestKey } from "./conversation-keys";
 import { latestIncomingConversationMessage } from "./conversation-read-state";
 import { reconcileQueuesWithRuntimeWork } from "./dynamic-island-coordinator";
+import { useSidebar } from "./features/sidebar/sidebar-context";
 import { usePlatform } from "./platform";
 import { useProviders } from "./providers";
 import { queueAfterTurnCompleted } from "./queue-reconciliation";
 import { useServers } from "./servers";
-import { useSidebar } from "./sidebar";
 import { useTurns } from "./turns";
 
 /**

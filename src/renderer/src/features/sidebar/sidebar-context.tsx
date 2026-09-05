@@ -1,7 +1,8 @@
 import type { ServerSummary, SidebarLayoutAction, SidebarLayoutSnapshot } from "@openbot/contracts/ipc";
 import { createMemo, createSignal } from "solid-js";
-import { serverSupportsCapability } from "./server-capabilities";
-import { useServers } from "./servers";
+import { serverSupportsCapability } from "../../server-capabilities";
+import { useServers } from "../../servers";
+import { createSimpleContext } from "../../simple-context";
 import {
   normalizeSidebarPeopleOrder,
   readSidebarPeopleOrder,
@@ -24,7 +25,6 @@ import {
   type SidebarCollapsedByServer,
   writeSidebarCollapsed,
 } from "./sidebar-sections";
-import { createSimpleContext } from "./simple-context";
 
 /**
  * The shape of the agent list: the host's own section layout, plus the three

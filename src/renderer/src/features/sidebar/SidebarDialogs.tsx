@@ -4,8 +4,8 @@
  */
 
 import { Show } from "solid-js";
-import { AgentAvatar } from "../AgentAvatar";
-import { AlertDialog, Button, Trash2 } from "../ui";
+import { AgentAvatar } from "../../components/AgentAvatar";
+import { AlertDialog, Button, Trash2 } from "../../components/ui";
 import { useSidebarScope } from "./sidebar-scope";
 
 export function SidebarDialogs() {

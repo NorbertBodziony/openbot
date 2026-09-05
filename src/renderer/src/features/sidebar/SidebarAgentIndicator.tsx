@@ -1,7 +1,7 @@
 import { Show } from "solid-js";
-import { AgentAvatar } from "../AgentAvatar";
-import type { ResolvedPinnedItem, SidebarAgentState } from "../Sidebar";
-import { TypingDots } from "../TypingDots";
+import { AgentAvatar } from "../../components/AgentAvatar";
+import { TypingDots } from "../../components/TypingDots";
+import type { ResolvedPinnedItem, SidebarAgentState } from "./Sidebar";
 
 export function SidebarAgentIndicator(props: { state: SidebarAgentState }) {
   const unreadCount = () => (props.state.kind === "unread" ? props.state.count : 0);

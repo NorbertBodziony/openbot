@@ -5,8 +5,8 @@
  */
 
 import { Show } from "solid-js";
-import { AgentAvatar } from "../AgentAvatar";
-import { Button } from "../ui";
+import { AgentAvatar } from "../../components/AgentAvatar";
+import { Button } from "../../components/ui";
 import { useSidebarScope } from "./sidebar-scope";
 
 export function SidebarEmptyState() {

@@ -4,9 +4,9 @@
  */
 
 import type { DirectThreadSummary, TeamPresenceMember } from "@openbot/contracts/ipc";
+import { teamMemberName } from "../../components/TeamPersonAvatar";
 import type { AgentProfile } from "../../data";
-import type { SidebarAgentState } from "../Sidebar";
-import { teamMemberName } from "../TeamPersonAvatar";
+import type { SidebarAgentState } from "./Sidebar";
 
 export function sidebarAgentStateLabel(state: SidebarAgentState): string {
   if (state.kind === "working") return "Thinking";

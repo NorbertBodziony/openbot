@@ -5,12 +5,12 @@ import { useBrowserTabs } from "./browser-tabs";
 import { useConversation } from "./conversation";
 import { agentConversationKey } from "./conversation-keys";
 import { useDirectMessages } from "./direct-messages";
+import { useSidebar } from "./features/sidebar/sidebar-context";
 import { useNavigation } from "./navigation";
 import { usePresence } from "./presence";
 import { useServerSwitch } from "./server-switch";
 import { useServers } from "./servers";
 import { useSetup } from "./setup";
-import { useSidebar } from "./sidebar";
 import { createSimpleContext } from "./simple-context";
 
 /**

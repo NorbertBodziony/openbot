@@ -21,11 +21,11 @@ import {
   testServer,
 } from "./app-test-harness";
 import { useConversation } from "./conversation";
+import { SIDEBAR_PINS_STORAGE_KEY } from "./features/sidebar/sidebar-pins";
+import { SIDEBAR_COLLAPSED_STORAGE_KEY } from "./features/sidebar/sidebar-sections";
 import { useLayout } from "./layout";
 import { useNavigation } from "./navigation";
 import { useServers } from "./servers";
-import { SIDEBAR_PINS_STORAGE_KEY } from "./sidebar-pins";
-import { SIDEBAR_COLLAPSED_STORAGE_KEY } from "./sidebar-sections";
 
 describe("OpenBot connected desktop shell", () => {
   beforeEach(() => {

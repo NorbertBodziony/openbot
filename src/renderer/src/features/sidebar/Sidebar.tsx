@@ -5,13 +5,13 @@ import type {
   SidebarLayoutSnapshot,
   TeamPresenceMember,
 } from "@openbot/contracts/ipc";
-import type { AgentProfile } from "../data";
-import type { SidebarPinnedItem } from "../sidebar-pins";
-import { SidebarDialogs } from "./sidebar/SidebarDialogs";
-import { SidebarNav } from "./sidebar/SidebarNav";
-import { SidebarSearch } from "./sidebar/SidebarSearch";
-import { SidebarTopbar } from "./sidebar/SidebarTopbar";
-import { createSidebarScope, SidebarScopeContext } from "./sidebar/sidebar-scope";
+import type { AgentProfile } from "../../data";
+import { SidebarDialogs } from "./SidebarDialogs";
+import { SidebarNav } from "./SidebarNav";
+import { SidebarSearch } from "./SidebarSearch";
+import { SidebarTopbar } from "./SidebarTopbar";
+import type { SidebarPinnedItem } from "./sidebar-pins";
+import { createSidebarScope, SidebarScopeContext } from "./sidebar-scope";
 
 export interface SidebarProps {
   serverName: string;

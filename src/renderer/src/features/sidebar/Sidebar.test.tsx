@@ -1,10 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
-import { STORY_AGENTS, STORY_DIRECT_THREADS, STORY_PRESENCE } from "../../stories/fixtures";
-import type { SidebarPinnedItem } from "../sidebar-pins";
-import { defaultSidebarLayout } from "../sidebar-sections";
+import { STORY_AGENTS, STORY_DIRECT_THREADS, STORY_PRESENCE } from "../../../stories/fixtures";
 import { Sidebar } from "./Sidebar";
+import type { SidebarPinnedItem } from "./sidebar-pins";
+import { defaultSidebarLayout } from "./sidebar-sections";
 
 function sidebarProps(pinnedItems: SidebarPinnedItem[] = []) {
   return {

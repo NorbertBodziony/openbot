@@ -6,7 +6,7 @@
 
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { onCleanup, Show } from "solid-js";
-import { ChevronDown, Input } from "../ui";
+import { ChevronDown, Input } from "../../components/ui";
 import { useSidebarScope } from "./sidebar-scope";
 
 export function SidebarSectionEditor() {

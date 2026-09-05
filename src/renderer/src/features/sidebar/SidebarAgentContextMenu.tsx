@@ -6,10 +6,20 @@
  */
 
 import { For, Show } from "solid-js";
+import {
+  Check,
+  ChevronRight,
+  ContextMenu,
+  Copy,
+  Folder,
+  FolderInput,
+  FolderPlus,
+  Pin,
+  PinOff,
+} from "../../components/ui";
 import type { AgentProfile } from "../../data";
-import { MAX_SIDEBAR_PINNED_ITEMS, type SidebarPinnedItem } from "../../sidebar-pins";
-import { Check, ChevronRight, ContextMenu, Copy, Folder, FolderInput, FolderPlus, Pin, PinOff } from "../ui";
 import { DeleteIcon, EditIcon } from "./SidebarIcons";
+import { MAX_SIDEBAR_PINNED_ITEMS, type SidebarPinnedItem } from "./sidebar-pins";
 import { useSidebarScope } from "./sidebar-scope";
 
 export function SidebarAgentContextMenu(menuProps: { agent: AgentProfile; pinned: boolean }) {

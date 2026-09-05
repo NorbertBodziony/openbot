@@ -2,6 +2,7 @@ import type { CentralAuthUser } from "@openbot/contracts/ipc";
 import { createMemo, Show } from "solid-js";
 import { useAgents } from "./agents";
 import { useDirectMessages } from "./direct-messages";
+import { WorkspaceSidebar } from "./features/sidebar/WorkspaceSidebar";
 import { useLayout } from "./layout";
 import { LEFT_PANEL_COMPACT } from "./layout-constants";
 import { usePlatform } from "./platform";
@@ -15,7 +16,6 @@ import { WorkspaceDirectConversation } from "./WorkspaceDirectConversation";
 import { WorkspaceLeftPanelResizer } from "./WorkspaceLeftPanelResizer";
 import { WorkspaceOverlays } from "./WorkspaceOverlays";
 import { WorkspaceServerRail } from "./WorkspaceServerRail";
-import { WorkspaceSidebar } from "./WorkspaceSidebar";
 
 /**
  * The application frame, and nothing else: which pane occupies the middle, how

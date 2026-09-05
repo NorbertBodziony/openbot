@@ -5,11 +5,11 @@
  */
 
 import { For, Show } from "solid-js";
-import { sidebarPinnedItemKey } from "../../sidebar-pins";
-import { Badge, buttonVariants, ContextMenu } from "../ui";
+import { Badge, buttonVariants, ContextMenu } from "../../components/ui";
 import { SidebarAgentContextMenu } from "./SidebarAgentContextMenu";
 import { SidebarPinnedAvatar } from "./SidebarAgentIndicator";
 import { sidebarAgentStateLabel } from "./sidebar-filtering";
+import { sidebarPinnedItemKey } from "./sidebar-pins";
 import { useSidebarScope } from "./sidebar-scope";
 
 export function SidebarPinnedGroup() {

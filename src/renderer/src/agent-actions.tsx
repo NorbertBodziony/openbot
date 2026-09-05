@@ -8,10 +8,10 @@ import { toast } from "./components/ui";
 import { useConversation } from "./conversation";
 import { agentConversationKey, deleteAgentMessageBodies } from "./conversation-keys";
 import { useDirectMessages } from "./direct-messages";
+import { useSidebar } from "./features/sidebar/sidebar-context";
 import { useNavigation } from "./navigation";
 import { createScopeGuard } from "./scope-lifetime";
 import { useServers } from "./servers";
-import { useSidebar } from "./sidebar";
 import { createSimpleContext } from "./simple-context";
 import { useTurns } from "./turns";
 

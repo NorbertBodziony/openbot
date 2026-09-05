@@ -10,7 +10,6 @@
  */
 
 import { createMemo, createStore } from "solid-js";
-import { MAX_SIDEBAR_PINNED_ITEMS, type SidebarPinnedItem } from "../../../sidebar-pins";
 import {
   type DragOffset,
   type SidebarDrag,
@@ -18,6 +17,7 @@ import {
   type SidebarDropTarget,
   ZERO_DRAG_OFFSET,
 } from "../sidebar-drag-model";
+import { MAX_SIDEBAR_PINNED_ITEMS, type SidebarPinnedItem } from "../sidebar-pins";
 
 /** Everything `createSidebarDragEngine` may do to the drag store, and deliberately nothing more. */
 export interface SidebarDragWriters {

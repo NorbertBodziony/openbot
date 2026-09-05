@@ -6,11 +6,11 @@
 
 import { SIDEBAR_PEOPLE_SECTION_ID, SIDEBAR_UNASSIGNED_SECTION_ID } from "@openbot/contracts/ipc";
 import { createMemo } from "solid-js";
+import { teamMemberName } from "../../../components/TeamPersonAvatar";
 import type { AgentProfile } from "../../../data";
-import { sidebarPinnedItemKey } from "../../../sidebar-pins";
-import type { ResolvedPinnedItem, SidebarProps } from "../../Sidebar";
-import { teamMemberName } from "../../TeamPersonAvatar";
+import type { ResolvedPinnedItem, SidebarProps } from "../Sidebar";
 import { agentMatchesQuery, personMatchesQuery } from "../sidebar-filtering";
+import { sidebarPinnedItemKey } from "../sidebar-pins";
 
 export function createSidebarDataStore(deps: { normalizedQuery: () => string; props: SidebarProps }) {
   const { normalizedQuery, props } = deps;

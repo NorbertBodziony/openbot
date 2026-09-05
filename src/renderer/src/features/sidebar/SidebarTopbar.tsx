@@ -1,7 +1,7 @@
 /** The server name, the marketplace or expand toggle, and new agent - plus the window drag region. */
 
 import { Show } from "solid-js";
-import { Button, Puzzle } from "../ui";
+import { Button, Puzzle } from "../../components/ui";
 import { PlusIcon, SidebarToggleIcon } from "./SidebarIcons";
 import { useSidebarScope } from "./sidebar-scope";
 

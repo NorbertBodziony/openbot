@@ -8,9 +8,9 @@
  */
 
 import { createContext, createEffect, onCleanup, useContext } from "solid-js";
-import { createScrollFades } from "../createScrollFades";
-import type { SidebarProps } from "../Sidebar";
+import { createScrollFades } from "../../components/createScrollFades";
 import { createSidebarDragEngine } from "./createSidebarDragEngine";
+import type { SidebarProps } from "./Sidebar";
 import { createSidebarAnnouncementStore } from "./stores/announcement-store";
 import { createSidebarDataStore } from "./stores/data-store";
 import { createSidebarDragStateStore } from "./stores/drag-state-store";

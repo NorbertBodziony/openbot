@@ -1,19 +1,19 @@
 import { createMemo } from "solid-js";
-import { useAgentActions } from "./agent-actions";
-import { useAgents } from "./agents";
-import { Sidebar } from "./components/Sidebar";
-import { useConversation } from "./conversation";
-import { useDirectMessages } from "./direct-messages";
-import { useLayout } from "./layout";
-import { DirectConversation } from "./lazy-views";
-import { useNavigation } from "./navigation";
-import { usePresence } from "./presence";
-import { useServerSettings } from "./server-settings";
-import { useServers } from "./servers";
-import { useSettings } from "./settings";
-import { useSidebar } from "./sidebar";
+import { useAgentActions } from "../../agent-actions";
+import { useAgents } from "../../agents";
+import { useConversation } from "../../conversation";
+import { useDirectMessages } from "../../direct-messages";
+import { useLayout } from "../../layout";
+import { DirectConversation } from "../../lazy-views";
+import { useNavigation } from "../../navigation";
+import { usePresence } from "../../presence";
+import { useServerSettings } from "../../server-settings";
+import { useServers } from "../../servers";
+import { useSettings } from "../../settings";
+import { useTurns } from "../../turns";
+import { Sidebar } from "./Sidebar";
 import { computeSidebarAgentStates } from "./sidebar-agent-states";
-import { useTurns } from "./turns";
+import { useSidebar } from "./sidebar-context";
 
 /**
  * The list of Agents and people. It reads the most domains of any pane, and every

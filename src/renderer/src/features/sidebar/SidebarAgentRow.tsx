@@ -1,9 +1,9 @@
 /** One agent in a section: the drag wrapper, the row itself, and its context menu. */
 
 import { Show } from "solid-js";
+import { AgentAvatar } from "../../components/AgentAvatar";
+import { Badge, buttonVariants, ContextMenu } from "../../components/ui";
 import type { AgentProfile } from "../../data";
-import { AgentAvatar } from "../AgentAvatar";
-import { Badge, buttonVariants, ContextMenu } from "../ui";
 import { SidebarAgentContextMenu } from "./SidebarAgentContextMenu";
 import { SidebarAgentIndicator } from "./SidebarAgentIndicator";
 import { sidebarAgentStateLabel } from "./sidebar-filtering";

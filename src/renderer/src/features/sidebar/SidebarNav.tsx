@@ -5,7 +5,7 @@
  */
 
 import { Show } from "solid-js";
-import { ContextMenu, FolderPlus } from "../ui";
+import { ContextMenu, FolderPlus } from "../../components/ui";
 import { SidebarEmptyState } from "./SidebarEmptyState";
 import { SidebarPinnedGroup } from "./SidebarPinnedGroup";
 import { SidebarSectionList } from "./SidebarSectionList";
