@@ -58,7 +58,7 @@ All in `src/backend/openbot-database-schema.ts`:
 | Constant | Value or meaning |
 | --- | --- |
 | `BASELINE_SCHEMA_VERSION` | `8` — the frozen baseline, `BASELINE_V8_SCHEMA_SQL` |
-| `MIGRATIONS` | versions 8 through 14; a new one is 15 |
+| `MIGRATIONS` | one contiguous entry per version from 8 up; read the last one from the release tag, never from here — a number written down here is stale the next time a migration ships |
 | `LATEST_SCHEMA_VERSION` | derived from the last `MIGRATIONS` entry |
 | `LATEST_SCHEMA_SQL` | `substituteOnce(BASELINE_V8_SCHEMA_SQL, BASELINE_REACTIONS_TABLE_SQL, V12_REACTIONS_TABLE_SQL)` |
 | `substituteOnce` | throws unless the search string appears **exactly once**; handles one table substitution and no more |
@@ -70,6 +70,9 @@ Tests: `src/backend/openbot-database-schema-parity.test.ts` (the two build paths
 application").
 
 ## Team API protocol
+
+The versions below are the ones that existed when this file was written. Match the frozen set with
+the pathspecs in gate C rather than reading a version number off this table.
 
 | Path | Status |
 | --- | --- |

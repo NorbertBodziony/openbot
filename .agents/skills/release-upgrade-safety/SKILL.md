@@ -87,7 +87,13 @@ green and you added DDL, check that you actually added it to `MIGRATIONS`.
 
 ### B. On-disk state outside SQLite — `src/main/index.ts`, `src/backend/*-store.ts`
 
-Triggered by a change to any file in the inventory in `references/surfaces.md`.
+Triggered by a change to `src/main/index.ts`, any `*-store.ts` under `src/main/` or `src/backend/`,
+`src/backend/workspace-paths.ts`, `src/backend/browser-host.ts`,
+`src/main/remote-server-stored-shape.ts`, `src/main/sunshine-moonlight-runtime.ts`, or
+`electron-builder.yml`. The list is here and not in `references/surfaces.md` because you classify
+triggers before you open any reference — a trigger that pointed at the inventory would need the
+inventory read first, and a file you did not already suspect would be classified as not triggered.
+Once this gate fires, open the inventory for the file-by-file detail.
 
 - **Did an on-disk filename constant change?** A rename is silent data loss: the old file is never
   found, never read, and never deleted. The new build starts from its defaults and the user's
@@ -121,24 +127,37 @@ Triggered by a change to any file in the inventory in `references/surfaces.md`.
 
 Triggered by any change under that directory.
 
-First derive the frozen set from the tag rather than hard-coding versions — a protocol released
-since you last read this file is frozen too, and a hard-coded `v1 v2 v3` would never audit it:
+Let git match the frozen set. A protocol released since you last read this file is frozen too, so
+nothing here names a version:
 
 ```bash
-FROZEN=$(git ls-tree --name-only <tag> packages/contracts/src/team-protocol/ \
-  | grep -E '/v[0-9]+\.ts$')
-git diff --stat --diff-filter=MDR <tag>..HEAD -- $FROZEN \
-  packages/contracts/src/team-protocol/fixtures
+git diff --stat --diff-filter=MDR <tag>..HEAD -- \
+  'packages/contracts/src/team-protocol/v*.ts' \
+  'packages/contracts/src/team-protocol/fixtures/**' \
+  ':(exclude)packages/contracts/src/team-protocol/v*.test.ts'
 ```
 
-**This must be empty.** `--diff-filter=MDR` is the point: a released codec or fixture that was
-*modified, deleted or renamed* is a broken contract with every peer still running an older build,
-and the fix is a new protocol version, never an edit. `R` is in that list deliberately — git
-classifies a rename as `R` rather than `M`, so leaving it out lets a frozen fixture be renamed out
-from under the check while the diff still reports clean.
+**This must be empty.** Three things in that command are load-bearing:
 
-An *added* fixture is additive and allowed. Read the additions separately with `--diff-filter=A`
-and confirm each is a genuinely new case rather than the other half of a rename.
+- **Every pathspec is quoted, so git expands it and the shell never sees a glob.** Do not collect
+  the file list into a variable first. An unquoted `$FROZEN` word-splits under bash but *not* under
+  zsh, where the newline-joined list becomes a single path that matches nothing — so the check
+  prints empty and passes while a frozen codec sits modified in the diff. A gate that reports clean
+  for the wrong reason is worse than no gate, and this is the one gate whose whole output is its
+  own emptiness.
+- **`v*.ts` covers the adapters.** `packages/contracts/AGENTS.md` freezes a codec, an adapter, and
+  client and host fixtures for every released protocol, so `v1-adapter.ts`, `v2-adapter.ts`,
+  `v3-adapter.ts` and `v3-webrtc-adapter.ts` are as frozen as `v1.ts`. A pattern anchored on
+  `v[0-9]+\.ts$` matches one frozen file in five and passes while four broken adapters ship.
+- **`--diff-filter=MDR`.** A released file *modified, deleted or renamed* is a broken contract with
+  every peer still running an older build, and the fix is a new protocol version, never an edit.
+  `R` is listed deliberately: git classifies a rename as `R` rather than `M`, so leaving it out
+  lets a frozen fixture be renamed out from under the check while the diff still reports clean.
+  `A` is left out because an added fixture is additive, and `v*.test.ts` is excluded because a test
+  covering a frozen protocol may legitimately gain cases.
+
+Read the additions separately with `--diff-filter=A` and confirm each is a genuinely new case
+rather than the other half of a rename.
 
 If the modified-or-deleted diff is non-empty, read every hunk before calling it a stop. A change
 that provably cannot alter what any encoded payload means — an added `export` keyword, a comment —
@@ -152,10 +171,11 @@ is not a wire change. Anything that touches a key list, a validator, or a projec
   fails validation and returns `null`, and callers read `null` as "nothing to send". `tsc` stays
   green throughout.
 
+List the protocol tests from the tag for the same reason the diff is derived from it, then run
+`bun run test:desktop -- <path>` once per file it prints:
+
 ```bash
-bun run test:desktop -- packages/contracts/src/team-protocol/v1.test.ts
-bun run test:desktop -- packages/contracts/src/team-protocol/v2.test.ts
-bun run test:desktop -- packages/contracts/src/team-protocol/v3.test.ts
+git ls-tree --name-only <tag> packages/contracts/src/team-protocol/ | grep -E 'v[0-9]+\.test\.ts$'
 ```
 
 The full compatibility matrix — older client against new host, new client against older host,
