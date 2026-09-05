@@ -74,8 +74,9 @@ Then handle each bucket one of three ways, and say in the Step 3 table which one
 
 - **Dismissed as a bucket**, with the reason stated once. A bucket qualifies only if you can say
   what makes *every* file in it inert. `docs/**`, `tools/**` and `src/renderer/stories/**` are not
-  in the shipped app at all, which is such a reason. "Nothing looked interesting" is not. Two
-  buckets that look dismissible and are not:
+  in the shipped app at all, which is such a reason. "Nothing looked interesting" is not. Three
+  buckets that look dismissible and are not — and note what the second and third have in common:
+  **nothing this audit delegates a check to can be dismissed by the bucket its file lives in.**
   - **`src/renderer/**`** — the renderer writes `localStorage`, that store lives in the user's
     Electron partition, and it outlives the build that wrote it exactly the way a file under
     `userData` does. Route it through gate B.
@@ -89,6 +90,12 @@ Then handle each bucket one of three ways, and say in the Step 3 table which one
     behind the range every future audit starts from. Route a modification or deletion of one
     through the gate that names it and read the hunks. Other `**/*.test.ts` files dismiss as a
     bucket normally.
+  - **`docs/RELEASING.md`**, for the same reason one level up. This audit does not restate the
+    Team API compatibility matrix — gate C points at preflight item 0 and stops there — and it
+    hands the publish itself back to that document at Step 3. Weakening either is invisible to
+    every gate here, because the gate's own text still reads correctly while the thing it defers to
+    no longer says what it assumed. Read its changed hunks under gate C and the handoff. The rest
+    of `docs/**` dismisses as a bucket normally.
 - **Cleared by a derived query.** This is how a large hazard-bearing directory gets honestly
   covered: gate B's `git grep` over `src/main` and `src/backend` names every file that decodes a
   versioned payload, so the other two hundred are cleared by the query having asked the right
@@ -151,6 +158,40 @@ Triggered by any change to that file or to `src/backend/database/`.
   `refreshProviderSessionsForDynamicTools` is currently the migration for 9, 10 and 14 — so a
   one-line edit there rewrites three shipped migrations at once, and the diff shows it as a single
   changed function far from any `version:` line.
+
+  **The `up:` names are the entry points, not the frozen set — take the transitive closure.** A
+  migration body delegates, and the helper it delegates to is as frozen as the body: at the time of
+  writing `migrateToBaselineV8` is four lines of `db.prepare` followed by calls to
+  `compactConversationHistory`, `compactMailboxHistory`, `migrateProviderSessionsForGrok` and
+  `migrateReactionsForActors`, and the first two run `DELETE FROM orchestration_events` and
+  `DELETE FROM projection_thread_activities`. Editing one of those changes what an upgrading
+  database *deletes*, while new installs never execute it at all — they get `LATEST_SCHEMA_SQL` and
+  the entry stamped as applied. The wrapper's own diff stays clean, so the `up:` list alone reports
+  nothing. Two names against nine is the difference this makes; derive it rather than listing it:
+
+  ```bash
+  schema() { git show "${1}:src/backend/openbot-database-schema.ts"; }
+  frozen() {
+    src=$(schema "$1")
+    defs=$(printf '%s\n' "$src" | grep -oE '^function [a-zA-Z0-9_]+' | awk '{print $2}' | sort -u)
+    seen=$(printf '%s\n' "$src" | grep -oE '^[[:space:]]+up: [a-zA-Z0-9_]+' | awk '{print $2}' | sort -u)
+    n=0
+    while [ "$(printf '%s\n' "$seen" | wc -l)" -ne "$n" ]; do
+      n=$(printf '%s\n' "$seen" | wc -l)
+      for f in $(printf '%s\n' "$seen"); do
+        seen="$seen
+  $(printf '%s\n' "$src" | awk "/^function $f\\(/,/^}/" | grep -oE '[a-zA-Z0-9_]+\(' | tr -d '(')"
+      done
+      seen=$(printf '%s\n' "$seen" | sed '/^$/d' | sort -u | grep -Fx -f <(printf '%s\n' "$defs"))
+    done
+    printf '%s\n' "$seen"
+  }
+  frozen <tag>
+  ```
+
+  It iterates to a fixpoint, so a helper added one level deeper is still caught. `for f in $(...)`
+  rather than `for f in $seen`: command substitution splits in both shells, bare parameter expansion
+  splits only in bash. Run it against the tag, not `HEAD` — the question is what was already shipped.
 - **If the migration executes DDL, `LATEST_SCHEMA_SQL` must be extended in the same change.**
   `createLatestDatabase` execs that SQL and then stamps every `MIGRATIONS` entry as applied
   *without running it*, so a DDL migration missing from it ships new installs a database without
