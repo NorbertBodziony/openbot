@@ -11,7 +11,7 @@
 @import "./styles/dynamic-island-surface.css";
 @import "./styles/base.css";
 @import "./features/account/auth.css";
-@import "./styles/onboarding.css";
+@import "./features/onboarding/onboarding.css";
 @import "./styles/first-agent-setup.css";
 @import "./styles/app-shell.css";
 @import "./features/account/account-update-island.css";
