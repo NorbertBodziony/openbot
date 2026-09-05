@@ -836,8 +836,8 @@ function textColumnStatements(db: DatabaseSync): readonly TextColumnStatement[] 
       columns,
       // `OR REPLACE`, because a whole-database substitution can make two rows equal. Two memories of one
       // agent quoting `bot-<uuid>` and `agent-<uuid>` collapse to the same `normalized_text` under
-      // `UNIQUE(agent_id, normalized_text)`, and two files recorded under the two workspace roots collapse
-      // to the same `projection_files.path`. Aborting would roll the migration back on every launch and
+      // `UNIQUE(agent_id, normalized_text)`, and two deletions queued under the two workspace roots collapse
+      // to the same `file_deletion_outbox.path`. Aborting would roll the migration back on every launch and
       // lock the user out over a duplicated sentence; `OR IGNORE` would be worse still, leaving the skipped
       // row's `agent_id` spelling an agent that no longer exists, so the memory survives attached to
       // nobody. Collapsing the pair is what the constraint means and what would have happened had the

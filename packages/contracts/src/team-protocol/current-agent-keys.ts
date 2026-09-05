@@ -62,13 +62,14 @@ const CURRENT_TO_WIRE_MARKETPLACE_KEYS: Readonly<Record<string, string>> = Objec
 const OPAQUE_KEYS: ReadonlySet<string> = new Set(["layout"]);
 
 /**
- * Objects whose keys are data, not vocabulary: `responses` is answers by question id, and `references` is
- * messages by message id. A question id is any nonempty string the caller chose, so one spelled `agentId`
+ * Objects whose keys are data, not vocabulary: `responses` and `answers` are both keyed by question id, and
+ * `references` by message id. A question id is any nonempty string the caller chose, so one spelled `agentId`
  * would be renamed to `botId` on the wire while the `id` on the question itself stayed as written -- and
  * the client could no longer tell which answer belonged to which question. The values inside are still
- * translated; only the keys are left as found.
+ * translated; only the keys are left as found. `answers` is a map only in the prompt-response *request*; in
+ * a resolution it is an array of strings, which never reaches this set.
  */
-const DYNAMIC_MAP_KEYS: ReadonlySet<string> = new Set(["responses", "references"]);
+const DYNAMIC_MAP_KEYS: ReadonlySet<string> = new Set(["responses", "references", "answers"]);
 
 /**
  * Routes whose *body* is a dynamic map. Sidebar layout already spells the product agent `agent` on both

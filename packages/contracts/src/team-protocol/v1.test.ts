@@ -16,6 +16,7 @@ import {
 } from "./v1";
 import {
   decodeTeamProtocolV1CurrentEvent,
+  decodeTeamProtocolV1CurrentHttpRequest,
   encodeTeamProtocolV1CurrentEvent,
   encodeTeamProtocolV1CurrentHttpRequest,
   encodeTeamProtocolV1CurrentHttpResponse,
@@ -97,6 +98,21 @@ describe("Team protocol v1", () => {
     expect(conversation.botId).toBe("agent-1");
     expect(conversation.messages[0].questionPrompt.questions[0].id).toBe("agentId");
     expect(Object.keys(conversation.messages[0].questionPrompt.resolution.responses)).toEqual(["agentId"]);
+
+    // The answer travels back keyed by the same question id, so the request body is the other half of the
+    // same pairing -- and the half that would strand a real answer the host cannot match to its question.
+    const respond = JSON.parse(
+      encodeTeamProtocolV1CurrentHttpRequest("POST", "/v1/prompts/respond", {
+        requestId: "request-1",
+        answers: { agentId: ["chief"] },
+      }),
+    );
+
+    expect(Object.keys(respond.answers)).toEqual(["agentId"]);
+    expect(decodeTeamProtocolV1CurrentHttpRequest("POST", "/v1/prompts/respond", respond)).toEqual({
+      requestId: "request-1",
+      answers: { agentId: ["chief"] },
+    });
   });
 
   it("decodes bounded compatibility metadata and finds the highest common version", () => {
