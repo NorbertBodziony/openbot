@@ -56,12 +56,18 @@ jobs:
       - name: Run site router tests
         run: bun run test:sites
 
+      - name: Run remote API tests
+        run: bun run test:remote
+
   surfaces:
     # `desktop:typecheck` covers only the desktop projects, so without this job
-    # `apps/mobile`, `apps/site-router` and `packages/team-client` first break at
-    # release time rather than on the pull request that broke them. Mobile's
-    # typecheck generates `expo-env.d.ts` and the uniwind declarations first -
-    # both are gitignored, so a fresh checkout cannot resolve `global.css`.
+    # `apps/mobile`, `apps/site-router`, `packages/team-client` and `remote/api`
+    # first break at release time rather than on the pull request that broke
+    # them. Mobile's typecheck generates `expo-env.d.ts` and the uniwind
+    # declarations first - both are gitignored, so a fresh checkout cannot
+    # resolve `global.css`. `remote/api` is typechecked here rather than through
+    # `remote:check`, which also validates both Compose files and so needs
+    # Docker; the workspace's own `check` script needs nothing but Bun.
     name: Surfaces
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -82,6 +88,9 @@ jobs:
 
       - name: Typecheck team client
         run: bun run typecheck:team-client
+
+      - name: Typecheck remote API
+        run: bun run typecheck:remote
 
   api:
     name: API
