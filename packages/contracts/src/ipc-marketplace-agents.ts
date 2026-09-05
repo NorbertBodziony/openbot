@@ -1,4 +1,6 @@
-import type { AgentSummary, AvatarHue, RoutineSchedule } from "./ipc-conversation";
+import type { AvatarHue } from "./ipc-agent-identity";
+import type { AgentSummary } from "./ipc-agents";
+import type { RoutineSchedule } from "./ipc-routines";
 
 export type AgentReviewStatus = "pending" | "approved" | "rejected";
 

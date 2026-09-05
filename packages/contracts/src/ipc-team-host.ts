@@ -1,4 +1,4 @@
-import type { AvatarImageInput } from "./ipc-conversation";
+import type { AvatarImageInput } from "./ipc-agents";
 
 // The id every IPC payload carries for "this computer" rather than a remote team server. It is a
 // wire value the main process, the preload bridge and the renderer all compare against, so it lives

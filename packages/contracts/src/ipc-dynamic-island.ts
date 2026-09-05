@@ -1,5 +1,6 @@
 import { INPUT_LIMITS } from "./input-limits";
-import { type AgentApprovalKind, type AgentApprovalPermissions, type AvatarHue, isAvatarHue } from "./ipc-conversation";
+import { type AvatarHue, isAvatarHue } from "./ipc-agent-identity";
+import type { AgentApprovalKind, AgentApprovalPermissions } from "./ipc-approvals";
 import { isBoolean, isDynamicRecord, isNumber, isString } from "./runtime-values";
 
 export interface DynamicIslandPreference {

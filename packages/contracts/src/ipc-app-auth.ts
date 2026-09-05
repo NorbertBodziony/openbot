@@ -1,4 +1,5 @@
-import type { AgentProviderId, AvatarImageInput } from "./ipc-conversation";
+import type { AgentProviderId } from "./ipc-agent-status";
+import type { AvatarImageInput } from "./ipc-agents";
 import type { AccountSession, MobileConnectedDevice, MobileConnectTicket } from "./mobile-connect";
 
 export type DesktopPlatform = "darwin" | "win32" | "linux";

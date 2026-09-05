@@ -1,5 +1,5 @@
 import { expandChatTagReferences } from "../chat-tag-references";
-import { type AgentEvent, isAgentEvent } from "../ipc-conversation";
+import { type AgentEvent, isAgentEvent } from "../ipc-agent-events";
 import type { TeamRealtimeEvent } from "../ipc-team-host";
 import { isBoolean, isDynamicRecord, isNumber, isString } from "../runtime-values";
 import {

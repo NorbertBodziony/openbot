@@ -1,4 +1,4 @@
-import type { AgentEvent } from "../ipc-conversation";
+import type { AgentEvent } from "../ipc-agent-events";
 import type { TeamRealtimeEvent } from "../ipc-team-host";
 import { isDynamicRecord, isString } from "../runtime-values";
 import {
