@@ -615,7 +615,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     serverId = this.#store.activeServerId,
   ): Promise<ConversationSearchPage> {
     const parameters = new URLSearchParams({ q: query, limit: String(limit) });
-    if (agentId) parameters.set("agentId", agentId);
+    // A query parameter never reaches the JSON adapters, so it keeps the released spelling.
+    if (agentId) parameters.set("botId", agentId);
     if (cursor) parameters.set("cursor", cursor);
     return this.request(
       serverId,
@@ -894,7 +895,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   ): Promise<{ bytes: Uint8Array; name: string }> {
     const server = this.#store.require(serverId);
     const url = new URL(TEAM_API_ROUTES.workspaceFiles, server.apiUrl);
-    url.searchParams.set("agentId", agentId);
+    // A query parameter never reaches the JSON adapters, so it keeps the released spelling.
+    url.searchParams.set("botId", agentId);
     url.searchParams.set("path", workspacePath);
     const response = await this.#client.fetch(server, url);
     const disposition = response.headers.get("content-disposition") ?? "";

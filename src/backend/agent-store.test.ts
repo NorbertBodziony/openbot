@@ -78,9 +78,19 @@ describe("AgentStore", () => {
     await rename(agent.workspacePath, legacyWorkspace);
     await mkdir(`${legacyWorkspace}.openbot-stage`, { recursive: true });
 
+    // An uploaded avatar is stored under the agent id, and `avatarUrl` derives that directory from the id
+    // migration v13 has just rewritten. Left behind, the file is on disk under one name and looked for
+    // under another, so the upload silently falls back to a drawn face.
+    const legacyAvatar = join(userData, "avatars", "agents", `bot-${agent.id.slice("agent-".length)}`);
+    await mkdir(legacyAvatar, { recursive: true });
+    await writeFile(join(legacyAvatar, "avatar.png"), "uploaded");
+
     await new AgentStore(userData, home).initialize();
 
     expect(await readFile(join(agent.workspacePath, "notes.md"), "utf8")).toBe("kept");
+    await expect(readFile(join(userData, "avatars", "agents", agent.id, "avatar.png"), "utf8")).resolves.toBe(
+      "uploaded",
+    );
     await expect(readdir(legacyRoot)).rejects.toMatchObject({ code: "ENOENT" });
 
     // A run interrupted after the move can leave a stale directory back at the old name. The stored path

@@ -1126,6 +1126,21 @@ describe("OpenBotDatabase", () => {
         markerCommandId: `hosted-site-event:${agentId}:operation-1:succeeded`,
       }),
     ]);
+    // The seed is the input to the function that draws the face, not an identifier. Rewriting it with the
+    // id gives every pre-rename agent a different face on upgrade, in the projection and in the events a
+    // replay would rebuild that projection from.
+    expect(
+      migrated.connection
+        .prepare("SELECT json_extract(agent_json, '$.avatarSeed') AS seed FROM projection_agents")
+        .get(),
+    ).toEqual({ seed: legacyId });
+    expect(
+      migrated.connection
+        .prepare(
+          "SELECT json_extract(payload_json, '$.agents[0].avatarSeed') AS seed, json_extract(payload_json, '$.agents[0].id') AS id FROM orchestration_events WHERE event_type = 'agents.replaced'",
+        )
+        .get(),
+    ).toEqual({ seed: legacyId, id: agentId });
     expect(migrated.connection.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     migrated.close();
   });
@@ -1325,7 +1340,10 @@ function downgradeToV11(database: DatabaseSync): void {
 // One agent whose id, thread, message text and hosted-site history all still spell the id `bot-<uuid>`.
 function seedLegacyAgent(database: DatabaseSync, legacyId: string, workspacePath: string): void {
   const threadId = `openbot-thread-${legacyId}`;
-  const agentJson = JSON.stringify({ id: legacyId, name: "Chief", threadId, workspacePath });
+  const agentJson = JSON.stringify({ id: legacyId, name: "Chief", threadId, workspacePath, avatarSeed: legacyId });
+  const rosterJson = JSON.stringify({
+    agents: [{ id: legacyId, name: "Chief", threadId, workspacePath, avatarSeed: legacyId }],
+  });
   const messageJson = JSON.stringify({
     id: "message-1",
     author: "agent",
@@ -1374,6 +1392,13 @@ function seedLegacyAgent(database: DatabaseSync, legacyId: string, workspacePath
        VALUES ('event-1', ?, 'hosted-site-terminal', ?, 'hosted-site.terminal-pending', '2026-09-01T12:00:00.000Z', ?)`,
     )
     .run(`hosted-site-terminal-pending:${legacyId}:operation-1:succeeded`, legacyId, pendingJson);
+  database
+    .prepare(
+      `INSERT INTO orchestration_events
+         (event_id, command_id, aggregate_type, aggregate_id, event_type, occurred_at, payload_json)
+       VALUES ('event-2', 'agents-replaced:1', 'agent-roster', 'agent-roster', 'agents.replaced', '2026-09-01T12:00:00.000Z', ?)`,
+    )
+    .run(rosterJson);
 }
 
 function downgradeReactionsToV7(database: DatabaseSync): void {

@@ -666,6 +666,21 @@ function rewriteGeneratedAgentIds(db: DatabaseSync): void {
   const statements = textColumnStatements(db);
   for (const root of legacyWorkspaceRoots(renames)) substitute(statements, root.from, root.to);
   for (const rename of renames) substitute(statements, rename.oldId, rename.newId);
+  for (const rename of renames) restoreAvatarSeed(statements, rename);
+}
+
+/**
+ * An agent the app created for itself starts with its own id as `avatarSeed`, and the seed is the input to
+ * the function that draws the face -- not an identifier. Rewriting it would give every one of those agents
+ * a different face on upgrade, and would diverge from the seed already published in
+ * `marketplace_agent_versions`. So the substitution above is undone for this one key, everywhere it is
+ * stored: the roster projection, and the event payloads a replay would rebuild that projection from.
+ *
+ * Matching the serialized key is safe in this direction. No database that has not yet run this migration
+ * can hold an `agent-<uuid>` id at all, so a seed spelled that way is one this migration just wrote.
+ */
+function restoreAvatarSeed(statements: readonly TextColumnStatement[], rename: AgentIdRename): void {
+  substitute(statements, `"avatarSeed":"${rename.newId}"`, `"avatarSeed":"${rename.oldId}"`);
 }
 
 function readAgentIdRenames(db: DatabaseSync): readonly AgentIdRename[] {

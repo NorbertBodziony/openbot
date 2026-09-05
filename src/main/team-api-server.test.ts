@@ -1826,7 +1826,9 @@ describe("TeamApiServer administration", () => {
       expect(unauthorized.status).toBe(401);
 
       const workspaceResponse = await fetch(
-        `${base}/v1/workspace-files?agentId=chief&path=${encodeURIComponent("app/page.tsx")}`,
+        // The released URL spells this `botId`, and the versioned adapters translate JSON bodies only,
+        // so a shipped client's query string reaches the handler exactly as it was written.
+        `${base}/v1/workspace-files?botId=chief&path=${encodeURIComponent("app/page.tsx")}`,
         {
           headers: { Authorization: `Bearer ${login.sessionToken}` },
         },
@@ -1835,7 +1837,7 @@ describe("TeamApiServer administration", () => {
       expect(workspaceResponse.headers.get("content-disposition")).toContain("chief-page.tsx");
       expect(await workspaceResponse.text()).toBe("name,value\nOpenBot,1\n");
 
-      const unauthorizedWorkspace = await fetch(`${base}/v1/workspace-files?agentId=chief&path=app/page.tsx`);
+      const unauthorizedWorkspace = await fetch(`${base}/v1/workspace-files?botId=chief&path=app/page.tsx`);
       expect(unauthorizedWorkspace.status).toBe(401);
     } finally {
       await api.stop();

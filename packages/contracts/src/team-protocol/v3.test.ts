@@ -75,6 +75,17 @@ describe("Team protocol v3", () => {
     expect(
       JSON.parse(encodeTeamProtocolV3CurrentHttpResponse("POST", duplicatePath, 201, currentResponseFixture)),
     ).toEqual(responseFixture);
+    // Every other route delegates to the v1 adapter, and that branch has to come back current-shaped too:
+    // the handler reading this one says `ownerAgentId`, so the wire spelling would lose the tab's owner
+    // without anything throwing.
+    expect(
+      decodeTeamProtocolV3CurrentHttpRequest("POST", "/v1/browser/open", {
+        url: "https://example.com/",
+        ownerThreadId: "thread-1",
+        ownerBotId: "chief",
+        focus: true,
+      }),
+    ).toEqual({ url: "https://example.com/", ownerThreadId: "thread-1", ownerAgentId: "chief", focus: true });
   });
 
   it("requires a valid idempotency key for duplicate requests", () => {

@@ -686,7 +686,9 @@ export class TeamApiServer {
           200,
           this.#options.agents.searchConversationMessages(
             query,
-            url.searchParams.get("agentId") ?? undefined,
+            // A query parameter is part of the released URL, and the versioned adapters translate JSON
+            // bodies only. `botId` is what every shipped client sends and what every shipped host reads.
+            url.searchParams.get("botId") ?? undefined,
             url.searchParams.get("cursor") ?? undefined,
             pageLimit(url),
           ),
@@ -847,7 +849,8 @@ export class TeamApiServer {
         return;
       }
       if (method === "GET" && url.pathname === TEAM_API_ROUTES.workspaceFiles) {
-        const agentId = url.searchParams.get("agentId");
+        // The released URL spells this `botId`; only the local name follows the rename.
+        const agentId = url.searchParams.get("botId");
         const workspacePath = url.searchParams.get("path");
         if (!agentId || agentId.length > INPUT_LIMITS.identifier) {
           throw new HttpError(400, "A valid agent id is required.");

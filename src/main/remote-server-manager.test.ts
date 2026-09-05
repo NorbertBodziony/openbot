@@ -606,7 +606,8 @@ describe("remote server order", () => {
         expect(url.searchParams.get("path")).toBe("~/OpenBot/Shared/report.csv");
       } else {
         expect(url.pathname).toBe("/v1/workspace-files");
-        expect(url.searchParams.get("agentId")).toBe("chief");
+        // Read off the URL this client puts on the wire, so it carries the frozen `botId` spelling.
+        expect(url.searchParams.get("botId")).toBe("chief");
         expect(url.searchParams.get("path")).toBe("app/page.tsx");
       }
       return new Response(bytes, {

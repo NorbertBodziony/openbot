@@ -80,9 +80,11 @@ function decodeV2HttpRequest(
   const normalized = value === undefined ? null : wireJson(value);
   if (isRemoteViewerRoute(path)) return isEmptyRequest(normalized) ? {} : normalized;
   if (isEmptyRequest(normalized) && isTeamProtocolV2NoBodyRoute(method, path)) return {};
-  return options.preserveSemanticTags
-    ? wireJson(decodeTeamProtocolV1CurrentHttpRequest(method, path, normalized))
-    : wireJson(JSON.parse(encodeTeamProtocolV1CurrentHttpRequest(method, path, normalized)));
+  if (options.preserveSemanticTags) return wireJson(decodeTeamProtocolV1CurrentHttpRequest(method, path, normalized));
+  // The encode call is only here to expand semantic tags, and it leaves the object in wire vocabulary.
+  // Decoding its output is what brings the keys back to the current spelling the handlers read.
+  const expanded = JSON.parse(encodeTeamProtocolV1CurrentHttpRequest(method, path, normalized));
+  return wireJson(decodeTeamProtocolV1CurrentHttpRequest(method, path, expanded));
 }
 
 function isEmptyRequest(value: unknown): boolean {

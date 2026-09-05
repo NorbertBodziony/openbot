@@ -38,7 +38,13 @@ export function decodeTeamProtocolV3CurrentHttpRequest(
   }
   if (!duplicateRoute(method, path)) {
     if (options.preserveSemanticTags) return decodeTeamProtocolV1CurrentHttpRequest(method, path, value);
-    return JSON.parse(encodeTeamProtocolV1CurrentHttpRequest(method, path, value));
+    // The encode call is only here to expand semantic tags, and it leaves the object in wire vocabulary.
+    // Decoding its output is what brings the keys back to the current spelling the handlers read.
+    return decodeTeamProtocolV1CurrentHttpRequest(
+      method,
+      path,
+      JSON.parse(encodeTeamProtocolV1CurrentHttpRequest(method, path, value)),
+    );
   }
   return toCurrentAgentKeysObjectForPath(path, structuredClone(decodeTeamProtocolV3HttpRequest(method, path, value)));
 }

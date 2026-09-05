@@ -17,6 +17,7 @@ import {
 import {
   createTeamProtocolV2Event,
   decodeTeamProtocolV2CurrentEvent,
+  decodeTeamProtocolV2CurrentHttpRequest,
   decodeTeamProtocolV2CurrentHttpResponse,
   encodeTeamProtocolV2CurrentHttpRequest,
   encodeTeamProtocolV2CurrentHttpResponse,
@@ -189,6 +190,16 @@ describe("Team protocol v2", () => {
       }),
     ).toEqual({ appVersion: "1.0.0", protocol: { minimum: 1, maximum: 2 }, capabilities: [] });
     expect(decodeTeamProtocolV2CurrentHttpResponse("POST", "/v1/browser/visible", 204, {})).toEqual({});
+    // A request off the wire is wire-shaped, and the handler that reads it says `ownerAgentId`. Handing
+    // back the wire spelling loses the tab's owner silently: nothing throws, the field is simply absent.
+    expect(
+      decodeTeamProtocolV2CurrentHttpRequest("POST", "/v1/browser/open", {
+        url: "https://example.com/",
+        ownerThreadId: "thread-1",
+        ownerBotId: "chief",
+        focus: true,
+      }),
+    ).toEqual({ url: "https://example.com/", ownerThreadId: "thread-1", ownerAgentId: "chief", focus: true });
     expect(
       encodeTeamProtocolV2CurrentHttpResponse("GET", "/v1/agents/chief/conversation", 200, {
         botId: "chief",
