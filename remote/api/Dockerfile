@@ -5,6 +5,8 @@ COPY patches ./patches
 COPY apps/auth-api/package.json ./apps/auth-api/package.json
 COPY packages/brand/package.json ./packages/brand/package.json
 COPY packages/contracts/package.json ./packages/contracts/package.json
+COPY packages/logging/package.json ./packages/logging/package.json
+COPY packages/team-client/package.json ./packages/team-client/package.json
 COPY remote/api/package.json ./remote/api/package.json
 RUN bun install --production --ignore-scripts --frozen-lockfile --filter @openbot/remote-api
 

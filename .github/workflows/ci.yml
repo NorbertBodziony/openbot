@@ -65,9 +65,13 @@ jobs:
     # first break at release time rather than on the pull request that broke
     # them. Mobile's typecheck generates `expo-env.d.ts` and the uniwind
     # declarations first - both are gitignored, so a fresh checkout cannot
-    # resolve `global.css`. `remote/api` is typechecked here rather than through
-    # `remote:check`, which also validates both Compose files and so needs
-    # Docker; the workspace's own `check` script needs nothing but Bun.
+    # resolve `global.css`. `remote/api` is typechecked through the workspace's
+    # own script rather than through `remote:check`, so that the tests it also
+    # runs stay in the Tests job; its `include` reaches `../scripts/*.ts`, so the
+    # stack scripts come with it. `remote:check:compose` is the rest of
+    # `remote:check`: `docker compose config` interpolates client-side and never
+    # opens a socket, so it validates both Compose files on a runner with no
+    # daemon.
     name: Surfaces
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -91,6 +95,9 @@ jobs:
 
       - name: Typecheck remote API
         run: bun run typecheck:remote
+
+      - name: Validate the remote Compose files
+        run: bun run remote:check:compose
 
   api:
     name: API
@@ -193,7 +200,11 @@ jobs:
   deploy-production:
     name: Deploy Cloudflare production
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [check, tests, api, storybook]
+    # `surfaces` gates the deploy even though the Worker it ships lives in
+    # `apps/auth-api`, which `api` already covers: mobile, the site router, the
+    # team client and the remote stack all consume the account API, so a red
+    # Surfaces is the signal that this deploy is the thing about to break them.
+    needs: [check, tests, api, storybook, surfaces]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: cloudflare-production

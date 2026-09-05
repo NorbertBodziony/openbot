@@ -7,6 +7,9 @@
 // ended up on typescript@5.9.3 while the rest ran 7.0.2, and mobile on a different
 // zod than the desktop app. This test is what keeps the catalog from decaying into
 // a comment.
+//
+// The second describe covers the other fact about these manifests that nothing
+// else enforces: which of them the remote API image has to carry.
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -121,6 +124,56 @@ describe("dependency catalog", () => {
     expect(conflicting).toEqual([]);
   });
 });
+
+// The remote API image installs from a pruned checkout: the Dockerfile copies the
+// root manifest and lockfile, then one manifest per workspace, and runs
+// `bun install --frozen-lockfile --filter @openbot/remote-api`. Bun refuses that
+// install unless every workspace the remaining ones depend on is on disk, so a new
+// `workspace:*` entry in the root manifest breaks the production image while every
+// job in CI stays green - none of them builds this image. That is not hypothetical:
+// the root package gained `@openbot/logging` and `@openbot/team-client` without the
+// matching COPY lines, and `bun run remote:up` had been failing on
+// `the root package depends on workspace "@openbot/logging" (packages/logging),
+// which is listed in bun.lock but not on disk`.
+describe("remote API Dockerfile", () => {
+  it("copies a manifest for every workspace the pruned install needs", () => {
+    const directoryOf = new Map(
+      workspaces.map((directory) => [readManifest(`${directory}/package.json`).name, directory]),
+    );
+    const required = new Set<string>();
+    const pending: unknown[] = [...workspaceDependencies("package.json"), "@openbot/remote-api"];
+    while (pending.length > 0) {
+      const name = pending.pop();
+      if (!isString(name) || required.has(name)) continue;
+      required.add(name);
+      const directory = directoryOf.get(name);
+      if (isString(directory)) pending.push(...workspaceDependencies(`${directory}/package.json`));
+    }
+
+    // Extra COPY lines are harmless - bun prunes whatever nothing depends on - so
+    // this asserts the set that must be present, never the exact list.
+    const dockerfile = readFileSync(join(repositoryRoot, "remote/api/Dockerfile"), "utf8");
+    const copied = [...dockerfile.matchAll(/^COPY (\S+\/package\.json) /gm)].map((match) => match[1]);
+    const missing = [...required]
+      .map((name) => directoryOf.get(name))
+      .filter(isString)
+      .filter((directory) => !copied.includes(`${directory}/package.json`))
+      .sort();
+
+    expect(missing).toEqual([]);
+  });
+});
+
+// Every field, not just `dependencies`, even though the image installs with
+// `--production`. Today every workspace edge in the repo is a plain dependency, so
+// the difference is inert; the bias is deliberate for when it stops being. Naming a
+// workspace the pruned install turns out not to need costs one harmless COPY line,
+// and missing one costs the image.
+function workspaceDependencies(manifest: string): string[] {
+  return readDependencies(manifest)
+    .filter(([, , version]) => version.startsWith("workspace:"))
+    .map(([, name]) => name);
+}
 
 function readManifest(path: string): DynamicRecord {
   const parsed = JSON.parse(readFileSync(join(repositoryRoot, path), "utf8"));

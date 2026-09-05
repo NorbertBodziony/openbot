@@ -48,11 +48,24 @@ gitignored, so the aggregate still leaves your diff alone.
 `remote/api` is in the glob for the same reason, as `typecheck:remote`. Its tests cover ticket
 verification, session revocation and TURN credentials — the Signal service's whole auth boundary —
 and when the workspace arrived nothing ran them, because its only entry point was `remote:check`,
-which also validates both Compose files and so needs Docker that CI does not have. The workspace's
-own `check` needs nothing but Bun and finishes in three seconds, so the two halves are split —
-`typecheck:remote` and `test:remote` — and run in Surfaces and Tests beside the other non-desktop
-surfaces. `remote:check` is still the Docker-inclusive superset; run it when you touch a Compose
-file.
+which also validates both Compose files. The workspace's own `check` needs nothing but Bun and
+finishes in three seconds, so the halves are split — `typecheck:remote` and `test:remote` run in
+Surfaces and Tests beside the other non-desktop surfaces, and `remote:check:compose` is the rest.
+`docker compose config` interpolates client-side and never opens a socket, so the Compose half needs
+the docker CLI but no daemon and runs in Surfaces too; `remote:check` remains the local superset.
+Nothing in CI builds the image, though, and its Dockerfile installs from a pruned checkout —
+one `COPY` per workspace — so a `workspace:*` dependency added to the root manifest breaks
+`remote:up` while every job stays green. `scripts/dependency-catalog.test.ts` is what notices now:
+it walks the workspace dependency graph and asserts a manifest is copied for each one it reaches.
+
+`remote/scripts` rides along in that same project. `check.ts` and `update.ts` are Bun scripts
+using `Bun.spawn` and `import.meta.dir`, and no `tsconfig` reached them: `tsconfig.node.json` stops
+at the root `scripts/**` and pins `"types": ["node"]`, which is why all thirty root scripts use the
+`Bun` global exactly zero times. Adding `@types/bun` at the root would have made Bun globals
+resolvable repo-wide, including in `src/main`, which runs under Node. Instead `remote/api` already
+had the Bun-typed project the scripts needed, so its `include` carries `../scripts/*.ts` and
+`typecheck:remote` covers both. `update.ts` drains and force-recreates the live coturn container, so
+it is worth a checker.
 
 Do not run `bun run check`, `check:desktop`, `test`, or `build-storybook`: each takes minutes, and
 the desktop suite flakes under load, so a red result tells you nothing about your change. That is
@@ -63,9 +76,12 @@ files it reads. CI owns all of it on every push:
 | --- | --- | --- |
 | Check | `macos-14` | `bun run check:desktop` |
 | Tests | `ubuntu-latest` | `bun run test:desktop`, `bun run test:sites`, `bun run test:remote` |
-| Surfaces | `ubuntu-latest` | `bun run mobile:typecheck`, `bun run typecheck:sites`, `bun run typecheck:team-client`, `bun run typecheck:remote` |
+| Surfaces | `ubuntu-latest` | `bun run mobile:typecheck`, `bun run typecheck:sites`, `bun run typecheck:team-client`, `bun run typecheck:remote`, `bun run remote:check:compose` |
 | API | `ubuntu-latest` | `bun run check:api` |
 | Storybook build | `ubuntu-latest` | `bun run build-storybook` |
+
+All five gate the Cloudflare production deploy on a push to `main`. Surfaces did not until recently,
+so a red mobile, site-router, team-client or remote typecheck let the deploy through.
 
 `bun run test:desktop -- <path>` runs one desktop file. Need something wider? Ask for it. Permission
 covers the one command named — not another one, not a build, not a packaged app.

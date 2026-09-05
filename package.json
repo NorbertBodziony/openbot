@@ -80,6 +80,7 @@
     "remote:down": "remote/bin/dotenvx run --overload -f remote/.env.production -fk remote/.env.keys -- docker compose -f remote/compose.yaml down",
     "remote:logs": "remote/bin/dotenvx run --overload -f remote/.env.production -fk remote/.env.keys -- docker compose -f remote/compose.yaml logs -f remote-api coturn",
     "remote:check": "bun remote/scripts/check.ts",
+    "remote:check:compose": "bun remote/scripts/check.ts --compose",
     "remote:env:validate": "cd remote && bin/dotenvx validate -f .env.production -fk .env.keys",
     "remote:update": "remote/bin/dotenvx run --overload -f remote/.env.production -fk remote/.env.keys -- bun remote/scripts/update.ts",
     "env:encrypt:dev": "bun run --cwd apps/auth-api env:encrypt:dev",
