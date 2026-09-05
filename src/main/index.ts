@@ -3,15 +3,7 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { extname, isAbsolute, join, relative, resolve } from "node:path";
 import { parseInviteUrl } from "@openbot/contracts/invite-links";
-import {
-  type AgentEvent,
-  type BrowserDisplayState,
-  type CentralAuthState,
-  IPC_CHANNELS,
-  LOCAL_SERVER_ID,
-  type MacPermissionId,
-  type VoiceModelStatus,
-} from "@openbot/contracts/ipc";
+import { type CentralAuthState, IPC_CHANNELS, LOCAL_SERVER_ID, type MacPermissionId } from "@openbot/contracts/ipc";
 import { createOpenBotLogger, toLogValue } from "@openbot/logging";
 import {
   app,
@@ -19,7 +11,6 @@ import {
   type Display,
   dialog,
   Menu,
-  Notification,
   powerMonitor,
   protocol,
   type Rectangle,
@@ -39,7 +30,6 @@ import { SidebarLayoutStore } from "../backend/sidebar-layout-store";
 import { TeamChatStore } from "../backend/team-chat-store";
 import { AgentInitializationGate } from "./agent-initialization";
 import { AgentMarketplaceService } from "./agent-marketplace-service";
-import { notificationForAgentEvent } from "./agent-notifications";
 import { HostAnalytics } from "./analytics";
 import { readAnalyticsPreference } from "./analytics-preference-store";
 import { readAppVariant, resolveAppIconPath } from "./app-icon";
@@ -47,7 +37,6 @@ import { BrowserPictureInPicture } from "./browser-picture-in-picture";
 import { CentralAuthManager, readCentralAuthApiUrl, readMobileConnectApiUrl } from "./central-auth-manager";
 import { ComputerUseMacSetupService } from "./computer-use-mac-setup";
 import { ComputerUseMacSetupWindowController } from "./computer-use-mac-setup-window";
-import { buildContentSecurityPolicy } from "./content-security-policy";
 import { guardDevelopmentOutput } from "./development-output";
 import {
   developmentUserDataName,
@@ -74,11 +63,12 @@ import { registerMemoryIpcHandlers } from "./ipc/register-memory-handlers";
 import { registerProviderIpcHandlers } from "./ipc/register-provider-handlers";
 import { registerRoutineIpcHandlers } from "./ipc/register-routine-handlers";
 import { registerSkillIpcHandlers } from "./ipc/register-skill-handlers";
-import { registerTeamIpcHandlers, withLocalHostSummary } from "./ipc/register-team-handlers";
+import { registerTeamIpcHandlers } from "./ipc/register-team-handlers";
 import { registerUpdateIpcHandlers } from "./ipc/register-update-handlers";
 import { registerVoiceIpcHandlers } from "./ipc/register-voice-handlers";
 import { MacHapticFeedback } from "./mac-haptic-feedback";
 import {
+  createMainWindowBoundsRecorder,
   ensureMacApplicationPresence,
   presentMainWindow,
   readMainWindowBounds,
@@ -92,8 +82,14 @@ import { resolveRemoteDesktopRuntime } from "./remote-desktop-runtime-artifact";
 import { loadOrCreateRemoteDesktopCredentials } from "./remote-desktop-secret-store";
 import { decodeVoid } from "./remote-host-decoding";
 import { type DevelopmentRemoteServerConnection, RemoteServerManager } from "./remote-server-manager";
+import { createRendererForwarders } from "./renderer-forwarders";
 import { sendToRenderer } from "./renderer-ipc";
-import { canCheckRendererPermission, canRequestRendererPermission } from "./renderer-permissions";
+import {
+  configureAttachmentProtocol,
+  configureContentSecurityPolicy,
+  configureRendererPermissions,
+  configureServerLogoProtocols,
+} from "./session-configuration";
 import { readSetupState, writeSetupState } from "./setup-store";
 import { SkillMarketplaceService } from "./skill-marketplace-service";
 import { TeamStore } from "./team-store";
@@ -210,9 +206,6 @@ let isQuitting = false;
 let shutdownStarted = false;
 let systemSessionEnding = false;
 let systemSessionEndFlushStarted = false;
-let mainWindowBounds: Rectangle | null = null;
-let mainWindowBoundsWriteTimer: ReturnType<typeof setTimeout> | null = null;
-let mainWindowBoundsWrite = Promise.resolve();
 let pendingInviteUrl: string | null = findInviteUrl(process.argv);
 let inviteReceiverReady = false;
 
@@ -238,22 +231,40 @@ const CENTRAL_AUTH_FILE = "openbot-central-auth-v1.bin";
 const LEGACY_REMOTE_DESKTOP_CREDENTIAL_FILE = "openbot-remote-desktop-credential-v1.json";
 const REMOTE_DESKTOP_RUNTIME_SECRET_FILE = "openbot-remote-desktop-runtime-v1.json";
 
-function configureContentSecurityPolicy(): void {
-  const policy = buildContentSecurityPolicy(app.isPackaged, process.env.REMOTE_SIGNAL_URL);
-
-  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-    if (details.resourceType !== "mainFrame" || !isTrustedRendererUrl(details.url)) {
-      callback({ responseHeaders: details.responseHeaders });
-      return;
-    }
-    callback({
-      responseHeaders: {
-        ...details.responseHeaders,
-        "Content-Security-Policy": [policy],
-      },
-    });
+// Resolved once, safely: every `app.setPath("userData", ...)` above has already run. `mainWindow`
+// is the one thing that cannot be captured here - it is reassigned whenever the window is rebuilt.
+const mainWindowStatePath = join(app.getPath("userData"), MAIN_WINDOW_STATE_FILE);
+const { restoreMainWindowBounds, currentMainWindowBounds, rememberMainWindowBounds, flushMainWindowBounds } =
+  createMainWindowBoundsRecorder({
+    getMainWindow: () => mainWindow,
+    readBounds: () => readMainWindowBounds(mainWindowStatePath),
+    writeBounds: (bounds) => writeMainWindowBounds(mainWindowStatePath, bounds),
+    reportError: (message, error) => logger.error(message, toLogValue(error)),
   });
-}
+
+// Destructured so every `service.on("event", forwardX)` registration below reads as it always has.
+// `showMainWindow` is a hoisted declaration further down this file; passing it in is what keeps
+// `renderer-forwarders.ts` from importing back into this module.
+const {
+  forwardAgentEvent,
+  forwardBrowserDisplayState,
+  forwardUpdateStatus,
+  forwardVoiceModelStatus,
+  forwardProviderRuntimeStatus,
+  forwardHostStatus,
+  forwardRemoteDesktopSessions,
+  forwardServers,
+  forwardTeamPresence,
+  forwardDirectMessage,
+  forwardDirectTyping,
+} = createRendererForwarders({
+  getMainWindow: () => mainWindow,
+  getAgentService: () => agentService,
+  getHostService: () => hostService,
+  getHostAnalytics: () => hostAnalytics,
+  getRemoteServerManager: () => remoteServerManager,
+  showMainWindow,
+});
 
 interface IpcHandlerDependencies {
   service: AgentService;
@@ -351,7 +362,7 @@ function createWindow(): BrowserWindow {
   let inspectElementModifierPressed = false;
   const cursor = screen.getCursorScreenPoint();
   const bounds = resolveMainWindowBounds(
-    mainWindowBounds,
+    currentMainWindowBounds(),
     screen.getAllDisplays().map((display) => display.workArea),
     screen.getDisplayNearestPoint(cursor).workArea,
     { width: 1200, height: 820 },
@@ -494,35 +505,6 @@ function createWindow(): BrowserWindow {
   });
 
   return window;
-}
-
-function rememberMainWindowBounds(bounds: Rectangle): void {
-  mainWindowBounds = { ...bounds };
-  if (mainWindowBoundsWriteTimer) clearTimeout(mainWindowBoundsWriteTimer);
-  mainWindowBoundsWriteTimer = setTimeout(() => {
-    mainWindowBoundsWriteTimer = null;
-    void queueMainWindowBoundsWrite().catch((error) =>
-      logger.error("Unable to save the main window position:", toLogValue(error)),
-    );
-  }, 250);
-}
-
-function queueMainWindowBoundsWrite(): Promise<void> {
-  if (!mainWindowBounds) return mainWindowBoundsWrite;
-  const bounds = { ...mainWindowBounds };
-  mainWindowBoundsWrite = mainWindowBoundsWrite
-    .catch((error) => logger.error("Unable to save the previous main window position:", toLogValue(error)))
-    .then(() => writeMainWindowBounds(join(app.getPath("userData"), MAIN_WINDOW_STATE_FILE), bounds));
-  return mainWindowBoundsWrite;
-}
-
-async function flushMainWindowBounds(): Promise<void> {
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindowBounds = mainWindow.getNormalBounds();
-  if (mainWindowBoundsWriteTimer) {
-    clearTimeout(mainWindowBoundsWriteTimer);
-    mainWindowBoundsWriteTimer = null;
-  }
-  await queueMainWindowBoundsWrite();
 }
 
 function createDynamicIslandWindow(bounds: Rectangle, _display: Display): BrowserWindow {
@@ -683,90 +665,6 @@ function configureApplicationMenu(service: AgentService, updater: UpdateService)
   );
 }
 
-function forwardAgentEvent(serverId: string, event: AgentEvent, bufferedLive = false): void {
-  if (serverId === LOCAL_SERVER_ID) hostAnalytics?.handleAgentEvent(event);
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  sendToRenderer(
-    mainWindow,
-    IPC_CHANNELS.agentEvent,
-    bufferedLive ? { serverId, event, bufferedLive } : { serverId, event },
-  );
-  if (mainWindow.isFocused() || !Notification.isSupported()) return;
-
-  const content = notificationForAgentEvent(event, agentService?.listAgents() ?? []);
-  if (!content) return;
-  const notification = new Notification(content);
-  notification.on("click", () => {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    showMainWindow(mainWindow);
-  });
-  notification.show();
-}
-
-function forwardBrowserDisplayState(state: BrowserDisplayState): void {
-  for (const window of BrowserWindow.getAllWindows()) {
-    sendToRenderer(window, IPC_CHANNELS.browserDisplayStateEvent, state);
-  }
-}
-
-function forwardUpdateStatus(status: import("@openbot/contracts/ipc").UpdateStatus): void {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  sendToRenderer(mainWindow, IPC_CHANNELS.updateEvent, status);
-}
-
-function forwardVoiceModelStatus(status: VoiceModelStatus): void {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  sendToRenderer(mainWindow, IPC_CHANNELS.voiceModelStatus, status);
-}
-
-function forwardProviderRuntimeStatus(snapshot: import("@openbot/contracts/ipc").ProviderRuntimeSnapshot): void {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  sendToRenderer(mainWindow, IPC_CHANNELS.providerRuntimesEvent, snapshot);
-}
-
-function forwardHostStatus(status: import("@openbot/contracts/ipc").HostStatus): void {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  sendToRenderer(mainWindow, IPC_CHANNELS.hostEvent, status);
-  if (remoteServerManager) {
-    sendToRenderer(mainWindow, IPC_CHANNELS.serversEvent, withLocalHostSummary(remoteServerManager.list(), status));
-  }
-}
-
-function forwardRemoteDesktopSessions(sessions: import("@openbot/contracts/ipc").RemoteDesktopSession[]): void {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  sendToRenderer(mainWindow, IPC_CHANNELS.remoteDesktopEvent, sessions);
-}
-
-function forwardServers(servers: import("@openbot/contracts/ipc").ServerSummary[]): void {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  sendToRenderer(
-    mainWindow,
-    IPC_CHANNELS.serversEvent,
-    hostService ? withLocalHostSummary(servers, hostService.getStatus()) : servers,
-  );
-}
-
-function forwardTeamPresence(serverId: string, snapshot: import("@openbot/contracts/ipc").TeamPresenceSnapshot): void {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  sendToRenderer(mainWindow, IPC_CHANNELS.serversPresence, { serverId, snapshot });
-}
-
-function forwardDirectMessage(
-  serverId: string,
-  event: import("@openbot/contracts/ipc").DirectMessageRealtimeEvent,
-): void {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  sendToRenderer(mainWindow, IPC_CHANNELS.serversDirectMessage, { serverId, event });
-}
-
-function forwardDirectTyping(
-  serverId: string,
-  event: import("@openbot/contracts/ipc").DirectTypingRealtimeEvent,
-): void {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  sendToRenderer(mainWindow, IPC_CHANNELS.serversDirectTyping, { serverId, event });
-}
-
 function forwardCentralAuth(state: CentralAuthState): void {
   if (state.status === "signed_in") {
     if (activeAnalyticsPrincipalId && activeAnalyticsPrincipalId !== state.user.id) hostAnalytics?.clear();
@@ -914,12 +812,7 @@ if (!hasSingleInstanceLock) {
       if (process.platform === "darwin") app.dock?.setIcon(appIconPath);
       configureContentSecurityPolicy();
       configureRendererPermissions();
-      mainWindowBounds = await readMainWindowBounds(join(app.getPath("userData"), MAIN_WINDOW_STATE_FILE)).catch(
-        (error) => {
-          logger.error("Unable to restore the main window position:", toLogValue(error));
-          return null;
-        },
-      );
+      await restoreMainWindowBounds();
       mainWindow = createWindow();
       const computerUseMacSetupService = new ComputerUseMacSetupService({
         getIconDataUrl: async (path) => (await app.getFileIcon(path, { size: "normal" })).toDataURL(),
@@ -1038,7 +931,11 @@ if (!hasSingleInstanceLock) {
         async (agentId) => service.refreshAgentRuntime(agentId),
       );
       const agentMarketplace = new AgentMarketplaceService(centralAuthManager, service, skillMarketplace);
-      configureAttachmentProtocol(mailboxStore, service);
+      configureAttachmentProtocol({
+        mailbox: mailboxStore,
+        agents: service,
+        getRemoteServerManager: () => remoteServerManager,
+      });
       const teamStore = new TeamStore(
         join(app.getPath("userData"), TEAM_FILE_V2),
         join(app.getPath("userData"), TEAM_FILE),
@@ -1293,7 +1190,7 @@ if (!hasSingleInstanceLock) {
       } else if (developmentRemoteRole === "client") {
         await connectDevelopmentRemoteServer(remoteServerManager);
       }
-      configureServerLogoProtocols(teamStore);
+      configureServerLogoProtocols({ teamStore, remoteServers: remoteServerManager });
       remoteDesktopManager = new RemoteDesktopManager(remoteServerManager);
       const host = hostService;
       const remoteDesktop = remoteDesktopManager;
@@ -1511,143 +1408,6 @@ async function prepareForShutdown(browserAlreadyDestroyed = false): Promise<void
 
 async function destroyBrowserForShutdown(): Promise<void> {
   await (browserHost?.destroy() ?? Promise.resolve());
-}
-
-function configureRendererPermissions(): void {
-  session.defaultSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details) =>
-    canCheckRendererPermission(permission, requestingOrigin, details),
-  );
-  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
-    const mediaTypes = ("mediaTypes" in details ? details.mediaTypes : undefined) ?? [];
-    callback(canRequestRendererPermission(permission, webContents.getURL(), { mediaTypes }));
-  });
-}
-
-function configureAttachmentProtocol(mailbox: MailboxStore, agents: AgentService): void {
-  session.defaultSession.protocol.handle("openbot-attachment", async (request) => {
-    try {
-      const url = new URL(request.url);
-      const id = url.pathname.split("/").filter(Boolean).at(-1);
-      const attachment = id ? await mailbox.resolveAttachment(id) : null;
-      if (!attachment) return new Response("Not found", { status: 404 });
-      return new Response(await readFile(attachment.path), {
-        headers: {
-          "Content-Type": attachment.mimeType,
-          "Cache-Control": "no-store",
-          "Access-Control-Allow-Origin": request.headers.get("Origin") ?? "*",
-          Vary: "Origin",
-          "X-Content-Type-Options": "nosniff",
-          "Content-Disposition": "inline",
-        },
-      });
-    } catch {
-      return new Response("Not found", { status: 404 });
-    }
-  });
-  session.defaultSession.protocol.handle("openbot-remote-attachment", async (request) => {
-    try {
-      const url = new URL(request.url);
-      const serverId = decodeURIComponent(url.hostname);
-      const attachmentId = decodeURIComponent(url.pathname.split("/").filter(Boolean)[0] ?? "");
-      if (!remoteServerManager || !serverId || !attachmentId) {
-        return new Response("Not found", { status: 404 });
-      }
-      const attachment = await remoteServerManager.downloadAttachment(attachmentId, serverId);
-      return new Response(Buffer.from(attachment.bytes), {
-        headers: {
-          "Content-Type": attachment.mimeType,
-          "Cache-Control": "no-store",
-          "Access-Control-Allow-Origin": request.headers.get("Origin") ?? "*",
-          Vary: "Origin",
-          "X-Content-Type-Options": "nosniff",
-          "Content-Disposition": "inline",
-        },
-      });
-    } catch {
-      return new Response("Not found", { status: 404 });
-    }
-  });
-  session.defaultSession.protocol.handle("openbot-avatar", async (request) => {
-    try {
-      const url = new URL(request.url);
-      if (url.hostname !== "agent") return new Response("Not found", { status: 404 });
-      const agentId = decodeURIComponent(url.pathname.split("/").filter(Boolean)[0] ?? "");
-      const avatar = agentId ? agents.resolveAvatar(agentId) : null;
-      if (!avatar || avatar.version !== url.searchParams.get("v")) {
-        return new Response("Not found", { status: 404 });
-      }
-      return new Response(await readFile(avatar.path), {
-        headers: {
-          "Content-Type": avatar.mimeType,
-          "Cache-Control": "private, max-age=31536000, immutable",
-          "X-Content-Type-Options": "nosniff",
-        },
-      });
-    } catch {
-      return new Response("Not found", { status: 404 });
-    }
-  });
-  session.defaultSession.protocol.handle("openbot-remote-avatar", async (request) => {
-    try {
-      const url = new URL(request.url);
-      const serverId = decodeURIComponent(url.hostname);
-      const agentId = decodeURIComponent(url.pathname.split("/").filter(Boolean)[0] ?? "");
-      if (!remoteServerManager || !serverId || !agentId) {
-        return new Response("Not found", { status: 404 });
-      }
-      const version = url.searchParams.get("v");
-      if (!version) return new Response("Not found", { status: 404 });
-      const avatar = await remoteServerManager.downloadAgentAvatar(agentId, serverId, version);
-      return new Response(Buffer.from(avatar.bytes), {
-        headers: {
-          "Content-Type": avatar.mimeType,
-          "Cache-Control": "private, max-age=31536000, immutable",
-          "X-Content-Type-Options": "nosniff",
-        },
-      });
-    } catch {
-      return new Response("Not found", { status: 404 });
-    }
-  });
-}
-
-function configureServerLogoProtocols(teamStore: TeamStore): void {
-  session.defaultSession.protocol.handle("openbot-server-logo", async (request) => {
-    try {
-      const url = new URL(request.url);
-      const logo = teamStore.resolveLogo();
-      if (url.hostname !== LOCAL_SERVER_ID || !logo || logo.version !== url.searchParams.get("v")) {
-        return new Response("Not found", { status: 404 });
-      }
-      return new Response(await readFile(logo.path), {
-        headers: {
-          "Content-Type": logo.mimeType,
-          "Cache-Control": "private, max-age=31536000, immutable",
-          "X-Content-Type-Options": "nosniff",
-        },
-      });
-    } catch {
-      return new Response("Not found", { status: 404 });
-    }
-  });
-  session.defaultSession.protocol.handle("openbot-remote-server-logo", async (request) => {
-    try {
-      const url = new URL(request.url);
-      const serverId = decodeURIComponent(url.hostname);
-      const version = url.searchParams.get("v");
-      if (!remoteServerManager || !serverId || !version) return new Response("Not found", { status: 404 });
-      const logo = await remoteServerManager.downloadServerLogo(serverId, version);
-      return new Response(Buffer.from(logo.bytes), {
-        headers: {
-          "Content-Type": logo.mimeType,
-          "Cache-Control": "private, max-age=31536000, immutable",
-          "X-Content-Type-Options": "nosniff",
-        },
-      });
-    } catch {
-      return new Response("Not found", { status: 404 });
-    }
-  });
 }
 
 function configureApplicationProtocol(): void {

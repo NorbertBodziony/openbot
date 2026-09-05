@@ -5,7 +5,8 @@
 // not the same function: a remote team server is an untrusted sender, so these enumerate what the
 // preload's twin is content to accept as a string. The suffix is there so a later reader does not
 // merge them onto whichever is looser. The convention only works while both halves keep the suffix,
-// because it is what lets a reader find the twin at all.
+// because it is what lets a reader find the twin at all - which is why
+// `src/main/ipc-channel-coverage.test.ts` compares the two sets name for name.
 //
 // The decoders sit in four sibling files by wire area — `remote-agent-decoding.ts`,
 // `remote-conversation-decoding.ts`, `remote-team-decoding.ts`, `remote-device-decoding.ts` — and this

@@ -80,6 +80,93 @@ export async function writeMainWindowBounds(path: string, bounds: Rectangle): Pr
   }
 }
 
+/**
+ * The window the recorder reads. Structural, like `MainWindowPresentationTarget` above, so this
+ * module still imports no Electron value and its tests still need no mock.
+ */
+interface MainWindowBoundsSource {
+  isDestroyed(): boolean;
+  getNormalBounds(): Rectangle;
+}
+
+export interface MainWindowBoundsDependencies {
+  /**
+   * Read on every call, never captured: the `closed` handler drops the main window and a later
+   * relaunch builds a new one, so a captured reference would flush a destroyed window.
+   */
+  getMainWindow: () => MainWindowBoundsSource | null;
+  /**
+   * The recorder decides *when* to persist; the caller decides *where*. Both of these are
+   * `readMainWindowBounds` / `writeMainWindowBounds` above bound to a path in production - they are
+   * parameters so that this file's own tests can observe how often a write actually happens, which
+   * is the whole point of the debounce and is not otherwise visible from outside.
+   */
+  readBounds: () => Promise<Rectangle | null>;
+  writeBounds: (bounds: Rectangle) => Promise<void>;
+  reportError: (message: string, error: unknown) => void;
+}
+
+export interface MainWindowBoundsRecorder {
+  restoreMainWindowBounds: () => Promise<void>;
+  currentMainWindowBounds: () => Rectangle | null;
+  rememberMainWindowBounds: (bounds: Rectangle) => void;
+  flushMainWindowBounds: () => Promise<void>;
+}
+
+/** Long enough that a drag-resize writes once, short enough to survive a quit that follows it. */
+const BOUNDS_WRITE_DELAY_MS = 250;
+
+export function createMainWindowBoundsRecorder({
+  getMainWindow,
+  readBounds,
+  writeBounds,
+  reportError,
+}: MainWindowBoundsDependencies): MainWindowBoundsRecorder {
+  let bounds: Rectangle | null = null;
+  let writeTimer: ReturnType<typeof setTimeout> | null = null;
+  let write = Promise.resolve();
+
+  // One shared chain, with the `.catch` before the `.then` so a rejected write is absorbed instead
+  // of poisoning every write queued after it.
+  function queueWrite(): Promise<void> {
+    if (!bounds) return write;
+    const pending = { ...bounds };
+    write = write
+      .catch((error) => reportError("Unable to save the previous main window position:", error))
+      .then(() => writeBounds(pending));
+    return write;
+  }
+
+  return {
+    async restoreMainWindowBounds() {
+      bounds = await readBounds().catch((error) => {
+        reportError("Unable to restore the main window position:", error);
+        return null;
+      });
+    },
+    currentMainWindowBounds: () => bounds,
+    rememberMainWindowBounds(next) {
+      bounds = { ...next };
+      if (writeTimer) clearTimeout(writeTimer);
+      writeTimer = setTimeout(() => {
+        writeTimer = null;
+        void queueWrite().catch((error) => reportError("Unable to save the main window position:", error));
+      }, BOUNDS_WRITE_DELAY_MS);
+    },
+    async flushMainWindowBounds() {
+      const window = getMainWindow();
+      if (window && !window.isDestroyed()) bounds = window.getNormalBounds();
+      // Cleared before the first await: Windows session-end calls this from a synchronous handler
+      // it never awaits, so a pending timer left here can outlive the decision to quit.
+      if (writeTimer) {
+        clearTimeout(writeTimer);
+        writeTimer = null;
+      }
+      await queueWrite();
+    },
+  };
+}
+
 export function resolveMainWindowBounds(
   stored: Rectangle | null,
   workAreas: Rectangle[],

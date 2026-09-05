@@ -76,6 +76,26 @@ const WRAPPER_CHANNEL_PARAMETER = "channel";
 // The call that makes a registration a trusted one.
 const SENDER_CHECK = "isTrustedRendererUrl";
 
+// How many twin decoders the pair currently has. The comparison below is between
+// two sets, so a regex that stopped matching would leave both empty and green;
+// this is the floor that makes that failure loud instead.
+const TWIN_DECODER_FLOOR = 8;
+
+// Every twin in the tree is a `function` today, so the alias check below matches
+// nothing and would stay green even if its pattern stopped working. This is that
+// check's fixture: each line it must reject beside a correct one it must leave
+// alone, the way a rule under `tools/biome/anti-slop/rules` carries one.
+const TWIN_ALIAS_FIXTURE = `
+const decodeAliasedFromMain = decodeAliasedFromHost;
+const decodeAnnotatedFromMain: Decoder<Alias> = shared.decodeAliasedFromHost as Decoder<Alias>;
+const decodeSignedFromMain: (value: unknown) => Alias = decodeAliasedFromHost;
+const decodeBuiltFromHost = guardedDecoder(isBuilt, "built");
+const decodeInlineFromHost = (value: unknown) => (isInline(value) ? value : null);
+function decodeWrittenFromMain(value: unknown): Written | null {
+  return isWritten(value) ? value : null;
+}
+`;
+
 // The preload's agent helpers take the channel as a parameter and pass it on,
 // so the forwarding call names a variable by design. Their own call sites carry
 // the IPC_CHANNELS reference and are what the scan checks, which is why the
@@ -264,6 +284,47 @@ describe("IPC channel coverage", () => {
 
     expect(declared).toEqual([]);
   });
+
+  // `decodeXFromHost` here and `decodeXFromMain` in the preload are deliberately two
+  // functions for one shape: the preload checks what the main process sent the
+  // renderer, which is a trusted sender, while these check a remote team server,
+  // which is not.
+  //
+  // What this enforces is the naming bijection, and only that: neither half may lose
+  // its twin. That catches the way the pair actually gets merged - one is deleted and
+  // its callers point at the other, which reads in review as a tidy deduplication and
+  // passes every other assertion in this file. It does not prove the two names have
+  // separate implementations - the test below covers the one aliasing spelling a
+  // source scan can recognise, and a wrapper that forwards to the other decoder is
+  // still review's job.
+  //
+  // Names only, never the file list: the headers describe four wire-area siblings,
+  // but two of them hold no suffixed decoder at all, so where the twin lives is not
+  // the invariant. Nor is `export` - the preload exports nothing, and one FromHost
+  // decoder is module-private.
+  it("gives every FromHost decoder a FromMain twin, and the reverse", () => {
+    const host = twinDecoders(mainSources, "Host");
+    const main = twinDecoders(preloadSources, "Main");
+
+    expect(host.length).toBeGreaterThanOrEqual(TWIN_DECODER_FLOOR);
+    expect(host).toEqual(main);
+  });
+
+  // The bijection above is satisfied by two names, so it survives
+  // `const decodeXFromMain = decodeXFromHost` - which would hand a remote team
+  // server the validation written for a trusted sender while keeping both names in
+  // place. An initializer that is a bare reference is that merge; an initializer
+  // that calls something is an implementation, which is what keeps the factory
+  // spelling this family already uses (`remote-agent-decoding.ts:162`) accepted.
+  it("declares each twin decoder rather than aliasing the other", () => {
+    expect(aliasedTwinsIn(TWIN_ALIAS_FIXTURE)).toEqual([
+      "decodeAliasedFromMain",
+      "decodeAnnotatedFromMain",
+      "decodeSignedFromMain",
+    ]);
+
+    expect(aliasedTwins([...mainSources, ...preloadSources])).toEqual([]);
+  });
 });
 
 // One occurrence of a known call, with the source text of its channel argument
@@ -291,6 +352,44 @@ function sourceFilesUnder(directory: string): readonly string[] {
 // not the name's other appearance in the dispatcher.
 function callCount(source: string, name: string): number {
   return [...source.matchAll(new RegExp(`\\b${name}\\s*\\(`, "g"))].length;
+}
+
+// Every decoder declared with the given suffix, the suffix removed so the two
+// sides compare directly. `const` counts as well as `function`: the family already
+// builds decoders out of guardedDecoder factories, and a regex blind to that
+// spelling would drop one silently here and fail on the opposite side.
+function twinDecoders(files: readonly string[], side: "Host" | "Main"): readonly string[] {
+  const declaration = new RegExp(`(?:function|const)\\s+(decode[A-Za-z0-9_]*)From${side}\\b`, "g");
+  const names = new Set<string>();
+  for (const file of files) {
+    for (const match of readSource(file).matchAll(declaration)) {
+      const name = match[1];
+      if (name !== undefined) names.add(name);
+    }
+  }
+  return [...names].sort();
+}
+
+// A suffixed decoder bound straight to another name: `= other`, `= module.other`,
+// either of them with a trailing `as T`. An initializer holding a call, an arrow or a
+// body is an implementation and is left alone. The annotation this skips over may itself
+// be a function type, so `=>` has to be consumed there rather than mistaken for the
+// assignment - otherwise `const decodeXFromMain: (value: unknown) => X = other` is read
+// from the arrow onwards and escapes.
+const TWIN_ASSIGNMENT = /const\s+(decode[A-Za-z0-9_]*From(?:Host|Main))\s*(?::(?:[^=;]|=>)+)?=\s*([^;]+);/g;
+const BARE_REFERENCE = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*(?:\s+as\s+[\w$.<>[\], |]+)?$/;
+
+function aliasedTwinsIn(source: string): readonly string[] {
+  const aliases: string[] = [];
+  for (const match of source.matchAll(TWIN_ASSIGNMENT)) {
+    const [, name, initializer] = match;
+    if (name !== undefined && initializer !== undefined && BARE_REFERENCE.test(initializer.trim())) aliases.push(name);
+  }
+  return aliases;
+}
+
+function aliasedTwins(files: readonly string[]): readonly string[] {
+  return files.flatMap((file) => aliasedTwinsIn(readSource(file)).map((name) => `${file} aliases ${name}`));
 }
 
 function readSource(file: string): string {
