@@ -17,7 +17,7 @@ const fixtureRenderer = resolve(import.meta.dirname, "../tools/ui-foundation/fix
 const cleanRenderer = resolve(import.meta.dirname, "../tools/ui-foundation/fixtures/renderer-clean");
 
 function budget(label: string, actual: number): string {
-  return `${label}: ${actual} (migration budget: 0; this number may only go down)`;
+  return `${label}: ${actual} (migration budget: 0; the count may only go down)`;
 }
 
 describe("ui foundation check", () => {
@@ -26,31 +26,31 @@ describe("ui foundation check", () => {
 
     expect([...failures].sort()).toEqual(
       [
-        "components/Bad.tsx: use a component from components/ui instead of a native control",
-        "components/Bad.tsx: Kobalte and Lucide may only be imported inside components/ui",
-        "components/Bad.tsx: a hand-rolled switch is not allowed; use components/ui/Switch",
-        "components/Bad.tsx: a colour literal in an inline style is not allowed; use a palette token",
+        "components/Bad.tsx: use a components/ui control instead of a native element",
+        "components/Bad.tsx: Kobalte/Lucide imports are allowed only in components/ui",
+        "components/Bad.tsx: a hand-rolled switch is forbidden; use components/ui/Switch",
+        "components/Bad.tsx: a colour literal in an inline style is forbidden; use a palette token",
         "components/Bad.tsx: font-size, radius and transition in an inline style must use tokens",
         // The same check, reached through the other package it names. Kobalte firing says
         // nothing about this branch of the pattern.
-        "components/Icons.tsx: Kobalte and Lucide may only be imported inside components/ui",
-        "components/ui/complex.tsx: the Kobalte namespace must pass through an adapter, not a direct alias",
+        "components/Icons.tsx: Kobalte/Lucide imports are allowed only in components/ui",
+        "components/ui/complex.tsx: a Kobalte namespace must go through an adapter, not a direct alias",
         // A sibling directory whose name starts with "ui". Skipping the design system is a
         // path-prefix comparison, so without a separator this line and the second composite
         // role below both disappear, and a components/ui-kit could hold anything.
-        "components/ui-kit/Sneaky.tsx: use a component from components/ui instead of a native control",
+        "components/ui-kit/Sneaky.tsx: use a components/ui control instead of a native element",
         // components/branches holds one file per alternative of a pattern, because these checks
         // report once per file: two alternatives in one file collapse into one finding and the
         // second stops being observable. Delete a word from an alternation and one line here goes.
-        "components/branches/NativeInput.tsx: use a component from components/ui instead of a native control",
-        "components/branches/NativeSelect.tsx: use a component from components/ui instead of a native control",
-        "components/branches/NativeTextarea.tsx: use a component from components/ui instead of a native control",
-        "components/branches/ColourBackgroundRgb.tsx: a colour literal in an inline style is not allowed; use a palette token",
-        "components/branches/ColourBackgroundRgba.tsx: a colour literal in an inline style is not allowed; use a palette token",
-        "components/branches/ColourTextHsla.tsx: a colour literal in an inline style is not allowed; use a palette token",
-        "components/branches/ColourBorderTopHsl.tsx: a colour literal in an inline style is not allowed; use a palette token",
-        "components/branches/ColourFillNamed.tsx: a colour literal in an inline style is not allowed; use a palette token",
-        "components/branches/ColourStrokeHex.tsx: a colour literal in an inline style is not allowed; use a palette token",
+        "components/branches/NativeInput.tsx: use a components/ui control instead of a native element",
+        "components/branches/NativeSelect.tsx: use a components/ui control instead of a native element",
+        "components/branches/NativeTextarea.tsx: use a components/ui control instead of a native element",
+        "components/branches/ColourBackgroundRgb.tsx: a colour literal in an inline style is forbidden; use a palette token",
+        "components/branches/ColourBackgroundRgba.tsx: a colour literal in an inline style is forbidden; use a palette token",
+        "components/branches/ColourTextHsla.tsx: a colour literal in an inline style is forbidden; use a palette token",
+        "components/branches/ColourBorderTopHsl.tsx: a colour literal in an inline style is forbidden; use a palette token",
+        "components/branches/ColourFillNamed.tsx: a colour literal in an inline style is forbidden; use a palette token",
+        "components/branches/ColourStrokeHex.tsx: a colour literal in an inline style is forbidden; use a palette token",
         "components/branches/InlineFontSize.tsx: font-size, radius and transition in an inline style must use tokens",
         "components/branches/InlineTransition.tsx: font-size, radius and transition in an inline style must use tokens",
         "components/branches/InlineTransitionDuration.tsx: font-size, radius and transition in an inline style must use tokens",
@@ -64,9 +64,9 @@ describe("ui foundation check", () => {
         // as well. The token spelling a colour in tokens.css must stay uncounted, or this
         // reads 4 and the word boundaries have gone.
         budget("colour literals outside the palette", 6),
-        budget("untokenised font-size", 1),
-        budget("untokenised border-radius", 1),
-        budget("untokenised transition durations", 2),
+        budget("untokenized font-size", 1),
+        budget("untokenized border-radius", 1),
+        budget("untokenized transition durations", 2),
       ].sort(),
     );
   });
@@ -101,12 +101,12 @@ describe("ui foundation check", () => {
     const { failures } = checkUiFoundation(fixtureRenderer, resolve(fixtureRenderer, ".."));
 
     expect(failures).toContain(
-      "renderer/components/Bad.tsx: a hand-rolled switch is not allowed; use components/ui/Switch",
+      "renderer/components/Bad.tsx: a hand-rolled switch is forbidden; use components/ui/Switch",
     );
     // The namespace check builds its own path rather than walking to one, so it is the line
     // that stayed hard-coded while every other message moved with the root it is given.
     expect(failures).toContain(
-      "renderer/components/ui/complex.tsx: the Kobalte namespace must pass through an adapter, not a direct alias",
+      "renderer/components/ui/complex.tsx: a Kobalte namespace must go through an adapter, not a direct alias",
     );
   });
 });

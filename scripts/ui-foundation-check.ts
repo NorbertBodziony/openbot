@@ -43,13 +43,13 @@ export function checkUiFoundation(rendererRoot: string, labelRoot: string): UiFo
     const label = relative(labelRoot, file);
 
     if (/<(?:button|input|textarea|select)\b/u.test(source)) {
-      failures.push(`${label}: use a component from components/ui instead of a native control`);
+      failures.push(`${label}: use a components/ui control instead of a native element`);
     }
     if (/from\s+["'](?:@kobalte\/core|lucide-solid)(?:\/[^"']*)?["']/u.test(source)) {
-      failures.push(`${label}: Kobalte and Lucide may only be imported inside components/ui`);
+      failures.push(`${label}: Kobalte/Lucide imports are allowed only in components/ui`);
     }
     if (/role=["']switch["']/u.test(source)) {
-      failures.push(`${label}: a hand-rolled switch is not allowed; use components/ui/Switch`);
+      failures.push(`${label}: a hand-rolled switch is forbidden; use components/ui/Switch`);
     }
     if (file.endsWith(".tsx")) {
       // The property may be quoted, and a hyphenated one has to be: `border-color` is not a
@@ -58,7 +58,7 @@ export function checkUiFoundation(rendererRoot: string, labelRoot: string): UiFo
       const inlineColor =
         /(?:color|background(?:-color)?|border(?:-(?:top|right|bottom|left))?(?:-color)?|fill|stroke)["']?\s*:\s*["'](?:#[\da-f]{3,8}|rgba?\(|hsla?\(|(?:white|black|red|blue|green|yellow|purple|orange|gray|grey|pink)\b)/iu;
       if (inlineColor.test(source)) {
-        failures.push(`${label}: a colour literal in an inline style is not allowed; use a palette token`);
+        failures.push(`${label}: a colour literal in an inline style is forbidden; use a palette token`);
       }
       const inlineFoundationValue =
         /["']?(?:font-size|border-radius|transition(?:-duration)?)["']?\s*:\s*["'](?!var\()[^"']+["']/iu;
@@ -71,7 +71,7 @@ export function checkUiFoundation(rendererRoot: string, labelRoot: string): UiFo
   const complexApiPath = resolve(uiRoot, "complex.tsx");
   if (/export const \w+\s*=\s*\w+Primitive\s*;/u.test(readFileSync(complexApiPath, "utf8"))) {
     failures.push(
-      `${relative(labelRoot, complexApiPath)}: the Kobalte namespace must pass through an adapter, not a direct alias`,
+      `${relative(labelRoot, complexApiPath)}: a Kobalte namespace must go through an adapter, not a direct alias`,
     );
   }
 
@@ -108,14 +108,14 @@ export function checkUiFoundation(rendererRoot: string, labelRoot: string): UiFo
   const debtBudgets = [
     ["hand-rolled composite ARIA roles", manualCompositeCount, 0],
     ["colour literals outside the palette", colorLiteralCount, 0],
-    ["untokenised font-size", matches(legacyStyles, /font-size:(?!\s*(?:var\(|inherit\b))\s*[^;]+/gu), 0],
+    ["untokenized font-size", matches(legacyStyles, /font-size:(?!\s*(?:var\(|inherit\b))\s*[^;]+/gu), 0],
     [
-      "untokenised border-radius",
+      "untokenized border-radius",
       matches(legacyStyles, /border-radius:(?!\s*(?:var\(|0(?:\s|;)|inherit\b))\s*[^;]+/gu),
       0,
     ],
     [
-      "untokenised transition durations",
+      "untokenized transition durations",
       matches(legacyStyles, /transition(?:-duration)?:(?![^;]*var\()(?!\s*(?:none|0\.01ms))[^;]*\b\d+m?s\b[^;]*/gu),
       0,
     ],
@@ -123,7 +123,7 @@ export function checkUiFoundation(rendererRoot: string, labelRoot: string): UiFo
 
   for (const [label, actual, maximum] of debtBudgets) {
     if (actual > maximum)
-      failures.push(`${label}: ${actual} (migration budget: ${maximum}; this number may only go down)`);
+      failures.push(`${label}: ${actual} (migration budget: ${maximum}; the count may only go down)`);
   }
 
   return { failures, manualCompositeCount };
