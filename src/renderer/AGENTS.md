@@ -47,8 +47,10 @@ wiring (`App.tsx`, `AppView.tsx`, `app-providers.tsx`, `app-bootstrap.tsx`, `Wor
 owns (`navigation.tsx`, `layout.tsx`, `turns.tsx`, `providers.tsx`, `data.ts`,
 `simple-context.tsx`, `scope-lifetime.ts`), `preview/` — whose mocks are the second implementation
 of the IPC surface and belong beside `mock-openbot.ts` — and the base stylesheets
-(`primitives.css`, `base.css`, `transitions.css`, `action-menu.css`, `sliding-tabs.css`). Stories
-stay in `src/renderer/stories/`, where the test rules relax.
+(`primitives.css`, `base.css`, `transitions.css`, `action-menu.css`, `sliding-tabs.css`) —
+plus `app-shell.css`, which ends in a theme layer that assigns the palette across every domain
+at once and cannot be split until that layer is lifted out; its header says so. Stories stay in
+`src/renderer/stories/`, where the test rules relax.
 
 A cluster earns a directory when the feature is the only thing that reads it. That test applies to
 helpers and components, not to contexts: a context is read broadly by design, and `agents-context`
