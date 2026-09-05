@@ -270,9 +270,11 @@ export async function emptyRequest(
 
 /**
  * Writes a request line `fetch` would refuse to send, so a target Node accepts and the WHATWG URL
- * parser rejects can reach the router at all. Returns the status line.
+ * parser rejects can reach the router at all. Extra headers go on the same request, because which
+ * protocol the response is encoded against decides which adapter reads that target back. Returns the
+ * status line.
  */
-export async function rawRequest(base: string, requestLine: string): Promise<string> {
+export async function rawRequest(base: string, requestLine: string, headers: readonly string[] = []): Promise<string> {
   const { port } = new URL(base);
   const socket = connect({ host: "127.0.0.1", port: Number(port) });
   return await new Promise<string>((resolve, reject) => {
@@ -281,7 +283,9 @@ export async function rawRequest(base: string, requestLine: string): Promise<str
       socket.destroy();
       resolve(chunk.toString("utf8").split("\r\n", 1)[0] ?? "");
     });
-    socket.on("connect", () => socket.write(`${requestLine}\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`));
+    socket.on("connect", () =>
+      socket.write([requestLine, "Host: 127.0.0.1", ...headers, "Connection: close", "", ""].join("\r\n")),
+    );
   });
 }
 

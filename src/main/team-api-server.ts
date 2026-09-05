@@ -360,12 +360,18 @@ export class TeamApiServer {
     // this is the first thing below that can throw. Node's HTTP parser accepts request targets the
     // WHATWG URL parser rejects - `GET //[ HTTP/1.1` arrives as `//[` - and with the record written
     // afterwards that throw reached the catch below, made `#json` throw "route is unavailable", and
-    // surfaced as an unhandled rejection over a socket nothing ever ended. `url.pathname` replaces
-    // the raw target once there is one; only the failing path reads the raw value, and the frozen
-    // adapters classify it as the unknown route it is.
+    // surfaced as an unhandled rejection over a socket nothing ever ended.
+    //
+    // The placeholder is `/` and not the raw target, because the record is not a log line: the
+    // frozen adapters classify the route by parsing this string again, from inside the encoder the
+    // catch is calling. Handing them the target that just failed to parse throws the same
+    // `Invalid URL` back out of `#json`, past the only catch there is, and hangs the socket exactly
+    // as before - on every protocol above v1, where classification starts. `/` is the honest answer
+    // to "which route is this": there is none, and both adapters encode it as the unclassified route
+    // it is. `url.pathname` replaces it the moment there is one.
     this.#responseRoutes.set(response, {
       method,
-      path: request.url ?? "/",
+      path: "/",
       protocol: requestProtocol(request),
       capabilities: requestCapabilities(request),
     });
@@ -386,9 +392,9 @@ export class TeamApiServer {
       // out-of-date client to update. Behind the gate it would answer 426 as well, and the client
       // would have no way to read the instruction it was being given: a 426 loop with no exit.
       //
-      // The remote-screen delegation is above both, because a browser fetching the viewer sends
-      // neither protocol headers nor a bearer token. It is not a route in the table; the gateway
-      // decides for itself which paths are its own.
+      // The remote-screen delegation sits between them, above the protocol gate for the same reason:
+      // a browser fetching the viewer sends neither protocol headers nor a bearer token. It is not a
+      // route in the table; the gateway decides for itself which paths are its own.
       if (method === "GET" && url.pathname === TEAM_API_ROUTES.compatibility) {
         return this.#json(response, 200, this.#protocolSupport());
       }

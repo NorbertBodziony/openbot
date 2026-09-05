@@ -420,6 +420,14 @@ describe("TeamApiServer status contract", () => {
     expect(response.status).toBe(401);
     const raw = await rawRequest(base, "GET //[ HTTP/1.1");
     expect(raw).toMatch(/^HTTP\/1\.1 \d{3} /);
+
+    // Recording the raw target instead only moved the throw. Every adapter above v1 classifies the
+    // route by parsing that string again, and it does so while encoding the answer the catch is
+    // already writing - so on protocol 3 the same invalid target threw out of `#json`, past the only
+    // catch there is, and hung the socket exactly as before. The record starts at a path that
+    // parses, and the raw target is never handed to an adapter.
+    const negotiated = await rawRequest(base, "GET //[ HTTP/1.1", [`${TEAM_PROTOCOL_VERSION_HEADER}: 3`]);
+    expect(negotiated).toMatch(/^HTTP\/1\.1 \d{3} /);
   });
 });
 
