@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 import { checkUiFoundation } from "./ui-foundation-check";
 
 const fixtureRenderer = resolve(import.meta.dirname, "../tools/ui-foundation/fixtures/renderer");
+const cleanRenderer = resolve(import.meta.dirname, "../tools/ui-foundation/fixtures/renderer-clean");
 
 function budget(label: string, actual: number): string {
   return `${label}: ${actual} (migration budget: 0; this number may only go down)`;
@@ -58,6 +59,17 @@ describe("ui foundation check", () => {
     expect(manualCompositeCount).toBe(1);
   });
 
+  it("reports nothing for a renderer that breaks no check", () => {
+    // The other tree proves each check fires. This one carries the negative half for the
+    // checks that report once per file, which that tree cannot: there the direct alias in
+    // complex.tsx accounts for the failure whether or not a widened pattern has also
+    // started rejecting the correct adapter beside it.
+    const { failures, manualCompositeCount } = checkUiFoundation(cleanRenderer, cleanRenderer);
+
+    expect(failures).toEqual([]);
+    expect(manualCompositeCount).toBe(0);
+  });
+
   it("labels a failure with a path relative to the root it is given", () => {
     // The CLI passes the repository root so a message can be pasted into an editor; the
     // walked root and the label root are not the same argument.
@@ -65,6 +77,11 @@ describe("ui foundation check", () => {
 
     expect(failures).toContain(
       "renderer/components/Bad.tsx: a hand-rolled switch is not allowed; use components/ui/Switch",
+    );
+    // The namespace check builds its own path rather than walking to one, so it is the line
+    // that stayed hard-coded while every other message moved with the root it is given.
+    expect(failures).toContain(
+      "renderer/components/ui/complex.tsx: the Kobalte namespace must pass through an adapter, not a direct alias",
     );
   });
 });

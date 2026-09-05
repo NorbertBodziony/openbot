@@ -62,9 +62,11 @@ export function checkUiFoundation(rendererRoot: string, labelRoot: string): UiFo
     }
   }
 
-  const complexApi = readFileSync(resolve(uiRoot, "complex.tsx"), "utf8");
-  if (/export const \w+\s*=\s*\w+Primitive\s*;/u.test(complexApi)) {
-    failures.push("components/ui/complex.tsx: the Kobalte namespace must pass through an adapter, not a direct alias");
+  const complexApiPath = resolve(uiRoot, "complex.tsx");
+  if (/export const \w+\s*=\s*\w+Primitive\s*;/u.test(readFileSync(complexApiPath, "utf8"))) {
+    failures.push(
+      `${relative(labelRoot, complexApiPath)}: the Kobalte namespace must pass through an adapter, not a direct alias`,
+    );
   }
 
   const componentSource = filesUnder(resolve(rendererRoot, "components"))
