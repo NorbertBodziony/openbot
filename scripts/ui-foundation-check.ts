@@ -52,8 +52,11 @@ export function checkUiFoundation(rendererRoot: string, labelRoot: string): UiFo
       failures.push(`${label}: a hand-rolled switch is not allowed; use components/ui/Switch`);
     }
     if (file.endsWith(".tsx")) {
+      // The property may be quoted, and a hyphenated one has to be: `border-color` is not a
+      // bare JS key. Without the optional quote every hyphenated branch of this pattern was
+      // unreachable - dead from the day it was written, and green about it.
       const inlineColor =
-        /(?:color|background(?:-color)?|border(?:-(?:top|right|bottom|left))?(?:-color)?|fill|stroke)\s*:\s*["'](?:#[\da-f]{3,8}|rgba?\(|hsla?\(|(?:white|black|red|blue|green|yellow|purple|orange|gray|grey|pink)\b)/iu;
+        /(?:color|background(?:-color)?|border(?:-(?:top|right|bottom|left))?(?:-color)?|fill|stroke)["']?\s*:\s*["'](?:#[\da-f]{3,8}|rgba?\(|hsla?\(|(?:white|black|red|blue|green|yellow|purple|orange|gray|grey|pink)\b)/iu;
       if (inlineColor.test(source)) {
         failures.push(`${label}: a colour literal in an inline style is not allowed; use a palette token`);
       }

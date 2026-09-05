@@ -7,3 +7,7 @@
   transition: opacity 200ms ease;
   border-color: red;
 }
+
+.legacy-badge {
+  background: hsl(0 100% 50%);
+}

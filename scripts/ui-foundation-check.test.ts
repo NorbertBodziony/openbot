@@ -39,14 +39,28 @@ describe("ui foundation check", () => {
         // path-prefix comparison, so without a separator this line and the second composite
         // role below both disappear, and a components/ui-kit could hold anything.
         "components/ui-kit/Sneaky.tsx: use a component from components/ui instead of a native control",
-        budget("hand-rolled composite ARIA roles", 3),
+        // components/branches holds one file per alternative of a pattern, because these checks
+        // report once per file: two alternatives in one file collapse into one finding and the
+        // second stops being observable. Delete a word from an alternation and one line here goes.
+        "components/branches/NativeInput.tsx: use a component from components/ui instead of a native control",
+        "components/branches/NativeSelect.tsx: use a component from components/ui instead of a native control",
+        "components/branches/NativeTextarea.tsx: use a component from components/ui instead of a native control",
+        "components/branches/ColourBackgroundRgb.tsx: a colour literal in an inline style is not allowed; use a palette token",
+        "components/branches/ColourBorderHsl.tsx: a colour literal in an inline style is not allowed; use a palette token",
+        "components/branches/ColourFillNamed.tsx: a colour literal in an inline style is not allowed; use a palette token",
+        "components/branches/ColourStrokeHex.tsx: a colour literal in an inline style is not allowed; use a palette token",
+        "components/branches/InlineFontSize.tsx: font-size, radius and transition in an inline style must use tokens",
+        "components/branches/InlineTransition.tsx: font-size, radius and transition in an inline style must use tokens",
+        budget("hand-rolled composite ARIA roles", 9),
+        // A hex, a named colour and an hsl() in styles/legacy.css, an rgb() in preview/preview.css -
+        // one per value form the pattern names.
         // A hex and a named colour in styles/legacy.css, an rgb() in preview/preview.css.
         // The rgb() is in the file the old hand-written scope missed, so a scope narrowed
         // back to a list of directory names reads 2; the named colour is matched by a
         // second pattern entirely, which the hex does not exercise, so losing that reads 2
         // as well. The token spelling a colour in tokens.css must stay uncounted, or this
         // reads 4 and the word boundaries have gone.
-        budget("colour literals outside the palette", 3),
+        budget("colour literals outside the palette", 4),
         budget("untokenised font-size", 1),
         budget("untokenised border-radius", 1),
         budget("untokenised transition durations", 1),
@@ -55,15 +69,16 @@ describe("ui foundation check", () => {
   });
 
   it("counts a composite role once, ignoring the copies in test files and components/ui", () => {
-    // Three count, one per place the walk has to reach: components/Composite.tsx, the
-    // sibling directory ui-kit/Sneaky.tsx, and features/inbox/InboxPane.tsx, which is
-    // outside components/ altogether and is what keeps the walk renderer-wide. Bad.test.tsx
-    // and components/ui/Button.tsx each hold a role="dialog" the ratchet must not see;
-    // either exclusion breaking raises this to 4, both to 5 - a clearer failure than the
-    // budget line, because it says how many exclusions went.
+    // Nine: one per role the pattern names, plus the two extra places the walk has to reach.
+    // dialog appears in components/Composite.tsx and menu in features/inbox/InboxPane.tsx,
+    // which is outside components/ altogether and is what keeps the walk renderer-wide;
+    // ui-kit/Sneaky.tsx is the sibling directory; branches/CompositeRoles.tsx carries the
+    // remaining six roles, one occurrence each, since this count is per occurrence rather
+    // than per file. Bad.test.tsx and components/ui/Button.tsx each hold a role="dialog" the
+    // ratchet must not see; either exclusion breaking raises this to 10, both to 11.
     const { manualCompositeCount } = checkUiFoundation(fixtureRenderer, fixtureRenderer);
 
-    expect(manualCompositeCount).toBe(3);
+    expect(manualCompositeCount).toBe(9);
   });
 
   it("reports nothing for a renderer that breaks no check", () => {
