@@ -25,18 +25,25 @@ belongs.
 
 ## CI owns the minutes-long suites. Run the fast checks yourself.
 
+A fresh worktree has no `node_modules`, and every command below dies with `biome: command not found`
+or `Cannot find module '@openbot/logging'` until it does. Run `bun install --frozen-lockfile` first,
+or `bun scripts/prepare-dev-environment.ts`, which adds the local D1 migration and asserts the Bun
+version and the `.env.keys` `.worktreeinclude` carries across.
+
 Before you call a task done, run the narrowest test for what you touched, then `bun run lint` and
 `bun run typecheck` — plus `bun run check:ui` if you touched `src/renderer`, which scans the whole
 renderer in 60 ms. All three read more than you changed on purpose and none is expensive: `lint` is
-`biome check .` across every file in about six seconds, `typecheck` is nine `tsc` projects in about
+`biome check .` across every file in about six seconds, `typecheck` is ten `tsc` projects in about
 four. The wide typecheck is the more useful one — a change in `packages/contracts` surfaces as an
 error in `src/renderer` or `src/main`, which a single `tsc -p` on the project you edited never sees.
 
-`bun run typecheck` is `typecheck:*`, and the mobile script is named `mobile:typecheck`, so it is
-the one project the aggregate misses. `apps/mobile` depends on `@openbot/brand`,
-`@openbot/contracts` and `@openbot/team-client`, so an export change in any of them can pass the
-aggregate and still break the app. Run `bun run mobile:typecheck` too — another four seconds — when
-you touch `apps/mobile` or one of those three packages.
+`bun run typecheck` is `typecheck:*`, and `typecheck:mobile` is in that glob, so `apps/mobile` is
+checked with everything else — it depends on `@openbot/brand`, `@openbot/contracts` and
+`@openbot/team-client`, and an export change in any of them breaks the app. It used to be named
+`mobile:typecheck`, which the glob missed, and this file used to carry a paragraph asking you to
+remember that. `mobile:typecheck` survives as an alias because CI's Surfaces job calls it by that
+name. It runs `expo customize` and a `uniwind` codegen before `tsc`, but everything it writes is
+gitignored, so the aggregate still leaves your diff alone.
 
 Do not run `bun run check`, `check:desktop`, `test`, or `build-storybook`: each takes minutes, and
 the desktop suite flakes under load, so a red result tells you nothing about your change. That is
@@ -199,8 +206,12 @@ Biome enforces the mechanical half and only that. In test files it rejects `toHa
 `toHaveStyle`, `getComputedStyle`, `toContainElement`, `toHaveAttribute("title", …)`,
 `expect(x.innerHTML)`, DOM-tree walks, `querySelector("svg" | "img")`, `document.activeElement`,
 snapshots, the `*ByTestId` queries, an assertion reached through a CSS class, an awaited bare
-`setTimeout`, and `it.only`. It does not see a `data-testid` attribute itself — the paragraph above
-is what rules that out. All of it stays available in `src/renderer/stories`, where it belongs. Around
+`setTimeout`, and `it.only`. It does not see a `data-testid` attribute itself — a GritQL rule cannot
+read the product tree from a test file — so `check:ui` carries that half instead, as a budget frozen
+at the five the renderer has today. It is a budget rather than a ban because three of the five are
+read by play functions in `src/renderer/stories`, which is sanctioned: a sixth hook has to replace
+one of those, and an accessible role and name is the only other way in. All of it stays available in
+`src/renderer/stories`, where it belongs. Around
 focus only `document.activeElement` is rejected: it asserts against the document instead of the
 element the test already holds, and fails with "expected null" rather than naming the control.
 `toHaveFocus()` is encouraged.

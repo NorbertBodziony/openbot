@@ -16,7 +16,11 @@ for the component patterns, not the imports.
 - `bun run check:ui` is the design-system guard for this directory: shared primitives over native
   controls, Kobalte and Lucide only inside `components/ui`, and palette tokens instead of colour,
   size, radius and transition literals. It reads the whole renderer in 60 ms, so run it on any
-  change here rather than waiting for CI — its budgets all sit at zero and only ever go down.
+  change here rather than waiting for CI — its budgets only ever go down. All of them sit at zero
+  except the `data-testid` hook count, frozen at the five already in the tree; root AGENTS.md says
+  why that one is a ratchet instead of a ban.
+- Nothing here imports `src/main`, `src/backend` or `src/preload`. `biome.json` rejects it by path,
+  so reaching past the IPC contract fails `bun run lint` rather than review.
 - Never verify UI with `dist/`, a packaged `.app`, a production build, or an ad-hoc preview — those
   are for release verification the user asked for. If the dev app will not start, report the blocker
   instead of falling back to one.

@@ -10,7 +10,6 @@ import type {
   ConversationSnapshot,
   HostedSiteConversationEventStatus,
 } from "@openbot/contracts/ipc";
-import { providerForLegacyModel } from "@openbot/contracts/ipc";
 import { AgentRoster } from "./database/agent-roster";
 import { ConversationQueries } from "./database/conversation-queries";
 import { ConversationWriter } from "./database/conversation-writer";
@@ -302,10 +301,6 @@ export class OpenBotDatabase {
   readMailboxState(): unknown | null {
     return this.#mailbox.readMailboxState();
   }
-}
-
-export function providerForStoredModel(model: AgentSummary["model"]): AgentProviderId {
-  return providerForLegacyModel(model);
 }
 
 export function stableThreadId(agentId: string): string {

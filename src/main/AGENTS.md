@@ -56,6 +56,12 @@ it may ask for, `content-security-policy.ts` what it may load. Each has a test, 
 of them needs one. Widening `isTrustedRendererUrl` to accept a development convenience is the
 single most expensive edit available in this directory.
 
+The split is also enforced by path. `biome.json` gives `src/main`, `src/backend` and `src/preload` a
+`noRestrictedImports` group rejecting `**/renderer/**`, and the renderer the mirror of it, so the
+first import across the boundary fails `bun run lint` with the reason rather than passing review as
+a convenience. `src/main` importing `src/backend` is the one direction left open, and 38 files use
+it. Share a type through `packages/contracts` instead of reaching for the module.
+
 ## Waiting in a main-process test
 
 A test that needs a timeout to pass is wrong (root AGENTS.md, Tests rule 4). These are the barriers

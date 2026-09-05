@@ -476,14 +476,6 @@ export type SidebarLayoutAction =
   | { type: "assign"; agentId: string; sectionId: string | null }
   | { type: "move-agent"; agentId: string; sectionId: string | null; beforeAgentId: string | null };
 
-export const AGENT_MODELS = [
-  "gpt-5.6-luna",
-  "gpt-5.6-terra",
-  "gpt-5.6-sol",
-  "claude-fable-5",
-  "claude-opus-5",
-  "claude-sonnet-5",
-] as const;
 export type AgentModelId = string;
 
 export const AGENT_REASONING_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -847,10 +839,6 @@ export function routineRunConversationEvent(message: ConversationMessage): Routi
   return { ...event, routineName };
 }
 
-export function isRoutineRunConversationEventMarker(itemType: string | undefined): boolean {
-  return itemType?.startsWith(ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX) === true;
-}
-
 export function hostedSiteConversationEventItemType(
   action: HostedSiteConversationEventAction,
   status: HostedSiteConversationEventStatus,
@@ -895,10 +883,6 @@ export function hostedSiteConversationEvent(message: ConversationMessage): Hoste
   }
   if (!isHostedSiteConversationEventDetails(details) || !hostedSiteDetailsMatchEvent(event, details)) return null;
   return { ...event, ...details };
-}
-
-export function isHostedSiteConversationEventMarker(itemType: string | undefined): boolean {
-  return itemType?.startsWith(HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX) === true;
 }
 
 function isRoutineRunConversationEventStatus(value: unknown): value is RoutineRunConversationEventStatus {
@@ -1115,7 +1099,6 @@ function isAgentExchangeSummary(value: unknown): value is AgentExchangeSummary {
 
 export const MESSAGE_REACTIONS = ["👍", "👎", "❤️", "😂", "🎉", "😮"] as const;
 export const MORE_MESSAGE_REACTIONS = ["🔥", "👏", "🙏", "🤔", "👀", "✅", "🚀", "💯"] as const;
-export const ALL_MESSAGE_REACTIONS = [...MESSAGE_REACTIONS, ...MORE_MESSAGE_REACTIONS] as const;
 export type MessageReaction = string;
 
 export type ConversationReactionActor = { kind: "user" } | { kind: "agent"; agentId: string };
