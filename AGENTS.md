@@ -153,6 +153,10 @@ and each says what its own boundary costs and how to wait in its tests.
 Read the one for the directory you are changing before you change it. `docs/ARCHITECTURE.md`
 "Change rules" says where a change belongs when it is not obvious.
 
+One file is scoped to a task rather than a directory: `.agents/skills/release-upgrade-safety/` audits
+the diff since the last released tag for the upgrade and data-loss hazards an installed user cannot
+undo, and nothing opens it for you — reach for it when a version is about to be bumped or tagged.
+
 ## Tests
 
 1. **The default answer is no test.** Prefer changing an existing test to adding one. A new test

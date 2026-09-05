@@ -138,6 +138,11 @@ the Whisper model is present, or if the application contains a second native Cla
 If a release is bad, publish a newer patch version. Do not replace an already published version with
 different binaries.
 
+Before working this checklist, audit the changes since the last released tag with the
+`.agents/skills/release-upgrade-safety/` skill: it covers the upgrade and data-loss hazards an
+installed user cannot undo — the in-place database migration, the `userData` files nothing backs up,
+the frozen Team API adapters, and the D1 migrations that race their own deploy.
+
 ## Preflight checklist
 
 Before creating the first tag or any later release:
