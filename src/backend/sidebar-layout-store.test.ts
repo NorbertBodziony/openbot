@@ -163,6 +163,39 @@ describe("SidebarLayoutStore", () => {
     expect(cleaned.agentAssignments).toHaveProperty("research");
   });
 
+  it("refiles an agent migration v13 renamed instead of unfiling it", async () => {
+    const { store } = await createStore();
+    const legacyId = "bot-6d3e8b17-9c04-4f21-8a55-1b2c3d4e5f60";
+    const currentId = "agent-6d3e8b17-9c04-4f21-8a55-1b2c3d4e5f60";
+    const created = await store.mutate(
+      { type: "create", name: "Research", agentId: legacyId },
+      new Set([legacyId, "chief"]),
+    );
+    const sectionId = created.agentAssignments[legacyId];
+    const ordered = await store.mutate(
+      { type: "move-agent", agentId: legacyId, sectionId: sectionId ?? null, beforeAgentId: null },
+      new Set([legacyId, "chief"]),
+    );
+    expect(ordered.agentOrder).toContain(legacyId);
+
+    // This layout is a JSON file outside the database, so v13 renamed the agent in SQLite and left the
+    // sidebar filing it under the old id. Reading that as "the agent is gone" throws away the group the
+    // user put it in and its position, with nothing to undo it.
+    const reconciled = await store.reconcileAgents(new Set([currentId, "chief"]));
+
+    expect(reconciled.agentAssignments[currentId]).toBe(sectionId);
+    expect(reconciled.agentOrder).toContain(currentId);
+
+    // v13 declines to rename onto an id that is taken, so both agents can be in the roster at once -- and
+    // then the old spelling belongs to the agent that still answers to it, not to its twin.
+    const collided = await createStore();
+    await collided.store.mutate({ type: "create", name: "Research", agentId: legacyId }, new Set([legacyId]));
+    const kept = await collided.store.reconcileAgents(new Set([currentId, legacyId]));
+
+    expect(kept.agentAssignments).toHaveProperty(legacyId);
+    expect(kept.agentAssignments).not.toHaveProperty(currentId);
+  });
+
   it("backs up corrupt state and starts with the safe default", async () => {
     const { root, path } = await createStore();
     await writeFile(path, '{"version":1,"revision":"bad"}\n');

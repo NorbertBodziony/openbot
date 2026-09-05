@@ -12,6 +12,7 @@ import {
 } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { isUuidV4 } from "@openbot/contracts/validation";
+import { legacyAgentId } from "./workspace-paths";
 
 interface StoredSidebarLayout extends SidebarLayoutSnapshot {
   version: 2;
@@ -118,15 +119,35 @@ export class SidebarLayoutStore extends EventEmitter<SidebarLayoutStoreEvents> {
     });
   }
 
+  /**
+   * Drops the agents that are gone -- but renames the ones that only look gone first. This layout is a
+   * JSON file outside the database, so migration v13 renamed every agent in SQLite and left the sidebar
+   * still filing them under `bot-<uuid>`. Filtering straight against the new roster would read that as
+   * "these agents no longer exist" and commit the deletion, so a user with a dozen agents in named groups
+   * comes back to all of them unassigned, in an order they never chose, with nothing to undo it.
+   */
   reconcileAgents(agentIds: ReadonlySet<string>): Promise<SidebarLayoutSnapshot> {
     return this.#enqueue(async () => {
+      const renamedFrom = new Map<string, string>();
+      for (const agentId of agentIds) {
+        const legacyId = legacyAgentId(agentId);
+        if (legacyId !== agentId) renamedFrom.set(legacyId, agentId);
+      }
+      // An id still in the roster answers for itself, which is why that test comes first: v13 declines to
+      // rename onto an id that is taken, so an agent spelled `bot-<uuid>` can be sitting beside the
+      // `agent-<uuid>` it would otherwise have become, and this entry belongs to the one the user filed.
+      const currentId = (agentId: string) => (agentIds.has(agentId) ? agentId : (renamedFrom.get(agentId) ?? agentId));
       const agentAssignments = Object.fromEntries(
-        Object.entries(this.#layout.agentAssignments).filter(([agentId]) => agentIds.has(agentId)),
+        Object.entries(this.#layout.agentAssignments)
+          .map(([agentId, sectionId]) => [currentId(agentId), sectionId] as const)
+          .filter(([agentId]) => agentIds.has(agentId)),
       );
-      const agentOrder = this.#layout.agentOrder.filter((agentId) => agentIds.has(agentId));
+      const agentOrder = this.#layout.agentOrder.map(currentId).filter((agentId) => agentIds.has(agentId));
       if (
         Object.keys(agentAssignments).length === Object.keys(this.#layout.agentAssignments).length &&
-        agentOrder.length === this.#layout.agentOrder.length
+        Object.keys(agentAssignments).every((agentId) => agentId in this.#layout.agentAssignments) &&
+        agentOrder.length === this.#layout.agentOrder.length &&
+        agentOrder.every((agentId, index) => agentId === this.#layout.agentOrder[index])
       ) {
         return this.getSnapshot();
       }
