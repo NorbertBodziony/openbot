@@ -7,7 +7,7 @@ import { expandChatTagReferences } from "@openbot/contracts/chat-tag-references"
 import type { InstalledSkill, MessageReaction } from "@openbot/contracts/ipc";
 import { desktopAnalytics } from "../../../analytics";
 import type { AgentMessage } from "../../../data";
-import type { ComposerDraft, ConversationProps } from "../ConversationView";
+import type { ComposerDraft, ConversationProps } from "../conversation-types";
 
 export interface MessageActionsDeps {
   props: ConversationProps;

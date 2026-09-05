@@ -1,7 +1,7 @@
 import type { BrowserPreview, BrowserTab } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, untrack } from "solid-js";
 import { desktopAnalytics } from "../../../analytics";
-import type { ConversationProps } from "../ConversationView";
+import type { ConversationProps } from "../conversation-types";
 
 export interface BrowserTakeoverPreviewState {
   status: "idle" | "loading" | "ready" | "failed";

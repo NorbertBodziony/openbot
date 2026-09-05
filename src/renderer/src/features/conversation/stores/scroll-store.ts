@@ -1,6 +1,6 @@
 import { createSignal, onCleanup } from "solid-js";
 import { createScrollFades } from "../../../components/createScrollFades";
-import type { ConversationProps } from "../ConversationView";
+import type { ConversationProps } from "../conversation-types";
 import { calculateChatScrollMargin, createChatVirtualizer } from "../createChatVirtualizer";
 import { scrollToLatestMessage } from "../MessageNavigation";
 import { scrollToUnreadBoundary, unreadMessagesDividerIsVisible } from "../UnreadMessages";

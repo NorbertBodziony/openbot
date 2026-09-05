@@ -2,9 +2,9 @@ import { VOICE_AUDIO_LIMITS } from "@openbot/contracts/ipc";
 import { onCleanup } from "solid-js";
 import { desktopAnalytics } from "../../../analytics";
 import { appendVoiceTranscript, recordingToWav } from "../../../voice-recording";
-import type { ComposerDraft, ConversationProps, ConversationTarget } from "../ConversationView";
 import { EMPTY_DRAFT } from "../composer-draft";
 import { composerDraftKey } from "../conversation-keys";
+import type { ComposerDraft, ConversationProps, ConversationTarget } from "../conversation-types";
 import { voiceCaptureError, voiceTranscriptionError } from "../voice-status";
 
 export interface VoiceSubmitHooks {

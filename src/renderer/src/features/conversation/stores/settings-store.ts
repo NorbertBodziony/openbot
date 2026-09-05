@@ -1,7 +1,7 @@
 import type { AgentModelId, AgentProviderId, AgentReasoningEffort, UpdateAgentInput } from "@openbot/contracts/ipc";
 import type { AgentRuntimeSettings, AgentRuntimeSettingsPatch } from "../AgentSettingsPanel";
-import type { ConversationProps } from "../ConversationView";
 import { agentConversationKey } from "../conversation-keys";
+import type { ConversationProps } from "../conversation-types";
 
 export function runtimeSettingsEqual(left: AgentRuntimeSettings, right: AgentRuntimeSettings): boolean {
   return (

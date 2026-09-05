@@ -1,9 +1,9 @@
 import { attachmentReferenceIds } from "@openbot/contracts/attachment-references";
 import { createMemo } from "solid-js";
 import { appendVoiceTranscript } from "../../../voice-recording";
-import type { ComposerDraft, ConversationProps, ConversationTarget } from "../ConversationView";
 import { EMPTY_DRAFT } from "../composer-draft";
 import { composerDraftKey } from "../conversation-keys";
+import type { ComposerDraft, ConversationProps, ConversationTarget } from "../conversation-types";
 
 export interface ComposerStoreDeps {
   props: ConversationProps;

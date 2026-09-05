@@ -1,14 +1,14 @@
 import type { AgentModelId, AgentProviderId, AgentReasoningEffort, BrowserBounds } from "@openbot/contracts/ipc";
 import { createSignal, onCleanup } from "solid-js";
 import type { AgentActivityPresentation } from "./AgentActivity";
+import type { ChatSearchMatch } from "./chat-search";
 import type {
   ComposerDraft,
   ConversationProps,
   MediaPreview,
   RightPanelMode,
   SidebarFilePreview,
-} from "./ConversationView";
-import type { ChatSearchMatch } from "./chat-search";
+} from "./conversation-types";
 
 const SETTINGS_PANEL_DEFAULT = 296;
 const BROWSER_PANEL_DEFAULT = 380;

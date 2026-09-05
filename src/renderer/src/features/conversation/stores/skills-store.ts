@@ -1,6 +1,6 @@
 import type { InstalledSkill } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, untrack } from "solid-js";
-import type { ConversationProps } from "../ConversationView";
+import type { ConversationProps } from "../conversation-types";
 import { installedSkillsRequestKey } from "../installed-skills-source";
 
 export interface SkillsStoreDeps {

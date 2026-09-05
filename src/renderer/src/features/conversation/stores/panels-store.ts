@@ -1,6 +1,6 @@
 import type { AttachmentSummary, BrowserBounds } from "@openbot/contracts/ipc";
 import { createMemo, createSignal } from "solid-js";
-import type { ConversationProps, MediaPreview, RightPanelMode, SidebarFilePreview } from "../ConversationView";
+import type { ConversationProps, MediaPreview, RightPanelMode, SidebarFilePreview } from "../conversation-types";
 
 export interface RoutineSettingsRequest {
   agentId: string;

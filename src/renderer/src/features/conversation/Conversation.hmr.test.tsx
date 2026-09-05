@@ -2,8 +2,9 @@ import { fireEvent, render, screen } from "@solidjs/testing-library";
 import { createSignal, Show } from "solid-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createConversationController } from "./Conversation";
-import { type ConversationProps, isDragLeavingConversation } from "./ConversationView";
+import { isDragLeavingConversation } from "./ConversationView";
 import { ConversationControllerProvider } from "./conversation-controller-context";
+import type { ConversationProps } from "./conversation-types";
 
 function controllerProps(onTypingChange = vi.fn()): Pick<ConversationProps, "onTypingChange"> {
   return { onTypingChange };

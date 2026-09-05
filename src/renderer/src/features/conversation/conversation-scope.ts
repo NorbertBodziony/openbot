@@ -1,10 +1,10 @@
 import type { UpdateAgentInput } from "@openbot/contracts/ipc";
 import { createContext, createEffect, onCleanup, onSettled, untrack, useContext } from "solid-js";
 import { createScopeGuard } from "../../scope-lifetime";
-import type { ComposerDraft, ConversationProps } from "./ConversationView";
 import { clearChatSearchHighlights, findChatSearchMatches, renderChatSearchHighlights } from "./chat-search";
 import { useConversationController } from "./conversation-controller-context";
 import { agentConversationKey, composerDraftKey } from "./conversation-keys";
+import type { ComposerDraft, ConversationProps } from "./conversation-types";
 import { createActivityStore } from "./stores/activity-store";
 import { createBrowserStore } from "./stores/browser-store";
 import { createComposerActions } from "./stores/composer-actions";

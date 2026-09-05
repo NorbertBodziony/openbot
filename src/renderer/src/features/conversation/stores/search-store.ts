@@ -1,6 +1,6 @@
-import type { ConversationProps } from "../ConversationView";
 import type { ChatSearchMatch } from "../chat-search";
 import { clearChatSearchHighlights } from "../chat-search";
+import type { ConversationProps } from "../conversation-types";
 
 export interface SearchStoreDeps {
   props: ConversationProps;

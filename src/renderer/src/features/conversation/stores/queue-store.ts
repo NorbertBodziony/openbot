@@ -2,7 +2,7 @@ import type { QueueDelivery } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
 import { activeQueueDeliveries, presentQueueDeliveries, queuedDeliveriesInOrder } from "../../../queue-reconciliation";
 import { agentActivityExitDuration } from "../activity-timing";
-import type { ConversationProps } from "../ConversationView";
+import type { ConversationProps } from "../conversation-types";
 
 export interface QueueStoreDeps {
   props: ConversationProps;

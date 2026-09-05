@@ -1,6 +1,7 @@
 import { onCleanup } from "solid-js";
-import { type ConversationProps, ConversationView } from "./ConversationView";
+import { ConversationView } from "./ConversationView";
 import { useConversationController } from "./conversation-controller-context";
+import type { ConversationProps } from "./conversation-types";
 
 export { createConversationController } from "./conversation-controller";
 

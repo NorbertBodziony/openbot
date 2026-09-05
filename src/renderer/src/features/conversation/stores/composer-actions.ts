@@ -1,8 +1,8 @@
 import type { DraftAttachment, QueueDelivery } from "@openbot/contracts/ipc";
 import { expandComposerMentions } from "../ComposerEditor";
-import type { ComposerDraft, ConversationProps, ConversationTarget } from "../ConversationView";
 import { copyComposerDraft, EMPTY_DRAFT } from "../composer-draft";
 import { composerDraftKey } from "../conversation-keys";
+import type { ComposerDraft, ConversationProps, ConversationTarget } from "../conversation-types";
 
 export interface ComposerActionsDeps {
   props: ConversationProps;

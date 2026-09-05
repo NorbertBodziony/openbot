@@ -1,4 +1,4 @@
-import type { ComposerDraft } from "./ConversationView";
+import type { ComposerDraft } from "./conversation-types";
 
 export const EMPTY_DRAFT: ComposerDraft = {
   text: "",

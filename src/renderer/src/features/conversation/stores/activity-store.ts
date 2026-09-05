@@ -2,7 +2,7 @@ import { createEffect, createMemo, createSignal, onCleanup, untrack } from "soli
 import type { AgentProfile } from "../../../data";
 import { type AgentActivityPresentation, nextAgentActivityPresentation } from "../AgentActivity";
 import { agentActivityExitDelay, agentActivityExitDuration, agentActivityShowDelay } from "../activity-timing";
-import type { ConversationProps } from "../ConversationView";
+import type { ConversationProps } from "../conversation-types";
 
 export interface RenderedAgentActivity {
   activityId: string;
