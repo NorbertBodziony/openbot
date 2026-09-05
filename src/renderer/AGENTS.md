@@ -17,6 +17,44 @@ for the component patterns, not the imports.
   are for release verification the user asked for. If the dev app will not start, report the blocker
   instead of falling back to one.
 
+## Where a file goes
+
+A domain lives in one directory: `src/renderer/src/features/<domain>/`, flat except for `stores/`.
+Its context, its DOM-free logic, its pane, its components, its tests and its stylesheet are
+siblings, so "fix the pin ordering" is answerable by opening one path. There is no barrel —
+`components/ui/index.ts` is still the only one — and every import stays relative, which is what
+makes `tsc` an exhaustive check after a move.
+
+```
+features/<domain>/
+  <domain>-context.tsx   the domain context: createSimpleContext provider + use*() pair
+  <domain>-scope.ts      the view-side composer, where one exists
+  <Domain>*.tsx          entry component and rendered regions, PascalCase
+  <domain>-*.ts          DOM-free logic, kebab-case
+  <domain>.css           the stylesheet partial, @import-ed from styles.css in cascade order
+  stores/                one create*Store per concern, plus *-actions.ts command bundles
+```
+
+**The context file is always `<domain>-context.tsx`**, even where nothing forces it. `sidebar.tsx`
+and `Sidebar.tsx` coexisted only because they were in different directories; in one directory they
+are the same filename on case-insensitive APFS. That breaks the `Check` job on `macos-14` alone
+while every ubuntu job stays green, so the suffix is uniform rather than applied where a collision
+happens to exist today.
+
+**Outside a feature:** `components/ui` (the shared patched-Kobalte layer), the app shell and its
+wiring (`App.tsx`, `AppView.tsx`, `app-providers.tsx`, `app-bootstrap.tsx`, `WorkspaceShell.tsx`,
+`WorkspaceOverlays.tsx`, `lazy-views.ts`), the cross-domain modules every feature reads and none
+owns (`navigation.tsx`, `layout.tsx`, `turns.tsx`, `providers.tsx`, `data.ts`,
+`simple-context.tsx`, `scope-lifetime.ts`), `preview/` — whose mocks are the second implementation
+of the IPC surface and belong beside `mock-openbot.ts` — and the base stylesheets
+(`primitives.css`, `base.css`, `transitions.css`, `action-menu.css`, `sliding-tabs.css`). Stories
+stay in `src/renderer/stories/`, where the test rules relax.
+
+A cluster earns a directory when the feature is the only thing that reads it. That test applies to
+helpers and components, not to contexts: a context is read broadly by design, and `agents-context`
+having eighteen readers is not evidence it belongs at the root. Something genuinely shared by two
+domains stays flat rather than being imported sideways out of one of them.
+
 ## Reactive state shape
 
 **Prefer one `createStore` per concern over a row of `createSignal` calls.** Fields that change
