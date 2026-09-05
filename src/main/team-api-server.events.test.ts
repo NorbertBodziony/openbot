@@ -146,7 +146,17 @@ describe("TeamApiServer events", () => {
     ]);
 
     socket.send(JSON.stringify({ type: "agent-event-scope", includeConversations: true }));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Nothing answers the scope message, so the emit below has to be ordered behind it some other
+    // way, and a sleep is not that: the client and the server share this event loop, and one
+    // macrotask is only usually long enough for the frame to be read. When it is not - a loaded CI
+    // runner is enough - the scope is still off when the conversation event is emitted, the event is
+    // dropped as out of scope, and the wait below never ends. Typing is answered, and one connection
+    // is read in order, so a presence event proves every message sent before it was applied.
+    const scopeApplied = nextJsonEvents(socket, 2);
+    socket.send(JSON.stringify({ type: "team-typing", botId: "chief", typing: true }));
+    socket.send(JSON.stringify({ type: "team-typing", botId: null, typing: false }));
+    await scopeApplied;
+
     const conversationEvent = nextJsonEvent(socket);
     agentEvents.emit("event", conversation);
     await expect(conversationEvent).resolves.toEqual({
