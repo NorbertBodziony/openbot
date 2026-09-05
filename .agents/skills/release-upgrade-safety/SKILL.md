@@ -228,12 +228,18 @@ is not a wire change. Anything that touches a key list, a validator, or a projec
   fails validation and returns `null`, and callers read `null` as "nothing to send". `tsc` stays
   green throughout.
 
-List the protocol tests from the tag for the same reason the diff is derived from it, then run
+List the protocol tests for the same reason the diff is derived rather than typed, then run
 `bun run test:desktop -- <path>` once per file it prints:
 
 ```bash
-git ls-tree --name-only <tag> packages/contracts/src/team-protocol/ | grep -E 'v[0-9]+\.test\.ts$'
+{ git ls-tree --name-only <tag> packages/contracts/src/team-protocol/
+  git ls-tree --name-only HEAD packages/contracts/src/team-protocol/; } \
+  | grep -E 'v[0-9]+\.test\.ts$' | sort -u
 ```
+
+Union both revisions, as gate B does. The tag alone would skip a protocol the release *adds* — a
+new `v4.test.ts` would never run, and the one codec with no shipped history is the one this audit
+has the least other evidence about. `HEAD` alone would hide a frozen test the release *deleted*.
 
 The full compatibility matrix — older client against new host, new client against older host,
 matching versions, no shared protocol, capability omission, unknown optional events, malformed
