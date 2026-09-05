@@ -28,7 +28,7 @@ This runs *before* `docs/RELEASING.md`, which stays authoritative for the publis
 - It never runs `bun run dev:seed` or `dev:reset` — both destroy the developer's own profile — and
   never `pkill -f`, which kills other sessions' work mid-write.
 
-## Step 1 — establish the range
+## Step 1 — establish the range, then account for every file in it
 
 ```bash
 git tag --list 'v*' --sort=-v:refname | head -1
@@ -38,6 +38,23 @@ git diff --stat <tag>..HEAD
 The audit is over that commit range, not over the working tree: an uncommitted edit is not what
 ships, and a hazard three commits back is. State the tag and the changed-file count up front, and
 run every gate's `git diff` over that same range.
+
+**The diff drives the audit, not the trigger lists.** Take the whole changed-file list and assign
+every entry to a gate or dismiss it by name:
+
+```bash
+git diff --name-status <tag>..HEAD
+```
+
+Each gate names the paths that obviously belong to it. Treat those as a starting point and never as
+the authority: they are written by hand, they go stale, and a release can touch a file nobody
+thought to list. The question a gate actually asks is "does this file carry the hazard I own", and
+only the file in front of you answers that. A file matched by no gate has to be dismissed out loud,
+with its reason, in the Step 3 table — "it was not on a trigger list" is not a reason, "it is a
+renderer component with no persisted state" is.
+
+Work this way round because the failure this skill exists to prevent is almost never a hazard that
+was examined and misjudged. It is one that was never looked at, because nothing pointed at it.
 
 ## Step 2 — the seven gates
 
@@ -85,7 +102,7 @@ The parity test builds a database both ways and compares normalised `sqlite_mast
 `PRAGMA table_info`, so an unmirrored DDL migration is red rather than a support ticket. If it is
 green and you added DDL, check that you actually added it to `MIGRATIONS`.
 
-### B. On-disk state outside SQLite — `src/main/index.ts`, `src/backend/*-store.ts`
+### B. On-disk state outside SQLite — every decoder of a versioned file
 
 Triggered by a change to `src/main/index.ts`, `src/backend/workspace-paths.ts`,
 `src/main/sunshine-moonlight-runtime.ts`, `electron-builder.yml`, or **any file that decodes a
@@ -94,14 +111,27 @@ always a `*-store.ts`, and `central-auth-manager.ts`, `main-window-state.ts` and
 `skill-marketplace-service.ts` are three that are not:
 
 ```bash
-git grep -lE 'version *(!==|===) *[0-9]' HEAD -- 'src/main/*.ts' 'src/backend/*.ts' \
-  ':(exclude)*.test.ts'
+git grep -lE 'version *(!==|===) *[0-9]|version: *z\.literal' <tag> HEAD -- \
+  'src/main/*.ts' 'src/backend/*.ts' ':(exclude)*.test.ts' | sed 's/^[^:]*://' | sort -u
 ```
 
-The gate fires if the release diff touches any file that prints. Note the absent `\b`: `git grep -E`
-is POSIX ERE, where `\b` matches nothing at all, so writing the pattern the natural way returns an
-empty list and reports that the release changed no serialization owner. Same failure as gate C —
-a check that answers the wrong question and calls the silence a pass.
+The gate fires if the release diff touches any file that prints. Three deliberate details:
+
+- **Both revisions, unioned.** Searching only `HEAD` means that *removing* a version guard removes
+  the file from the result, so the one change most worth auditing is the one that hides the file.
+  Searching only the tag misses a serialization owner the release adds. The tag side also carries
+  the pre-rename filename, which is what you need to find the rename.
+- **`z.literal` is a second spelling.** `remote-desktop-secret-store.ts` validates with
+  `z.object({ version: z.literal(1), ... })` and matches no comparison operator at all. Any decoder
+  that pins a version by schema rather than by `===` is the same hazard; when you meet a third
+  spelling, widen the pattern rather than trusting this one.
+- **No `\b`.** `git grep -E` is POSIX ERE, where `\b` matches nothing, so the natural spelling of
+  this pattern returns an empty list and reports that the release changed no serialization owner.
+  Same failure as gate C — a check that answers the wrong question and calls the silence a pass.
+
+The list is still only a starting point. Step 1 is what guarantees an unmatched file gets looked
+at: a persistence change spelled in a way no pattern here anticipates is caught by having to
+dismiss the file by name, not by this command.
 
 The trigger lives here rather than in `references/surfaces.md` because you classify triggers before
 you open any reference; a trigger that pointed at the inventory would need the inventory read first,
@@ -237,10 +267,18 @@ array is a story that silently shows nothing.
 ### E. Account Worker — `apps/auth-api/`
 
 Triggered by **any** addition, modification, deletion or rename under `apps/auth-api/migrations/`,
-or a change to any non-UI file under `apps/auth-api/src/`. That is wider than `routes/` and
-`server/` on purpose: `worker-entry.ts` is the deployed Worker's default export, and `router.tsx`
-builds the router from `routeTree.gen.ts`. Those three decide what is actually served, so a `/v1` or
+a change to any non-UI file under `apps/auth-api/src/`, or a change to `.github/workflows/ci.yml`.
+
+The `src/` half is wider than `routes/` and `server/` on purpose: `worker-entry.ts` is the deployed
+Worker's default export and `router.tsx` builds the router from `routeTree.gen.ts`, so a `/v1` or
 `/v2` endpoint can be removed or shadowed there while every file under `routes/` is untouched.
+
+`ci.yml` is in the list because the deploy-race hazard below is a property of the *workflow*, not of
+`apps/auth-api/`. It holds only while "Apply production D1 migrations" runs before the Worker
+deploy in the same job. Reorder those steps, drop the migration step, or move either into another
+workflow, and production runs a Worker against a schema it was never deployed against — with
+nothing under `apps/auth-api/` modified and the gate otherwise reporting "not triggered". Re-read
+the step order every time that file changes; do not assume the order you were told about here.
 
 ```bash
 git diff --stat --diff-filter=AMDR <tag>..HEAD -- apps/auth-api/migrations
@@ -278,7 +316,12 @@ sibling `*-migration.test.ts` files in `apps/auth-api/test/` that cover what you
 
 ### F. The updater itself — `electron-builder.yml`, `src/main/update-service.ts`, `package.json`
 
-Triggered by a change to any of those, or to `package.json` dependencies.
+Triggered by a change to any of those, to `package.json` dependencies, or to the two files that
+enforce this gate at release time: `scripts/verify-update-artifacts.ts` and
+`.github/workflows/release.yml`. A change that relaxes a size limit, drops a manifest or blockmap
+check, or alters what gets published is exactly the change this gate should stop, and neither file
+lives under the paths above — so without them listed, weakening the safeguard reads as "not
+triggered". Diff the thresholds and the checks themselves, not only the code they guard.
 
 - `appId`, the `publish` owner and repo, `artifactName` and `electronUpdaterCompatibility` are
   unchanged. A changed `appId` breaks the update feed and the `safeStorage` files at once — the
@@ -321,7 +364,9 @@ Report a table:
 
 Then state the stops explicitly. Any one of these means **the version is not cuttable yet**:
 
-- a modified or deleted frozen Team API codec or fixture;
+- a frozen Team API codec, adapter or fixture that was deleted, renamed, or modified **in a way
+  that can change what an encoded payload means** — the narrow exception gate C allows, a hunk that
+  provably cannot alter the wire, is not a stop, and gate C is where that call gets made;
 - a DDL migration not mirrored into `LATEST_SCHEMA_SQL`;
 - a renamed on-disk file, or a bumped stored `version`, with no read path for the old one;
 - a D1 contraction without the two-step release;
