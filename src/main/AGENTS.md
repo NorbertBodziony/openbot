@@ -83,6 +83,14 @@ from the tests that appeared to cover them. `FakeEventSocket` gets that right on
 `foo.ts` / `foo.test.ts`; the `agent-service.*.test.ts` pattern in `src/backend` is not the model
 here, because that one divides the tests of a class that refused to divide.
 
+`team-api-server.*.test.ts` is the one place that pattern *is* right, and for the same reason it is
+wrong above: `TeamApiServer` is a class that will not divide. Every case drives real HTTP against a
+real listener on a real port, so the only seam between two cases is the route they call - which is
+why the suite is cut by domain, alongside the route modules, rather than by unit. Its fixtures are
+`team-api-server-test-harness.ts`, and its header says what the harness will not default for you and
+why each of those defaults would quietly change what a case tests. `host-service.test.ts` came out of
+the same file: it was the block testing a different class.
+
 `electron` cannot be imported outside an Electron process, so a test for anything in here mocks it.
 `trusted-ipc.test.ts` shows the pattern: `vi.hoisted` a registrations `Map`, `vi.mock("electron")`
 to capture into it, then invoke the captured listener with a fabricated sender frame. Mocking is
@@ -111,6 +119,42 @@ not in the manager, whose job is to own the IPC surface and wire these together.
 they *meet*: the request path never names the event stream and the event stream never names the error
 path, so a callback passed in its constructor is how the two are connected. That indirection is the
 design, not an accident to tidy up.
+
+`team-api-server.ts` went the same way, one level down. The class, the WebSocket side and the
+lifecycle stay in it; the routes live in `src/main/team-api/`, one file per domain, each exporting a
+`route*(context, deps)` that answers `"handled"` or `"unmatched"` and declaring its own narrow
+`*RouteDependencies` in the shape `src/main/ipc/` uses:
+
+| Concern | File |
+| --- | --- |
+| the shared vocabulary: the class every route throws, the service types, the parsers, the context | `http-error.ts`, `dependencies.ts`, `request-helpers.ts`, `request-context.ts` |
+| members, invitations, sessions, presence, the account routes behind auth | `route-team.ts` |
+| one domain each | `route-remote-screen.ts`, `route-direct.ts`, `route-browser.ts`, `route-files.ts` |
+| the agent collection and the sole `/v1/agents/:botId` regex, which owns the four below | `route-agents.ts` |
+| one agent sub-resource each | `route-agent-memories.ts`, `route-agent-routines.ts`, `route-agent-conversation.ts`, `route-agent-queue.ts` |
+
+A new endpoint goes in the module for its domain, and nothing else has to be read. Four invariants
+hold the split together, and the wire protocol is frozen (root AGENTS.md, Non-negotiable), so none of
+them is a preference:
+
+- **The gates run in order**: `compatibility`, then the remote-screen delegation, then the protocol
+  gate, then a path-independent 401. `compatibility` first is what stops an out-of-date client
+  looping on 426 with no way to read the endpoint telling it to update; the delegation above the
+  protocol gate is because a browser fetching the viewer sends no protocol header and no token; the
+  401 above the routes is why an unknown path without a token is 401 and not 404.
+- **The dispatcher owns the only 404.** A module that does not serve a path *or its method* returns
+  `"unmatched"` and never answers on its own. This is what keeps a wrong method on a known path
+  answering 404 rather than 405, which is what the released clients were built against.
+- **The dispatcher owns the only `catch`.** A local one would cut an unexpected error off from the
+  logger and answer 400 where the truth was a 500.
+- **`HttpError` has one definition**, in `http-error.ts`. The catch classifies by `instanceof`, so a
+  second copy silently turns every 400 into a 500 and no round-trip test sees it.
+
+The last statement of every route module is `return "unmatched"`, and what enforces that is the
+declared `Promise<RouteOutcome>` rather than the convention: falling out of the end is TS2366,
+"function lacks ending return statement". There is no `noImplicitReturns` here, so the annotation is
+the whole guard - a module that drops it gets `undefined` inferred, and `undefined` reads as a silent
+404. `tsc` covers this, so it does not want a test.
 
 Three things are deliberately not unified, and each says so in its own file header: the `FromHost`
 decoders and their `FromMain` twins in `src/preload/index.ts` (different trust boundaries), the HTTPS

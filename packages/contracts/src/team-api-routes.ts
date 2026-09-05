@@ -1,6 +1,6 @@
 // Every Team API path the desktop builds, in one place.
 //
-// The host router in `src/main/team-api-server.ts` and the client in `src/main/remote-server-client.ts`
+// The host router in `src/main/team-api/` and the client in `src/main/remote-server-client.ts`
 // are two hand-written halves of one HTTP surface, and until this table every path was a bare string
 // literal on both of them - plus a third copy in the IPC handlers that call through. Nothing linked
 // the copies, so a rename that missed one half broke every remote server silently. The IPC channel
