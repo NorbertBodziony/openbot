@@ -1,51 +1,51 @@
-# Plan 002: TanStack Start, Solid 2, Cloudflare Workers i D1
+# Plan 002: TanStack Start, Solid 2, Cloudflare Workers and D1
 
-## Cel
+## Goal
 
-Centralny serwer kont działa jako osobna aplikacja TanStack Start z Solid 2.
-Cloudflare Workers hostuje aplikację. D1 przechowuje użytkowników, krótkie dane
-logowania i sesje OpenBota.
+The central account server runs as a separate TanStack Start application with
+Solid 2. Cloudflare Workers hosts the application. D1 stores users, short-lived
+sign-in data and OpenBot sessions.
 
-## Kontrakt konta
+## Account contract
 
-- Unikalny adres email identyfikuje użytkownika dla hostów.
-- API wysyła jednorazowy kod w formacie `XXXX-XXXX`.
-- Kod używa 32 bezpiecznych znaków i ma około 40 bitów entropii.
-- Kod jest ważny przez 10 minut i można go użyć tylko raz.
-- D1 przechowuje tylko skrót kodu.
-- API nie przyjmuje i nie zapisuje hasła OpenBota.
-- API zapisuje tylko skrót tokenu sesji OpenBota.
-- Electron zapisuje zaszyfrowany token sesji przez `safeStorage`.
+- A unique email address identifies the user to the hosts.
+- The API sends a one-time code in the `XXXX-XXXX` format.
+- The code uses 32 safe characters and carries about 40 bits of entropy.
+- The code is valid for 10 minutes and can be used only once.
+- D1 stores only a hash of the code.
+- The API neither accepts nor stores an OpenBot password.
+- The API stores only a hash of the OpenBot session token.
+- Electron stores the encrypted session token through `safeStorage`.
 
-## Limity
+## Limits
 
-- Maksymalnie 5 nowych kodów dla emaila w ciągu 15 minut.
-- Maksymalnie 20 nowych kodów dla IP w ciągu 15 minut.
-- Co najmniej 60 sekund pomiędzy kodami dla tego samego emaila.
-- Maksymalnie 5 błędnych prób dla jednego kodu.
-- Maksymalnie 30 prób weryfikacji dla IP w ciągu 15 minut.
+- At most 5 new codes per email within 15 minutes.
+- At most 20 new codes per IP within 15 minutes.
+- At least 60 seconds between codes for the same email.
+- At most 5 failed attempts per code.
+- At most 30 verification attempts per IP within 15 minutes.
 
-## Przepływ
+## Flow
 
-1. Electron wysyła email do `POST /v1/auth/email/start`.
-2. API zapisuje skrót kodu oraz limit czasu w D1.
-3. Adapter wysyłki przekazuje kod do usługi email.
-4. Użytkownik wpisuje kod w aplikacji.
-5. Electron wywołuje `POST /v1/auth/email/verify`.
-6. API zużywa kod i zwraca sesję OpenBota.
+1. Electron sends the email to `POST /v1/auth/email/start`.
+2. The API stores the code hash and the expiry in D1.
+3. The delivery adapter hands the code to the email service.
+4. The user types the code into the app.
+5. Electron calls `POST /v1/auth/email/verify`.
+6. The API consumes the code and returns an OpenBot session.
 
-## Połączenie z whitelistą hosta
+## Connection to the host whitelist
 
-- Następny etap zmienia członka teamu na `centralUserId + email + role`.
-- Host nie przechowuje hasła ani nickname członka.
-- Centralne API wydaje krótki, podpisany ticket dla konkretnego hosta.
-- Host sprawdza ticket i lokalną whitelistę email lub user ID.
+- The next stage changes a team member into `centralUserId + email + role`.
+- The host stores neither the password nor the nickname of a member.
+- The central API issues a short, signed ticket for one specific host.
+- The host validates the ticket and the local email or user ID whitelist.
 
-## Polecenia
+## Commands
 
-- `bun run api` uruchamia lokalny Worker i D1.
-- `bun run dev` uruchamia klienta Electron.
-- `bun run host` uruchamia osobny profil hosta.
-- `bun run dev:all` uruchamia API, klienta i hosta.
-- `bun run api:migrate:local` stosuje lokalne migracje D1.
-- `bun run api:deploy` wdraża Worker po ustawieniu konfiguracji Cloudflare.
+- `bun run api` starts the local Worker and D1.
+- `bun run dev` starts the Electron client.
+- `bun run host` starts a separate host profile.
+- `bun run dev:all` starts the API, the client and the host.
+- `bun run api:migrate:local` applies the local D1 migrations.
+- `bun run api:deploy` deploys the Worker once the Cloudflare configuration is set.
