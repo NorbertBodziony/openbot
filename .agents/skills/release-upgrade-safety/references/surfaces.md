@@ -64,6 +64,30 @@ use the key-inventory diff there instead. Derive the set rather than reading it 
 The three `:v1` suffixes are the renderer's own version handling: bumping one to `:v2` abandons the
 old entry rather than migrating it, so it resets that state for every installed user.
 
+`sidebar-pins.ts` also carries `reownSidebarPinnedItems`, which rewrites a stored `bot-<uuid>` pin to
+the matching `agent-<uuid>`. It is the reason gate B reads owners and not only keys: that migration
+changed the value under an unchanged key, so a key-only diff reports it as clean.
+
+## Mobile and shared team-client
+
+The phone and the shared client keep their own state, on their own storage, with their own upgrade
+cycle. Keys here are dot-separated, not colon-separated like the renderer's.
+
+| Key | Owner | Note |
+| --- | --- | --- |
+| `openbot.mobile.session.v1` | `apps/mobile/src/features/auth/api/mobile-auth.ts` | `SecureStore`; an undecodable session is **deleted** (`deleteItemAsync`), signing the user out |
+| `openbot.mobile.device-id.v1` | `apps/mobile/src/features/auth/api/mobile-auth.ts` | `SecureStore`; losing it abandons the device identity |
+| `openbot.host-key.v1.<scope>.<fingerprint>` | `apps/mobile/src/features/workspace/model/trusted-host-keys.ts` | `SecureStore`; host trust, so resetting it re-prompts for every host |
+| `openbot.workspace.v1.<scope>.<fingerprint>` | `packages/team-client/src/workspace-preferences.ts` | guards `value.version !== 1` |
+| `openbot.remote-desktop.signal.v1` | `packages/team-client/src/remote-peer.ts`, `src/renderer/src/features/team/team-webrtc.ts` | shared by the desktop renderer, not mobile-only |
+
+The middle two are built with a template literal, so **no key-literal query returns them** — they are
+the standing reason gate B reads owner files as well as keys.
+
+The paired-phones note under `## [Unreleased]` in `CHANGELOG.md` is what this surface looks like when
+it breaks: agent identifiers changed, the phone still held the old ones, and the only remedy was for
+the user to re-pair. Gate B is what should catch the next one before gate G has to apologise for it.
+
 ## `~/OpenBot`
 
 Built in the `AgentStore` constructor, `src/backend/agent-store.ts`:

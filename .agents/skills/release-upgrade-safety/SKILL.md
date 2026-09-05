@@ -73,11 +73,22 @@ git diff --name-only <tag>..HEAD | cut -d/ -f1-2 | sort | uniq -c | sort -rn
 Then handle each bucket one of three ways, and say in the Step 3 table which one you used:
 
 - **Dismissed as a bucket**, with the reason stated once. A bucket qualifies only if you can say
-  what makes *every* file in it inert. `**/*.test.ts`, `docs/**`, `tools/**` and
-  `src/renderer/stories/**` are not in the shipped app at all, which is such a reason. "Nothing
-  looked interesting" is not. **`src/renderer/**` does not qualify** — the renderer writes
-  `localStorage`, that store lives in the user's Electron partition, and it outlives the build that
-  wrote it exactly the way a file under `userData` does. Route it through gate B instead.
+  what makes *every* file in it inert. `docs/**`, `tools/**` and `src/renderer/stories/**` are not
+  in the shipped app at all, which is such a reason. "Nothing looked interesting" is not. Two
+  buckets that look dismissible and are not:
+  - **`src/renderer/**`** — the renderer writes `localStorage`, that store lives in the user's
+    Electron partition, and it outlives the build that wrote it exactly the way a file under
+    `userData` does. Route it through gate B.
+  - **The tests a gate relies on.** "Not in the shipped app" is true of every test and irrelevant
+    for these, because a gate that delegates its check to a test inherits that test's weakening.
+    `openbot-database-schema-parity.test.ts` is the whole mechanical half of gate A's DDL rule;
+    `openbot-database.test.ts` carries the downgrade guard; `ipc-channel-coverage.test.ts` is gate
+    D's only static link between main and preload; `electron-updater-assumptions.test.ts` pins the
+    updater behaviour gate F rests on; the `v*.test.ts` files are gate C's. A change that makes one
+    of those assertions vacuous passes every later gate, and once it is tagged the weakening is
+    behind the range every future audit starts from. Route a modification or deletion of one
+    through the gate that names it and read the hunks. Other `**/*.test.ts` files dismiss as a
+    bucket normally.
 - **Cleared by a derived query.** This is how a large hazard-bearing directory gets honestly
   covered: gate B's `git grep` over `src/main` and `src/backend` names every file that decodes a
   versioned payload, so the other two hundred are cleared by the query having asked the right
@@ -188,28 +199,66 @@ far less than the file inventory in `references/surfaces.md`, the pattern is bro
 release clean. Step 1 is what actually guarantees an unmatched file gets looked at — a persistence
 change spelled in a way no pattern anticipates is caught by having to dismiss the file by name.
 
-**The renderer persists too, and its store is not on any of the lists above.** `localStorage` lives
-in the user's Electron partition, so it survives an upgrade exactly the way a file under `userData`
-does — sidebar pins, collapsed sections, people order, panel widths and the completion-sound
-preference are all kept there. The query above never reaches it, because the renderer keys its state
-by string rather than guarding a `version` field. Run the key inventory as a second derived list:
+**Three surfaces persist outside `userData` and none of them is on the lists above.** The renderer's
+`localStorage` lives in the user's Electron partition; the mobile app's `SecureStore` and
+`AsyncStorage` live on the phone; `packages/team-client` writes workspace preferences through a
+storage interface both of them supply. All three outlive the build that wrote them exactly the way a
+file under `userData` does, and the query above reaches none of them — it is scoped to `src/main`
+and `src/backend`, and these keep state under a string key rather than guarding a `version` field.
+
+Widen the first query's pathspec to include `'apps/mobile/src/*.ts'` and
+`'packages/team-client/src/*.ts'` — that is what catches `workspace-preferences.ts`, which does
+guard `value.version !== 1`. Then run the key inventory as a second derived list:
 
 ```bash
-git grep -hoE '"openbot:[a-z0-9:-]+"' <tag> -- 'src/renderer/src/**' \
-  ':(exclude)*.test.ts' ':(exclude)*.test.tsx' | sort -u > /tmp/keys-tag.txt
-git grep -hoE '"openbot:[a-z0-9:-]+"' HEAD -- 'src/renderer/src/**' \
-  ':(exclude)*.test.ts' ':(exclude)*.test.tsx' | sort -u > /tmp/keys-head.txt
-diff /tmp/keys-tag.txt /tmp/keys-head.txt
+keys() { git grep -hoE '"openbot[.:][a-zA-Z0-9.:_-]+"' "$1" -- \
+  'src/renderer/src/**' 'apps/mobile/src/**' 'packages/team-client/src/**' \
+  ':(exclude)*.test.ts' ':(exclude)*.test.tsx' | sort -u; }
+diff <(keys <tag>) <(keys HEAD)
 ```
 
-A key that disappears from the tag side is the renderer's version of a renamed filename constant:
+Process substitution rather than two files in `/tmp`: several agents work in worktrees on this
+machine at once, and a fixed temporary name lets one audit read another range's inventory and call
+a renamed key clean. **`openbot[.:]` covers both spellings** — the renderer uses colons
+(`openbot:sidebar-pins:v1`), mobile and team-client use dots (`openbot.mobile.session.v1`), and a
+pattern written for one silently returns half the set. It still only sees string literals, and two
+keys are built in templates and never appear at all — `workspace-preferences.ts` composes
+`openbot.workspace.v1.${scope}.${fingerprint}` and `trusted-host-keys.ts` composes
+`openbot.host-key.v1.${scope}.${fingerprint}`, the second holding per-host trust. Widen the pattern
+when you meet a third spelling rather than trusting this one, and treat the key diff as necessary
+rather than sufficient.
+
+A key that disappears from the tag side is these surfaces' version of a renamed filename constant:
 the old entry is never read again, never cleaned up, and the user's state is silently back to
-defaults. Three keys already carry their own version suffix — `openbot:sidebar-pins:v1`,
-`openbot:sidebar-collapsed:v1`, `openbot:sidebar-people-order:v1` — so bumping one to `:v2` is a
-deliberate reset and needs the same justification as a `userData` version bump, plus a
-`CHANGELOG.md` note under gate G if the user has to redo anything. Moving a file between directories
-does not rename its key, so expect the owner list to churn while the key list stays still; it is the
-`diff` that matters, not which file holds the literal.
+defaults. Several keys carry their own version suffix — `openbot:sidebar-pins:v1`,
+`openbot.mobile.session.v1`, `openbot.mobile.device-id.v1` — so bumping one is a deliberate reset
+needing the same justification as a `userData` version bump, plus a `CHANGELOG.md` note under gate G.
+
+**An unchanged key list is not a clean result — read the owners too.** The value under a key can
+change shape while the key never moves, and that is the more likely half: it is a schema tightened,
+an enum member renamed, an id format rewritten. Derive the owners the same way, union both
+revisions, and read the hunks of any that the release touched:
+
+```bash
+git grep -lE '"openbot[.:]|localStorage|SecureStore|AsyncStorage' <tag> HEAD -- \
+  'src/renderer/src/**' 'apps/mobile/src/**' 'packages/team-client/src/**' \
+  ':(exclude)*.test.ts' ':(exclude)*.test.tsx' | sed 's/^[^:]*://' | sort -u
+```
+
+**No one of these three passes is sufficient, and they fail in different directions.** Check that
+each of the two files with a templated key lands somewhere: `trusted-host-keys.ts` appears here
+because it names `SecureStore`, and is invisible to both other passes; `workspace-preferences.ts`
+appears in *neither* the key list nor this one — it takes its storage as an injected parameter and
+names no API — and is reached only by the widened `version` query above. If a file you know persists
+is missing from all three, the patterns are what is broken.
+
+Expect this list to churn when files move between directories while the key list stays still — it is
+the *hunks* that matter here, not the paths. `sidebar-pins.ts` is the worked example, and it is the
+reason this paragraph exists: the release that renamed the product concept left
+`openbot:sidebar-pins:v1` and its Zod schema untouched and added `reownSidebarPinnedItems`, which
+rewrites every stored `bot-<uuid>` pin to the matching `agent-<uuid>`. All of the migration lived
+inside the value. Had it been forgotten, every user's pins would point at ids the app no longer
+knows and would be dropped on the next read — and the key diff above would still print nothing.
 
 The trigger lives here rather than in `references/surfaces.md` because you classify triggers before
 you open any reference; a trigger that pointed at the inventory would need the inventory read first,
