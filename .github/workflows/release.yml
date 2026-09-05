@@ -245,7 +245,7 @@ jobs:
           shasum -a 256 "${artifacts[@]}" > SHA256SUMS-macos.txt
 
       - name: Generate macOS release SBOM
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           path: dist/mac-arm64/OpenBot.app
           format: spdx-json
@@ -376,7 +376,7 @@ jobs:
           "$hash  $($installer[0].Name)" | Set-Content -Encoding ascii dist/SHA256SUMS-windows.txt
 
       - name: Generate Windows release SBOM
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           path: dist/win-unpacked
           format: spdx-json
