@@ -137,10 +137,11 @@ A new endpoint goes in the module for its domain, and nothing else has to be rea
 hold the split together, and the wire protocol is frozen (root AGENTS.md, Non-negotiable), so none of
 them is a preference:
 
-- **The gates run in three stages, in order**: the remote-screen delegation, then `compatibility`,
-  then the protocol gate, then a path-independent 401. `compatibility` above the protocol gate is
-  what stops an out-of-date client looping on 426 with no way to read the endpoint telling it to
-  update; the 401 above the routes is why an unknown path without a token is 401 and not 404.
+- **The gates run in order**: `compatibility`, then the remote-screen delegation, then the protocol
+  gate, then a path-independent 401. `compatibility` first is what stops an out-of-date client
+  looping on 426 with no way to read the endpoint telling it to update; the delegation above the
+  protocol gate is because a browser fetching the viewer sends no protocol header and no token; the
+  401 above the routes is why an unknown path without a token is 401 and not 404.
 - **The dispatcher owns the only 404.** A module that does not serve a path *or its method* returns
   `"unmatched"` and never answers on its own. This is what keeps a wrong method on a known path
   answering 404 rather than 405, which is what the released clients were built against.
