@@ -12,11 +12,11 @@ import { createEffect, createSignal, onCleanup, onSettled, Show } from "solid-js
 import { expect, fireEvent, fn, waitFor, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { clipboardFiles } from "../../preload/clipboard-files";
-import { Conversation, createConversationController } from "../src/components/Conversation";
-import { BrowserTakeoverCard } from "../src/components/ConversationPrompts";
-import { ConversationView } from "../src/components/ConversationView";
-import { ConversationControllerProvider } from "../src/components/conversation-controller-context";
 import type { AgentMessage as RendererAgentMessage } from "../src/data";
+import { Conversation, createConversationController } from "../src/features/conversation/Conversation";
+import { BrowserTakeoverCard } from "../src/features/conversation/ConversationPrompts";
+import { ConversationView } from "../src/features/conversation/ConversationView";
+import { ConversationControllerProvider } from "../src/features/conversation/conversation-controller-context";
 import browserTakeoverPreviewUrl from "./assets/browser-takeover-preview.svg";
 import {
   STORY_AGENT_STATUS,
@@ -244,7 +244,7 @@ const agentMessageGalleryMessages: RendererAgentMessage[] = [
       "",
       "Review [OpenBot documentation](https://openbot.run/docs), the [Kobalte guide](https://kobalte.dev/docs/core/overview/introduction), and https://zaidan.carere.dev/docs/components/kobalte/bubble.",
       "",
-      "You can also open [ConversationView.tsx](/Users/test/OpenBot/src/renderer/src/components/ConversationView.tsx), ask @Research, or inspect the attached source file below.",
+      "You can also open [ConversationView.tsx](/Users/test/OpenBot/src/renderer/src/features/conversation/ConversationView.tsx), ask @Research, or inspect the attached source file below.",
       "",
       `Attachment reference: ${serializeAttachmentReference(STORY_ATTACHMENTS[0].name, STORY_ATTACHMENTS[0].id)}.`,
       "",
@@ -303,7 +303,7 @@ const agentMessageGalleryMessages: RendererAgentMessage[] = [
       "",
       "```bash verify-chat.sh",
       "bun run typecheck:renderer",
-      "bunx vitest run src/renderer/src/components/conversation/MessageRendering.test.tsx",
+      "bunx vitest run src/renderer/src/features/conversation/MessageRendering.test.tsx",
       "```",
     ].join("\n"),
     time: "10:05",

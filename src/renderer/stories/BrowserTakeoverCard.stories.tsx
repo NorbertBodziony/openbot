@@ -1,7 +1,7 @@
 import type { BrowserPreview, BrowserTab } from "@openbot/contracts/ipc";
 import { fn } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
-import { BrowserTakeoverCard } from "../src/components/ConversationPrompts";
+import { BrowserTakeoverCard } from "../src/features/conversation/ConversationPrompts";
 import browserTakeoverPreviewUrl from "./assets/browser-takeover-preview.svg";
 
 const tab: BrowserTab = {

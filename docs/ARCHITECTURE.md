@@ -62,8 +62,9 @@ renderer ──► @openbot/contracts ◄── preload ◄── main ──►
 5. Keep Electron entry points small. New features use a service or a focused IPC input module.
 6. Do not add a second linter or formatter. Biome and its repository-owned anti-slop plugins are the
    only repository lint and format tools.
-7. Put renderer state in a domain context module at the root of `src/renderer/src`, and place it by
-   lifetime: state that belongs to one team server goes inside the keyed scope in
+7. Put renderer state in a domain context module inside that domain's feature directory,
+   `src/renderer/src/features/<domain>/<domain>-context.tsx`, beside the logic, views and tests that
+   read it, and place it by lifetime: state that belongs to one team server goes inside the keyed scope in
    `app-providers.tsx`, everything else above it. A server switch discards and rebuilds that scope,
    so it is the only per-server teardown there is - a signal on the wrong side of that boundary
    either survives a switch it should not or dies in one it should not, and no list of setters can

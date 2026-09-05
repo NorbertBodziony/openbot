@@ -1,15 +1,15 @@
 import { createSignal } from "solid-js";
-import { useAgents } from "./agents";
 import { desktopAnalytics } from "./analytics";
 import { toAgentMessage } from "./app-message-projection";
-import { useConversation } from "./conversation";
-import { agentConversationKey } from "./conversation-keys";
 import type { AgentMessage } from "./data";
-import { useDirectMessages } from "./direct-messages";
+import { useAgents } from "./features/agents/agents-context";
+import { useConversation } from "./features/conversation/conversation-context";
+import { agentConversationKey } from "./features/conversation/conversation-keys";
+import { useDirectMessages } from "./features/conversation/direct-messages-context";
+import { useServers } from "./features/servers/servers-context";
+import { usePresence } from "./features/team/team-context";
 import { usePlatform } from "./platform";
-import { usePresence } from "./presence";
 import { createScopeGuard } from "./scope-lifetime";
-import { useServers } from "./servers";
 import { createSimpleContext } from "./simple-context";
 
 /**

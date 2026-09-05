@@ -87,7 +87,7 @@
   },
   "overrides": [
     {
-      "includes": ["src/renderer/src/styles/app-shell.css", "src/renderer/src/styles/conversation.css"],
+      "includes": ["src/renderer/src/styles/app-shell.css", "src/renderer/src/features/conversation/conversation.css"],
       "linter": {
         "rules": {
           "style": {
@@ -112,6 +112,16 @@
         "rules": {
           "suspicious": {
             "noConsole": "error"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/**/*.ts", "src/**/*.tsx"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noUndeclaredDependencies": "error"
           }
         }
       }

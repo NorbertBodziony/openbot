@@ -1,0 +1,229 @@
+import type { DynamicIslandAction, DynamicIslandPreference, DynamicIslandPresentation } from "@openbot/contracts/ipc";
+import { DEFAULT_DYNAMIC_ISLAND_PREFERENCE, IDLE_DYNAMIC_ISLAND_PRESENTATION } from "@openbot/contracts/ipc";
+import { createSignal, onSettled, Show } from "solid-js";
+import type {
+  DynamicIslandNotchSize,
+  DynamicIslandStateChangeReason,
+  DynamicIslandViewState,
+} from "../../components/ui";
+import { OpenBotDynamicIsland } from "./OpenBotDynamicIsland";
+
+const DEFAULT_NOTCH_WIDTH = 192;
+const DEFAULT_NOTCH_HEIGHT = 32;
+const DEFAULT_NOTCH_SIZE: DynamicIslandNotchSize = {
+  width: DEFAULT_NOTCH_WIDTH,
+  height: DEFAULT_NOTCH_HEIGHT,
+};
+
+export function DynamicIslandSurface() {
+  const query = new URLSearchParams(window.location.search);
+  const displayMode = query.get("display") === "island" ? "island" : "notch";
+  const notchWidth = readPositivePixelValue(query.get("notch-width"), DEFAULT_NOTCH_WIDTH);
+  const notchHeight = readPositivePixelValue(query.get("notch-height"), DEFAULT_NOTCH_HEIGHT);
+  const initialNotchSize: DynamicIslandNotchSize = { width: notchWidth, height: notchHeight };
+  const [notchSize, setNotchSize] = createSignal<DynamicIslandNotchSize>(initialNotchSize);
+  const [presentation, setPresentation] = createSignal(IDLE_DYNAMIC_ISLAND_PRESENTATION);
+  const [preference, setPreference] = createSignal<DynamicIslandPreference>({
+    ...DEFAULT_DYNAMIC_ISLAND_PREFERENCE,
+  });
+  const [viewState, setViewState] = createSignal<DynamicIslandViewState>("compact");
+  let pointerInside = false;
+  let focusInside = false;
+  let queuedPresentation: DynamicIslandPresentation | undefined;
+
+  function applyPresentation(next: DynamicIslandPresentation): void {
+    if (
+      interactionLocksPresentation(presentation(), next, pointerInside || focusInside || viewState() === "expanded")
+    ) {
+      queuedPresentation = next;
+      return;
+    }
+    commitPresentation(next);
+  }
+
+  function commitPresentation(next: DynamicIslandPresentation): void {
+    setPresentation(next);
+    if (next.mode === "idle") {
+      setViewState("compact");
+      if (!preference().idleVisible) closeInteraction();
+    }
+  }
+
+  function applyPreference(next: DynamicIslandPreference): void {
+    setPreference(next);
+    if (!next.idleVisible && presentation().mode === "idle") {
+      setViewState("compact");
+      closeInteraction();
+    }
+  }
+
+  function changeViewState(next: DynamicIslandViewState, reason: DynamicIslandStateChangeReason): void {
+    if (reason === "pointer" || reason === "keyboard" || reason === "escape") performHaptic();
+    setViewState(next);
+    if (next === "compact" && !pointerInside && !focusInside) applyQueuedPresentation();
+  }
+
+  function applyQueuedPresentation(): void {
+    const next = queuedPresentation;
+    queuedPresentation = undefined;
+    if (next) commitPresentation(next);
+  }
+
+  function syncInteractive(): void {
+    void window.openbot.dynamicIsland.setInteractive({ interactive: pointerInside || focusInside });
+  }
+
+  function beginPointerInteraction(): void {
+    pointerInside = true;
+    syncInteractive();
+  }
+
+  function endPointerInteraction(): void {
+    pointerInside = false;
+    if (viewState() === "compact" && !focusInside) applyQueuedPresentation();
+    syncInteractive();
+  }
+
+  function beginFocusInteraction(): void {
+    focusInside = true;
+    syncInteractive();
+  }
+
+  function endFocusInteraction(): void {
+    focusInside = false;
+    if (viewState() === "compact" && !pointerInside) applyQueuedPresentation();
+    syncInteractive();
+  }
+
+  function closeInteraction(): void {
+    pointerInside = false;
+    focusInside = false;
+    if (viewState() === "compact") applyQueuedPresentation();
+    syncInteractive();
+  }
+
+  function enterInteraction(event: MouseEvent & { currentTarget: HTMLFieldSetElement }): void {
+    if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
+    if (!pointerInside) performHaptic();
+    beginPointerInteraction();
+  }
+
+  function leaveInteraction(event: MouseEvent & { currentTarget: HTMLFieldSetElement }): void {
+    if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
+    endPointerInteraction();
+  }
+
+  function leaveFocusInteraction(event: FocusEvent & { currentTarget: HTMLFieldSetElement }): void {
+    if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
+    endFocusInteraction();
+  }
+
+  async function perform(action: DynamicIslandAction): Promise<void> {
+    performHaptic();
+    try {
+      await window.openbot.dynamicIsland.performAction(action);
+    } catch {
+      return;
+    }
+    pointerInside = false;
+    focusInside = false;
+    setViewState("compact");
+    applyQueuedPresentation();
+    await window.openbot.dynamicIsland.setInteractive({ interactive: false });
+  }
+
+  function performHaptic(): void {
+    void window.openbot.dynamicIsland.performHaptic().catch(() => undefined);
+  }
+
+  onSettled(() => {
+    void window.openbot.dynamicIsland
+      .getPresentation()
+      .then(applyPresentation)
+      .catch(() => undefined);
+    void window.openbot.dynamicIsland
+      .getPreference()
+      .then(applyPreference)
+      .catch(() => undefined);
+    const stopPreference = window.openbot.dynamicIsland.onPreference(applyPreference);
+    const stopPresentation = window.openbot.dynamicIsland.onPresentation(applyPresentation);
+    const stopGeometry = window.openbot.dynamicIsland.onGeometry((next) => setNotchSize(next ?? DEFAULT_NOTCH_SIZE));
+    const close = () => {
+      pointerInside = false;
+      focusInside = false;
+      setViewState("compact");
+      applyQueuedPresentation();
+      void window.openbot.dynamicIsland.setInteractive({ interactive: false });
+    };
+    window.addEventListener("blur", close);
+    return () => {
+      stopPreference();
+      stopPresentation();
+      stopGeometry();
+      window.removeEventListener("blur", close);
+    };
+  });
+  return (
+    <main class="dynamic-island-surface" aria-label="OpenBot MacBook notch">
+      <Show when={presentation().mode !== "idle" || preference().idleVisible}>
+        <fieldset
+          class="dynamic-island-surface-anchor"
+          aria-label="Dynamic Island interaction area"
+          onMouseOver={enterInteraction}
+          onMouseOut={leaveInteraction}
+          onFocus={beginFocusInteraction}
+          onFocusIn={beginFocusInteraction}
+          onBlur={leaveFocusInteraction}
+          onFocusOut={leaveFocusInteraction}
+        >
+          <OpenBotDynamicIsland
+            presentation={presentation()}
+            state={viewState()}
+            displayMode={displayMode}
+            notchSize={displayMode === "notch" ? notchSize() : undefined}
+            extendedHoverArea
+            onStateChange={changeViewState}
+            onAction={perform}
+            onHaptic={performHaptic}
+          />
+        </fieldset>
+      </Show>
+    </main>
+  );
+}
+
+function readPositivePixelValue(value: string | null, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function interactionLocksPresentation(
+  current: DynamicIslandPresentation,
+  next: DynamicIslandPresentation,
+  interacting: boolean,
+): boolean {
+  if (!interacting || !isCriticalPresentation(current)) return false;
+  return presentationIdentity(current) !== presentationIdentity(next);
+}
+
+function isCriticalPresentation(presentation: DynamicIslandPresentation): boolean {
+  return (
+    presentation.mode === "approval" ||
+    presentation.mode === "question" ||
+    presentation.mode === "takeover" ||
+    presentation.mode === "failed"
+  );
+}
+
+function presentationIdentity(presentation: DynamicIslandPresentation): string {
+  if (presentation.mode === "approval" || presentation.mode === "question" || presentation.mode === "takeover") {
+    return `${presentation.serverId}:${presentation.mode}:${String(presentation.item.requestId)}`;
+  }
+  if (presentation.mode === "failed") {
+    return `${presentation.serverId}:${presentation.mode}:${presentation.item.turnId}`;
+  }
+  if (presentation.mode === "message") {
+    return `${presentation.serverId}:${presentation.mode}:${presentation.message.messageId}`;
+  }
+  return `${presentation.serverId}:${presentation.mode}`;
+}

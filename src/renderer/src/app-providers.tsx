@@ -1,37 +1,40 @@
 import type { JSX } from "@solidjs/web";
 import { createMemo, type ParentProps, Show } from "solid-js";
-import { AgentActionsProvider } from "./agent-actions";
-import { AgentEventBridge } from "./agent-event-bridge";
-import { AgentReadTrackingProvider } from "./agent-read-tracking";
-import { AgentsProvider } from "./agents";
 import { AnsweredPromptsProvider } from "./answered-prompts";
 import { AppBootstrap } from "./app-bootstrap";
-import { AuthProvider } from "./auth";
-import { BrowserTabsProvider } from "./browser-tabs";
-import { createServerConversationState, createStableConversationState } from "./components/conversation-controller";
-import { ConversationControllerProvider } from "./components/conversation-controller-context";
-import { ConversationProvider } from "./conversation";
-import { DirectMessagesProvider } from "./direct-messages";
-import { DynamicIslandProvider } from "./dynamic-island";
-import { DynamicIslandBridge } from "./dynamic-island-bridge";
+import { AuthProvider } from "./features/account/account-context";
+import { AgentActionsProvider } from "./features/agents/agent-actions";
+import { AgentEventBridge } from "./features/agents/agent-event-bridge";
+import { AgentReadTrackingProvider } from "./features/agents/agent-read-tracking";
+import { AgentsProvider } from "./features/agents/agents-context";
+import { BrowserTabsProvider } from "./features/browser/browser-context";
+import { ConversationProvider } from "./features/conversation/conversation-context";
+import {
+  createServerConversationState,
+  createStableConversationState,
+} from "./features/conversation/conversation-controller";
+import { ConversationControllerProvider } from "./features/conversation/conversation-controller-context";
+import { DirectMessagesProvider } from "./features/conversation/direct-messages-context";
+import { DynamicIslandBridge } from "./features/dynamic-island/dynamic-island-bridge";
+import { DynamicIslandProvider } from "./features/dynamic-island/dynamic-island-context";
+import { SetupProvider } from "./features/onboarding/onboarding-context";
+import { RemoteDesktopProvider } from "./features/remote-desktop/remote-desktop-context";
+import { ServerScopeProvider } from "./features/servers/server-scope";
+import { ServerSelectionProvider } from "./features/servers/server-selection";
+import { ServerSettingsProvider } from "./features/servers/server-settings";
+import { ServerSwitchProvider } from "./features/servers/server-switch";
+import { ServersProvider, useServers } from "./features/servers/servers-context";
+import { SettingsProvider } from "./features/settings/settings-context";
+import { SidebarProvider } from "./features/sidebar/sidebar-context";
+import { PresenceProvider } from "./features/team/team-context";
+import { notifyTeamTyping } from "./features/team/team-typing";
+import { UpdatesProvider } from "./features/updates/updates-context";
 import { LayoutProvider } from "./layout";
 import { NavigationProvider } from "./navigation";
 import { PlatformProvider } from "./platform";
-import { PresenceProvider } from "./presence";
 import { ProvidersProvider } from "./providers";
-import { RemoteDesktopProvider } from "./remote-desktop";
-import { ServerScopeProvider } from "./server-scope";
-import { ServerSelectionProvider } from "./server-selection";
-import { ServerSettingsProvider } from "./server-settings";
-import { ServerSwitchProvider } from "./server-switch";
-import { ServersProvider, useServers } from "./servers";
-import { SettingsProvider } from "./settings";
-import { SetupProvider } from "./setup";
-import { SidebarProvider } from "./sidebar";
-import { notifyTeamTyping } from "./team-typing";
 import { TurnsProvider } from "./turns";
 import { UiErrorsProvider } from "./ui-errors";
-import { UpdatesProvider } from "./updates";
 
 /**
  * How the renderer is mounted, as opposed to anything it later loads. Both

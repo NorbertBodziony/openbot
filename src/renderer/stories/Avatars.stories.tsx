@@ -1,8 +1,8 @@
 import { BloubBot, POSES, type StateId } from "@norbert_bodziony/bloub";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { bloubAvatarProfile } from "../src/bloub-avatar";
-import { AgentAvatar } from "../src/components/AgentAvatar";
-import { TeamPersonAvatar } from "../src/components/TeamPersonAvatar";
+import { AgentAvatar } from "../src/features/agents/AgentAvatar";
+import { TeamPersonAvatar } from "../src/features/team/TeamPersonAvatar";
 import { STORY_AGENTS, STORY_PRESENCE } from "./fixtures";
 
 const agentMeta = {

@@ -1,8 +1,8 @@
 import { expect, fn } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
-import { ChatActionMarker } from "../src/components/conversation/ChatActionMarker";
 import { Heading, Text } from "../src/components/ui";
 import type { AgentProfile, ChatActionMarkerModel } from "../src/data";
+import { ChatActionMarker } from "../src/features/conversation/ChatActionMarker";
 
 const agents: AgentProfile[] = [agent("research", "Research"), agent("sales", "Sales")];
 const onSelectAgent = fn();

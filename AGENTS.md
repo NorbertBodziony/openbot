@@ -26,11 +26,12 @@ belongs.
 ## CI owns the minutes-long suites. Run the fast checks yourself.
 
 Before you call a task done, run the narrowest test for what you touched, then `bun run lint` and
-`bun run typecheck` over the whole repository. Both are repository-wide on purpose and neither is
-expensive: `lint` is `biome check .` across every file in about six seconds, `typecheck` is nine
-`tsc` projects in about four. The wide typecheck is also the more useful one — a change in
-`packages/contracts` surfaces as an error in `src/renderer` or `src/main`, which a single `tsc -p` on
-the project you edited never sees.
+`bun run typecheck` over the whole repository — plus `bun run check:ui` if you touched
+`src/renderer`, which scans the whole renderer in 60 ms. All three read more than you changed on
+purpose and none is expensive: `lint` is `biome check .` across every file in about six seconds,
+`typecheck` is nine `tsc` projects in about four. The wide typecheck is also the more useful one — a
+change in `packages/contracts` surfaces as an error in `src/renderer` or `src/main`, which a single
+`tsc -p` on the project you edited never sees.
 
 Do not run `bun run check`, `check:desktop`, `test`, or `build-storybook`: each takes minutes, and
 the desktop suite flakes under load, so a red result tells you nothing about your change. That is

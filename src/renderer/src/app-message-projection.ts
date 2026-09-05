@@ -4,9 +4,9 @@ import {
   routineConversationEvent,
   routineRunConversationEvent,
 } from "@openbot/contracts/ipc";
-import { cleanAgentMessageText } from "./agent-message-text";
-import { isRoutineEventItem } from "./conversation-read-state";
 import type { AgentDeliveryMarkerStatus, AgentMessage, AgentProfile, ChatActionMarkerModel } from "./data";
+import { cleanAgentMessageText } from "./features/agents/agent-message-text";
+import { isRoutineEventItem } from "./features/conversation/conversation-read-state";
 
 export function toAgentProfile(stored: AgentSummary): AgentProfile {
   return {
