@@ -22,10 +22,19 @@ const environment = {
   TURN_SHARED_SECRET: process.env.TURN_SHARED_SECRET ?? "t".repeat(32),
 };
 
-await run(["run", "--cwd", "remote/api", "check"]);
+// `docker compose config` parses and interpolates client-side and never opens a
+// socket, so the Compose half runs anywhere the docker CLI exists - including a
+// GitHub runner, which has the CLI but no useful daemon. `--compose` selects that
+// half alone, because CI already runs the workspace's typecheck and tests as
+// their own steps and has no reason to pay for them twice.
+const composeOnly = process.argv.includes("--compose");
+
+if (!composeOnly) await run(["run", "--cwd", "remote/api", "check"]);
 await composeCheck("remote/compose.yaml");
 await composeCheck("remote/compose.dev.yaml");
-console.log("Remote API and Docker Compose configuration are valid.");
+console.log(
+  composeOnly ? "Docker Compose configuration is valid." : "Remote API and Docker Compose configuration are valid.",
+);
 
 async function composeCheck(file: string): Promise<void> {
   const args = ["compose"];
