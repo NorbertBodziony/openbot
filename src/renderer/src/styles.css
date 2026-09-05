@@ -7,8 +7,8 @@
 @import "./styles/transitions.css";
 @import "./styles/sliding-tabs.css";
 @import "./styles/action-menu.css";
-@import "./styles/dynamic-island.css";
-@import "./styles/dynamic-island-surface.css";
+@import "./features/dynamic-island/dynamic-island.css";
+@import "./features/dynamic-island/dynamic-island-surface.css";
 @import "./styles/base.css";
 @import "./features/account/auth.css";
 @import "./features/onboarding/onboarding.css";
