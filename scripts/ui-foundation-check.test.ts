@@ -16,7 +16,7 @@ import { checkUiFoundation } from "./ui-foundation-check";
 const fixtureRenderer = resolve(import.meta.dirname, "../tools/ui-foundation/fixtures/renderer");
 
 function budget(label: string, actual: number): string {
-  return `${label}: ${actual} (budżet migracyjny: 0; liczba może tylko maleć)`;
+  return `${label}: ${actual} (migration budget: 0; this number may only go down)`;
 }
 
 describe("ui foundation check", () => {
@@ -25,26 +25,26 @@ describe("ui foundation check", () => {
 
     expect([...failures].sort()).toEqual(
       [
-        "components/Bad.tsx: użyj komponentu z components/ui zamiast natywnej kontrolki",
-        "components/Bad.tsx: import Kobalte/Lucide jest dozwolony wyłącznie w components/ui",
-        "components/Bad.tsx: ręczny switch jest zabroniony; użyj components/ui/Switch",
-        "components/Bad.tsx: literał koloru w inline style jest zabroniony; użyj tokenu palety",
-        "components/Bad.tsx: font-size, radius i transition w inline style muszą używać tokenów",
+        "components/Bad.tsx: use a component from components/ui instead of a native control",
+        "components/Bad.tsx: Kobalte and Lucide may only be imported inside components/ui",
+        "components/Bad.tsx: a hand-rolled switch is not allowed; use components/ui/Switch",
+        "components/Bad.tsx: a colour literal in an inline style is not allowed; use a palette token",
+        "components/Bad.tsx: font-size, radius and transition in an inline style must use tokens",
         // The same check, reached through the other package it names. Kobalte firing says
         // nothing about this branch of the pattern.
-        "components/Icons.tsx: import Kobalte/Lucide jest dozwolony wyłącznie w components/ui",
-        "components/ui/complex.tsx: namespace Kobalte musi przechodzić przez adapter, nie bezpośredni alias",
-        budget("ręczne złożone role ARIA", 1),
+        "components/Icons.tsx: Kobalte and Lucide may only be imported inside components/ui",
+        "components/ui/complex.tsx: the Kobalte namespace must pass through an adapter, not a direct alias",
+        budget("hand-rolled composite ARIA roles", 1),
         // A hex and a named colour in styles/legacy.css, an rgb() in preview/preview.css.
         // The rgb() is in the file the old hand-written scope missed, so a scope narrowed
         // back to a list of directory names reads 2; the named colour is matched by a
         // second pattern entirely, which the hex does not exercise, so losing that reads 2
         // as well. The token spelling a colour in tokens.css must stay uncounted, or this
         // reads 4 and the word boundaries have gone.
-        budget("literały kolorów poza paletą", 3),
-        budget("nietokenizowane font-size", 1),
-        budget("nietokenizowane border-radius", 1),
-        budget("nietokenizowane czasy transition", 1),
+        budget("colour literals outside the palette", 3),
+        budget("untokenised font-size", 1),
+        budget("untokenised border-radius", 1),
+        budget("untokenised transition durations", 1),
       ].sort(),
     );
   });
@@ -63,6 +63,8 @@ describe("ui foundation check", () => {
     // walked root and the label root are not the same argument.
     const { failures } = checkUiFoundation(fixtureRenderer, resolve(fixtureRenderer, ".."));
 
-    expect(failures).toContain("renderer/components/Bad.tsx: ręczny switch jest zabroniony; użyj components/ui/Switch");
+    expect(failures).toContain(
+      "renderer/components/Bad.tsx: a hand-rolled switch is not allowed; use components/ui/Switch",
+    );
   });
 });
