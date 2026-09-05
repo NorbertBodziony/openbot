@@ -3,7 +3,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentStore } from "./agent-store";
@@ -121,6 +121,36 @@ describe("AgentStore", () => {
     await new AgentStore(userData, home).initialize();
 
     expect(await readFile(join(agent.workspacePath, "notes.md"), "utf8")).toBe("kept");
+
+    // Two directories at once is not an interrupted move -- the move is a single atomic `rename`, so it
+    // never leaves both behind -- and the record still names the one the agent has been reading. Adopting
+    // the other would hand it files that were never its own and put its real workspace out of reach.
+    await mkdir(legacyChiefWorkspace, { recursive: true });
+    await writeFile(join(legacyChiefWorkspace, "notes.md"), "the real one");
+    reconciled.database.connection
+      .prepare(
+        "UPDATE projection_agents SET agent_json = json_set(agent_json, '$.workspacePath', ?) WHERE agent_id = ?",
+      )
+      .run(legacyChiefWorkspace, chief.id);
+
+    const ambiguous = new AgentStore(userData, home);
+    await ambiguous.initialize();
+
+    expect(ambiguous.list().find((entry) => entry.id === chief.id)?.workspacePath).toBe(legacyChiefWorkspace);
+
+    // An avatar directory that already exists cannot be moved onto either, but abandoning the old one
+    // strands the file `avatarUrl` names: `resolveAvatar` looks for it under the new id alone, so the upload
+    // the user made falls back to a drawn face. The one file the URL names comes across on its own.
+    const image = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    await ambiguous.setAvatar(agent.id, { mimeType: "image/png", bytes: image });
+    const uploadedPath = ambiguous.resolveAvatar(agent.id)?.path ?? "";
+    await mkdir(legacyAvatar, { recursive: true });
+    await rename(uploadedPath, join(legacyAvatar, basename(uploadedPath)));
+
+    const adopted = new AgentStore(userData, home);
+    await adopted.initialize();
+
+    await expect(readFile(adopted.resolveAvatar(agent.id)?.path ?? "")).resolves.toEqual(Buffer.from(image));
   });
 
   it("persists stable OpenBot thread ids in SQLite", async () => {

@@ -595,8 +595,12 @@ export class AgentStore {
     const current = await probeDirectory(targetPath);
     const legacy = await probeDirectory(legacyPath);
     if (current !== false || legacy !== true) {
-      // A previous run moved the files but was interrupted before it could persist where they went.
-      if (current === true && agent.workspacePath !== targetPath) {
+      // A previous run moved the files but was interrupted before it could persist where they went -- and
+      // only then. Two directories at once is not that story: the move is a single atomic `rename`, so it
+      // never leaves both behind, and what this run is looking at is a destination that was never this
+      // agent's. Repointing the record at it would hand the agent somebody else's files and put its own
+      // out of reach, so an ambiguous pair leaves the path the agent has actually been reading alone.
+      if (current === true && legacy === false && agent.workspacePath !== targetPath) {
         agent.workspacePath = targetPath;
         return true;
       }
@@ -632,9 +636,34 @@ export class AgentStore {
     if (legacyId === null || legacyId === agent.id) return;
     const currentPath = join(this.#avatarsRoot, agent.id);
     const legacyPath = join(this.#avatarsRoot, legacyId);
-    if ((await probeDirectory(currentPath)) !== false || (await probeDirectory(legacyPath)) !== true) return;
+    if ((await probeDirectory(legacyPath)) !== true) return;
+    const current = await probeDirectory(currentPath);
+    if (current === true) {
+      await this.#adoptLegacyAvatarFile(agent, legacyPath, currentPath);
+      return;
+    }
+    if (current !== false) return;
     try {
       await rename(legacyPath, currentPath);
+    } catch (error) {
+      logger.warn("Could not move an uploaded agent avatar to its new directory.", toLogValue(error));
+    }
+  }
+
+  /**
+   * Both directories exist, so neither can be moved onto the other -- but abandoning the old one strands the
+   * avatar the user actually uploaded, because `avatarUrl` resolves only under the new id and the app would
+   * fall back to a drawn face. What that URL names is one file, and one file is what gets carried across.
+   * Nothing is overwritten: a name already answering in the new directory is the newer upload.
+   */
+  async #adoptLegacyAvatarFile(agent: StoredAgent, legacyPath: string, currentPath: string): Promise<void> {
+    if (!agent.avatarUrl) return;
+    const parsed = parseAgentAvatarUrl(agent.avatarUrl, agent.id);
+    if (!parsed) return;
+    const name = `${parsed.version}.${avatarFileExtension(parsed.mimeType)}`;
+    try {
+      if (await fileExists(join(currentPath, name))) return;
+      await rename(join(legacyPath, name), join(currentPath, name));
     } catch (error) {
       logger.warn("Could not move an uploaded agent avatar to its new directory.", toLogValue(error));
     }
@@ -1015,6 +1044,15 @@ async function directoryExists(path: string): Promise<boolean> {
  * migrated and so must never be the reason the app refuses to open. `null` is "could not tell" -- an
  * `EACCES`, an `EPERM`, a Windows lock -- and every caller treats it as "leave this alone".
  */
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    return (await lstat(path)).isFile();
+  } catch (error) {
+    if (isRecord(error) && error.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
 async function probeDirectory(path: string): Promise<boolean | null> {
   try {
     return await directoryExists(path);
