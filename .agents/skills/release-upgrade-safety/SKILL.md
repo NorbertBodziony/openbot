@@ -21,6 +21,10 @@ This runs *before* `docs/RELEASING.md`, which stays authoritative for the publis
 - It never runs `bun run check`, `check:desktop`, `test`, or `build-storybook` — each takes minutes,
   CI owns them, and the desktop suite flakes under load, so a red result would tell you nothing.
   Run the narrowest test file named by a gate, then `bun run lint` and `bun run typecheck`.
+- **If gate C or D fired, add `bun run mobile:typecheck`.** `bun run typecheck` is `typecheck:*` and
+  the mobile script is named `mobile:typecheck`, so the aggregate misses it — and `apps/mobile`
+  depends on `@openbot/contracts`, which is exactly what those two gates change. A contract export
+  change passes the aggregate and still breaks the mobile app.
 - It never runs `bun run dev:seed` or `dev:reset` — both destroy the developer's own profile — and
   never `pkill -f`, which kills other sessions' work mid-write.
 
@@ -48,9 +52,16 @@ need the exact file, not before.
 
 Triggered by any change to that file or to `src/backend/database/`.
 
-- A new entry in `MIGRATIONS` must be the **next contiguous version after 14**.
-  `validateMigrationRegistry` throws on a gap, so a wrong number is loud — but a *reused* number is
-  a migration that never runs.
+- New entries in `MIGRATIONS` must **continue contiguously from the last version at the release
+  tag**. Read that number, never remember it:
+
+  ```bash
+  git show <tag>:src/backend/openbot-database-schema.ts | grep -E 'version: [0-9]+' | tail -1
+  ```
+
+  A literal written into this file would go stale the first time a migration ships and would then
+  reject the correct number. `validateMigrationRegistry` throws on a gap, so a skipped number is
+  loud — but a *reused* one is a migration that never runs on any database that already applied it.
 - **No shipped `migrateTo*` body may have changed**, including the frozen `migrateToBaselineV8`.
   Read every hunk of the diff, not the stat. A database that already applied version 12 will never
   apply it again, so an edit to it reaches new installs only and the two populations diverge.
@@ -110,19 +121,24 @@ Triggered by a change to any file in the inventory in `references/surfaces.md`.
 
 Triggered by any change under that directory.
 
+First derive the frozen set from the tag rather than hard-coding versions — a protocol released
+since you last read this file is frozen too, and a hard-coded `v1 v2 v3` would never audit it:
+
 ```bash
-git diff --stat --diff-filter=MD <tag>..HEAD -- \
-  packages/contracts/src/team-protocol/v1.ts \
-  packages/contracts/src/team-protocol/v2.ts \
-  packages/contracts/src/team-protocol/v3.ts \
+FROZEN=$(git ls-tree --name-only <tag> packages/contracts/src/team-protocol/ \
+  | grep -E '/v[0-9]+\.ts$')
+git diff --stat --diff-filter=MDR <tag>..HEAD -- $FROZEN \
   packages/contracts/src/team-protocol/fixtures
 ```
 
-**This must be empty.** `--diff-filter=MD` is the point: a released codec or fixture that was
-*modified or deleted* is a broken contract with every peer still running an older build, and the
-fix is a new protocol version, never an edit. An *added* fixture is additive and allowed, so read
-the additions separately with `--diff-filter=A` and confirm each is a new case rather than a
-replacement for one that was renamed away.
+**This must be empty.** `--diff-filter=MDR` is the point: a released codec or fixture that was
+*modified, deleted or renamed* is a broken contract with every peer still running an older build,
+and the fix is a new protocol version, never an edit. `R` is in that list deliberately — git
+classifies a rename as `R` rather than `M`, so leaving it out lets a frozen fixture be renamed out
+from under the check while the diff still reports clean.
+
+An *added* fixture is additive and allowed. Read the additions separately with `--diff-filter=A`
+and confirm each is a genuinely new case rather than the other half of a rename.
 
 If the modified-or-deleted diff is non-empty, read every hunk before calling it a stop. A change
 that provably cannot alter what any encoded payload means — an added `export` keyword, a comment —
@@ -149,7 +165,11 @@ restate it.
 
 ### D. IPC channels — `packages/contracts/src/ipc-channels.ts`
 
-Triggered by a change to the channel list.
+Triggered by a change to the channel list **or to any of its mirrors** — `src/main/index.ts`,
+`src/main/ipc/`, `src/preload/index.ts`, `src/renderer/src/preview/mock-openbot.ts`. Deleting a
+handler or an `invoke` breaks a live channel without touching the list at all, and the coverage
+test below is what catches it, so a gate that only watched the list would skip the one run that
+would have found it.
 
 Renderer and main ship in one binary, so a channel rename is **not** an upgrade hazard — nothing
 older ever calls it. The hazard is drift between the list and its hand-written mirrors, which is a
@@ -169,19 +189,34 @@ array is a story that silently shows nothing.
 
 ### E. Account Worker — `apps/auth-api/`
 
-Triggered by a new file in `apps/auth-api/migrations/`, or a change under
-`apps/auth-api/src/routes/` or `apps/auth-api/src/server/`.
+Triggered by **any** addition, modification, deletion or rename under `apps/auth-api/migrations/`,
+or a change under `apps/auth-api/src/routes/` or `apps/auth-api/src/server/`:
 
-Two separate hazards; check both.
+```bash
+git diff --stat --diff-filter=AMDR <tag>..HEAD -- apps/auth-api/migrations
+```
 
+Three separate hazards; check all three.
+
+- **An already-applied migration was edited.** This is a stop, and it is the one that looks
+  harmless. Wrangler records migrations by *name* and never replays a file it has already applied,
+  so an edit leaves production on the old schema while every fresh database executes the new
+  history. The two diverge permanently and nothing reports it. Same rule as `src/backend`: append a
+  new migration, never edit a shipped one — for a different reason, since here it is the applied-name
+  ledger rather than the absence of a backup.
 - **The D1 deploy race.** CI applies migrations **before** deploying the new Worker, so for the
   length of that gap the old Worker runs against the new schema. No `NOT NULL` column without a
   default, no rename, no drop of a column the deployed Worker still reads. A contraction needs the
   two-step release — expand, deploy the Worker that uses it, contract in a later change.
-- **Installed desktop builds never update.** A build from a year ago keeps calling `auth:*` against
-  the current Worker forever. A removed or renamed *response field* in a route handler under
-  `apps/auth-api/src/routes/v1/` or `v2/` breaks those clients, and unlike a D1 mistake that is not
-  recoverable by a redeploy. Diff the route handlers for removed fields, not just the migrations.
+- **Installed desktop builds never update**, in *both* directions. A build from a year ago keeps
+  calling `auth:*` against the current Worker forever, and unlike a D1 mistake that is not
+  recoverable by a redeploy.
+  - *Responses*: a removed or renamed field in a handler under `apps/auth-api/src/routes/v1/` or
+    `v2/` breaks the clients that still read it.
+  - *Requests*: an old build also keeps sending its original routes, methods, headers and bodies.
+    Making an optional request field required, tightening a validator, rejecting a value that used
+    to be accepted, or adding an auth requirement breaks those clients even when every response
+    shape is untouched. Diff the request parsers and route registrations, not only the responses.
 
 ```bash
 bun run --cwd apps/auth-api test:server test/mobile-auth-migration.test.ts
