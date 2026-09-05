@@ -33,7 +33,7 @@ version and the `.env.keys` `.worktreeinclude` carries across.
 Before you call a task done, run the narrowest test for what you touched, then `bun run lint` and
 `bun run typecheck` — plus `bun run check:ui` if you touched `src/renderer`, which scans the whole
 renderer in 60 ms. All three read more than you changed on purpose and none is expensive: `lint` is
-`biome check .` across every file in about six seconds, `typecheck` is ten `tsc` projects in about
+`biome check .` across every file in about six seconds, `typecheck` is eleven `tsc` projects in about
 four. The wide typecheck is the more useful one — a change in `packages/contracts` surfaces as an
 error in `src/renderer` or `src/main`, which a single `tsc -p` on the project you edited never sees.
 
@@ -45,6 +45,15 @@ remember that. `mobile:typecheck` survives as an alias because CI's Surfaces job
 name. It runs `expo customize` and a `uniwind` codegen before `tsc`, but everything it writes is
 gitignored, so the aggregate still leaves your diff alone.
 
+`remote/api` is in the glob for the same reason, as `typecheck:remote`. Its tests cover ticket
+verification, session revocation and TURN credentials — the Signal service's whole auth boundary —
+and when the workspace arrived nothing ran them, because its only entry point was `remote:check`,
+which also validates both Compose files and so needs Docker that CI does not have. The workspace's
+own `check` needs nothing but Bun and finishes in three seconds, so the two halves are split —
+`typecheck:remote` and `test:remote` — and run in Surfaces and Tests beside the other non-desktop
+surfaces. `remote:check` is still the Docker-inclusive superset; run it when you touch a Compose
+file.
+
 Do not run `bun run check`, `check:desktop`, `test`, or `build-storybook`: each takes minutes, and
 the desktop suite flakes under load, so a red result tells you nothing about your change. That is
 where the line falls — how long a command takes and whether you can trust its result, not how many
@@ -53,8 +62,8 @@ files it reads. CI owns all of it on every push:
 | CI job | Runner | Command |
 | --- | --- | --- |
 | Check | `macos-14` | `bun run check:desktop` |
-| Tests | `ubuntu-latest` | `bun run test:desktop`, `bun run test:sites` |
-| Surfaces | `ubuntu-latest` | `bun run mobile:typecheck`, `bun run typecheck:sites`, `bun run typecheck:team-client` |
+| Tests | `ubuntu-latest` | `bun run test:desktop`, `bun run test:sites`, `bun run test:remote` |
+| Surfaces | `ubuntu-latest` | `bun run mobile:typecheck`, `bun run typecheck:sites`, `bun run typecheck:team-client`, `bun run typecheck:remote` |
 | API | `ubuntu-latest` | `bun run check:api` |
 | Storybook build | `ubuntu-latest` | `bun run build-storybook` |
 
@@ -72,7 +81,8 @@ A change that works on the path you happened to open is the most common half-cha
 which of these your change touched.**
 
 - **Desktop renderer** (`src/renderer`), **mobile** (`apps/mobile`), **public web**
-  (`apps/auth-api` — there is no separate landing app).
+  (`apps/auth-api` — there is no separate landing app), **self-hosted Signal service**
+  (`remote/api`, which the desktop app and the phone both connect through).
 - **IPC contracts** in `packages/contracts`, and their second implementation
   `src/renderer/src/preview/mock-openbot.ts`, which Storybook and the preview run against.
 - **Reverse states.** Snooze needs unsnooze, pause resume, revoke reconnect, mute unmute. A state a
