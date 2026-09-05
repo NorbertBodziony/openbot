@@ -99,7 +99,23 @@ not import `electron` in the first place.
 
 ## Size
 
-`index.ts` is the dispatcher plus window and lifecycle code and should not grow handlers again.
+`index.ts` is the dispatcher plus window and lifecycle code and should not grow handlers again. Four
+things that used to live in it now have their own file, and none of them should come back:
+
+| File | What it owns |
+| --- | --- |
+| `main-window-state.ts` | reading, resolving and debounce-writing the window's saved position |
+| `session-configuration.ts` | the renderer CSP, the permission handlers, the attachment/avatar/logo protocols |
+| `renderer-forwarders.ts` | the eleven service events relayed to the renderer |
+| `ipc/register-*-handlers.ts` | every IPC endpoint, one file per domain |
+
+A dependency that may not exist yet when one of these is wired is passed from `index.ts` as a
+**function** - `getAgentService: () => AgentService | null` - and read on every call, because most of
+them are constructed during `app.whenReady()` before the services they reach are assigned, and a
+captured `null` never recovers. A service that is already constructed is passed as the value:
+`configureServerLogoProtocols` takes `remoteServers: RemoteServerManager`, and the IPC registrars
+take their stores directly. Which of the two a dependency needs is the one thing here `tsc` cannot
+decide for you - `() => X | null` and `X | null` both type-check at every call site.
 
 `remote-server-manager.ts` used to be the outlier at 2828 lines. It is now the composition root of a
 flat `remote-server-*` / `remote-*-decoding` family, and each of those files has exactly one reason
@@ -160,3 +176,11 @@ Three things are deliberately not unified, and each says so in its own file head
 decoders and their `FromMain` twins in `src/preload/index.ts` (different trust boundaries), the HTTPS
 V1/V3 and WebRTC V2 wire encodings (released protocols), and the control-plane methods on
 `RemoteTeamDirectory` (a different server from the host).
+
+Only the first of those three is also *checked*. `ipc-channel-coverage.test.ts` compares the set of
+`decode*FromHost` names under `src/main` against the set of `decode*FromMain` names in the preload
+and fails unless they match exactly, so neither half can lose its twin - which is how the pair gets
+merged in practice: one is deleted, its callers point at the other, and trusted-sender validation
+ends up applied to a remote team server. Adding a decoder to one side means adding it to the other.
+The check enforces the naming bijection and nothing more; two names bound to one decoder still needs
+a reviewer, and the test says so where it is defined.
