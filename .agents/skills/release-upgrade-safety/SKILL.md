@@ -87,13 +87,26 @@ green and you added DDL, check that you actually added it to `MIGRATIONS`.
 
 ### B. On-disk state outside SQLite — `src/main/index.ts`, `src/backend/*-store.ts`
 
-Triggered by a change to `src/main/index.ts`, any `*-store.ts` under `src/main/` or `src/backend/`,
-`src/backend/workspace-paths.ts`, `src/backend/browser-host.ts`,
-`src/main/remote-server-stored-shape.ts`, `src/main/sunshine-moonlight-runtime.ts`, or
-`electron-builder.yml`. The list is here and not in `references/surfaces.md` because you classify
-triggers before you open any reference — a trigger that pointed at the inventory would need the
-inventory read first, and a file you did not already suspect would be classified as not triggered.
-Once this gate fires, open the inventory for the file-by-file detail.
+Triggered by a change to `src/main/index.ts`, `src/backend/workspace-paths.ts`,
+`src/main/sunshine-moonlight-runtime.ts`, `electron-builder.yml`, or **any file that decodes a
+versioned payload**. Derive that last set instead of trusting a list — a serialization owner is not
+always a `*-store.ts`, and `central-auth-manager.ts`, `main-window-state.ts` and
+`skill-marketplace-service.ts` are three that are not:
+
+```bash
+git grep -lE 'version *(!==|===) *[0-9]' HEAD -- 'src/main/*.ts' 'src/backend/*.ts' \
+  ':(exclude)*.test.ts'
+```
+
+The gate fires if the release diff touches any file that prints. Note the absent `\b`: `git grep -E`
+is POSIX ERE, where `\b` matches nothing at all, so writing the pattern the natural way returns an
+empty list and reports that the release changed no serialization owner. Same failure as gate C —
+a check that answers the wrong question and calls the silence a pass.
+
+The trigger lives here rather than in `references/surfaces.md` because you classify triggers before
+you open any reference; a trigger that pointed at the inventory would need the inventory read first,
+and a file you did not already suspect would be classified as not triggered. Once this gate fires,
+open the inventory for the file-by-file detail.
 
 - **Did an on-disk filename constant change?** A rename is silent data loss: the old file is never
   found, never read, and never deleted. The new build starts from its defaults and the user's
@@ -109,6 +122,20 @@ Once this gate fires, open the inventory for the file-by-file detail.
   - Known gap, re-check every release: `src/main/setup-store.ts` accepts only `version === 2` and
     falls back to defaults on anything else, silently. Bumping it to 3 without a read path re-runs
     setup for every installed user.
+- **A read path is only the upgrade half — check the downgrade too.** Proving the new build reads
+  every old shape says nothing about the old build reading the *new* one, and every file here is
+  rewritten in place by whichever build opens it last. A user who rolls back to the previous
+  release, or runs an older install beside the new one, hands the file to a reader that predates
+  the bump. `src/main/dynamic-island-preference-store.ts` treats an unknown version as defaults and
+  then rewrites the file at its own version, so shipping a `version: 4` under that filename means
+  the older build silently discards the user's setting rather than leaving it alone. Before reusing
+  a filename, read the reader **at the release tag** and confirm it refuses an unknown version
+  instead of defaulting — `src/main/remote-server-stored-shape.ts` does, which is what makes it safe
+  to bump. If it does not, keep the old file and write the new version beside it under a new name,
+  the way `src/main/team-store.ts` keeps `-v1.json` and `-v2.json`.
+  - The same asymmetry applies to `central-auth-manager.ts`, which is stricter still: an unknown
+    shape *throws*, and `#initialize` catches that into `#clearStoredSession()`. The user is signed
+    out, and because the file is `safeStorage`-encrypted there is nothing to recover by hand.
 - **The permanent names are permanent.** The four legacy path prefixes in
   `src/backend/workspace-paths.ts`, `bots.json` (`LEGACY_AGENTS_STATE_FILE` in
   `src/backend/agent-store.ts`), `mailbox.json`, and the `legacy-import:bots:v1` command id are
@@ -210,7 +237,10 @@ array is a story that silently shows nothing.
 ### E. Account Worker — `apps/auth-api/`
 
 Triggered by **any** addition, modification, deletion or rename under `apps/auth-api/migrations/`,
-or a change under `apps/auth-api/src/routes/` or `apps/auth-api/src/server/`:
+or a change to any non-UI file under `apps/auth-api/src/`. That is wider than `routes/` and
+`server/` on purpose: `worker-entry.ts` is the deployed Worker's default export, and `router.tsx`
+builds the router from `routeTree.gen.ts`. Those three decide what is actually served, so a `/v1` or
+`/v2` endpoint can be removed or shadowed there while every file under `routes/` is untouched.
 
 ```bash
 git diff --stat --diff-filter=AMDR <tag>..HEAD -- apps/auth-api/migrations
