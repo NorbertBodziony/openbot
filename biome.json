@@ -90,11 +90,7 @@
   },
   "overrides": [
     {
-      "includes": [
-        "src/renderer/src/styles/app-shell.css",
-        "src/renderer/src/features/conversation/conversation.css",
-        "src/renderer/src/features/sidebar/sidebar.css"
-      ],
+      "includes": ["src/renderer/src/styles/app-shell.css", "src/renderer/src/features/conversation/conversation.css"],
       "linter": {
         "rules": {
           "style": {
