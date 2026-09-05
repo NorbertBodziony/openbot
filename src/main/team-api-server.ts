@@ -1,18 +1,10 @@
-import { readFile } from "node:fs/promises";
-import { createServer, type Server, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createRequire } from "node:module";
-import { basename, dirname, join } from "node:path";
-import { isAvatarMimeType } from "@openbot/contracts/avatar-images";
-import { ATTACHMENT_LIMITS, AVATAR_IMAGE_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import { dirname, join } from "node:path";
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import {
   AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT,
   type AgentEvent,
-  type CentralAuthUser,
-  type ConversationPageAnchor,
-  type ConversationSnapshot,
-  type ConversationWithReadState,
-  type CreateAgentInput,
-  type CreateTeamInviteInput,
   type DirectConversationPage,
   type DirectConversationPageAnchor,
   type DirectConversationSnapshot,
@@ -21,28 +13,12 @@ import {
   type DirectThreadSummary,
   type DirectTypingRealtimeEvent,
   type DuplicateAgentResult,
-  HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX,
-  type InstalledSkill,
-  type InviteSummary,
-  isAgentModel,
-  isAvatarHue,
-  isAvatarSeed,
-  isMessageReaction,
-  isReasoningEffort,
-  type ReorderQueueInput,
-  type RespondToApprovalInput,
-  type RespondToBrowserTakeoverInput,
-  ROUTINE_EVENT_ITEM_TYPE_PREFIX,
-  ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX,
   type SidebarLayoutSnapshot,
-  type SteerQueuedMessageInput,
   type TeamMemberSummary,
   type TeamPresenceSnapshot,
   type TeamRealtimeEvent,
-  type UpdateAgentInput,
-  type UpdateQueuedMessageInput,
 } from "@openbot/contracts/ipc";
-import { type DynamicRecord, isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
+import { isString } from "@openbot/contracts/runtime-values";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import {
   isTeamCurrentCapability,
@@ -53,7 +29,6 @@ import {
 } from "@openbot/contracts/team-protocol/current";
 import {
   TEAM_APP_VERSION_HEADER,
-  TEAM_CAPABILITIES_HEADER,
   TEAM_PROTOCOL_V1,
   TEAM_PROTOCOL_V1_CAPABILITIES,
   TEAM_PROTOCOL_V1_WEBSOCKET,
@@ -62,32 +37,36 @@ import {
 } from "@openbot/contracts/team-protocol/v1";
 import {
   decodeTeamProtocolV1CurrentClientEvent,
-  decodeTeamProtocolV1CurrentHttpRequest,
   encodeTeamProtocolV1CurrentEvent,
   encodeTeamProtocolV1CurrentHttpResponse,
 } from "@openbot/contracts/team-protocol/v1-adapter";
 import { TEAM_PROTOCOL_V3 } from "@openbot/contracts/team-protocol/v3";
-import {
-  decodeTeamProtocolV3CurrentHttpRequest,
-  encodeTeamProtocolV3CurrentHttpResponse,
-} from "@openbot/contracts/team-protocol/v3-adapter";
-import { createOpenBotLogger, type Logger, toLogValue } from "@openbot/logging";
+import { encodeTeamProtocolV3CurrentHttpResponse } from "@openbot/contracts/team-protocol/v3-adapter";
+import { createOpenBotLogger, toLogValue } from "@openbot/logging";
 import type * as Ws from "ws";
-import type { AgentService } from "../backend/agent-service";
-import type { BrowserHost } from "../backend/browser-host";
-import type { MailboxStore } from "../backend/mailbox-store";
-import type { SidebarLayoutStore } from "../backend/sidebar-layout-store";
 import type { TeamChatStore } from "../backend/team-chat-store";
+import { RemoteScreenError } from "./remote-screen-gateway";
+import type { TeamApiOptions, TeamApiSidebarLayout } from "./team-api/dependencies";
+import { HttpError } from "./team-api/http-error";
+import type { RouteOutcome, TeamApiRequestContext } from "./team-api/request-context";
 import {
-  parseCreateRoutine,
-  parseListRoutineRuns,
-  parseSidebarLayoutAction,
-  parseUpdateRoutine,
-} from "./ipc/agent-inputs";
-import { RemoteScreenError, type RemoteScreenGateway } from "./remote-screen-gateway";
-import { type TeamStore, TeamStoreError } from "./team-store";
+  bearerToken,
+  conversationSnapshotForCapabilities,
+  firstHeaderValue,
+  JSON_LIMIT,
+  readJson,
+  requestCapabilities,
+  requestProtocol,
+  stringField,
+} from "./team-api/request-helpers";
+import { routeAgents } from "./team-api/route-agents";
+import { routeBrowser } from "./team-api/route-browser";
+import { routeDirect } from "./team-api/route-direct";
+import { routeFiles } from "./team-api/route-files";
+import { routeRemoteScreen } from "./team-api/route-remote-screen";
+import { routeTeam } from "./team-api/route-team";
+import { TeamStoreError } from "./team-store";
 
-const JSON_LIMIT = 1024 * 1024;
 const EVENT_PAYLOAD_LIMIT = 256 * 1_024;
 const TYPING_TIMEOUT_MS = 5_000;
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1_000;
@@ -101,117 +80,6 @@ const requireModule = createRequire(import.meta.url);
 const webSockets: typeof Ws = requireModule(join(dirname(requireModule.resolve("ws/package.json")), "index.js"));
 
 const logger = createOpenBotLogger("team-api-server");
-
-type TeamApiAgentMethods = Pick<
-  AgentService,
-  | "getStatus"
-  | "getRuntimeSnapshot"
-  | "getUsage"
-  | "listModels"
-  | "listAgents"
-  | "listConversationReads"
-  | "createAgent"
-  | "committedAgentDuplication"
-  | "duplicateAgent"
-  | "commitAgentDuplication"
-  | "updateAgent"
-  | "deleteAgent"
-  | "listMemories"
-  | "createMemory"
-  | "updateMemory"
-  | "deleteMemory"
-  | "clearMemories"
-  | "listRoutines"
-  | "createRoutine"
-  | "updateRoutine"
-  | "deleteRoutine"
-  | "testRoutine"
-  | "listRoutineRuns"
-  | "setAvatar"
-  | "resolveAvatar"
-  | "readConversationFor"
-  | "readConversationPageFor"
-  | "searchConversationMessages"
-  | "markConversationRead"
-  | "markConversationUnread"
-  | "prepareImportedAttachments"
-  | "discardDraftAttachment"
-  | "resolveSharedFile"
-  | "resolveWorkspaceFile"
-  | "sendMessage"
-  | "listQueue"
-  | "acknowledgeFailedTurn"
-  | "setMessageReaction"
-  | "cancelQueuedMessage"
-  | "steerQueuedMessage"
-  | "updateQueuedMessage"
-  | "reorderQueue"
-  | "interrupt"
-  | "respondToPrompt"
-  | "respondToApproval"
-  | "respondToBrowserTakeover"
->;
-
-type TeamApiAgents = TeamApiAgentMethods & {
-  on: (event: "event", listener: (event: AgentEvent) => void) => void;
-  off: (event: "event", listener: (event: AgentEvent) => void) => void;
-};
-
-type TeamApiMailbox = Pick<MailboxStore, "resolveAttachment">;
-type TeamApiSidebarLayout = Pick<
-  SidebarLayoutStore,
-  "getSnapshot" | "mutate" | "removeAgent" | "placeDuplicateAfter"
-> & {
-  on: (event: "changed", listener: (layout: SidebarLayoutSnapshot) => void) => void;
-  off: (event: "changed", listener: (layout: SidebarLayoutSnapshot) => void) => void;
-};
-type TeamApiBrowser = Pick<
-  BrowserHost,
-  | "listTabs"
-  | "getControlState"
-  | "open"
-  | "activate"
-  | "navigate"
-  | "reload"
-  | "close"
-  | "capturePreview"
-  | "setVisible"
->;
-type TeamApiRemoteScreen = Pick<
-  RemoteScreenGateway,
-  | "handlesUpgrade"
-  | "handleUpgrade"
-  | "handlesHttp"
-  | "handleHttp"
-  | "stop"
-  | "capabilities"
-  | "createSession"
-  | "selectDisplay"
-  | "closeMemberSession"
-  | "revokeTeamSession"
-  | "revokeMember"
->;
-
-interface TeamApiOptions {
-  appVersion?: string;
-  store: TeamStore;
-  agents: TeamApiAgents;
-  skills?: { listInstalledForChatTags: (agentId: string) => Promise<InstalledSkill[]> };
-  sidebarLayout?: TeamApiSidebarLayout;
-  mailbox: TeamApiMailbox;
-  browser: TeamApiBrowser;
-  remoteScreen?: TeamApiRemoteScreen;
-  redeemCentralTicket?: (ticket: string, serverId: string) => Promise<CentralAuthUser | null>;
-  onPresence?: (snapshot: TeamPresenceSnapshot) => void;
-  chat?: TeamChatStore;
-  onDirectMessage?: (event: DirectMessageRealtimeEvent) => void;
-  onDirectTyping?: (event: DirectTypingRealtimeEvent) => void;
-  createInvite?: (input: CreateTeamInviteInput) => Promise<InviteSummary>;
-  onSessionRevoked?: (sessionId: string) => Promise<void> | void;
-  rateLimitCapacity?: number;
-  now?: () => number;
-  logger?: Logger;
-}
 
 interface EventClientState {
   token: string;
@@ -486,20 +354,47 @@ export class TeamApiServer {
     this.#publishDirectTyping(senderMemberId, recipientMemberId, typing);
   }
 
-  async #handle(request: import("node:http").IncomingMessage, response: ServerResponse) {
+  async #handle(request: IncomingMessage, response: ServerResponse) {
+    const method = request.method ?? "GET";
+    // The route is recorded before the target is parsed, because `#json` cannot answer without it and
+    // this is the first thing below that can throw. Node's HTTP parser accepts request targets the
+    // WHATWG URL parser rejects - `GET //[ HTTP/1.1` arrives as `//[` - and with the record written
+    // afterwards that throw reached the catch below, made `#json` throw "route is unavailable", and
+    // surfaced as an unhandled rejection over a socket nothing ever ended.
+    //
+    // The placeholder is `/` and not the raw target, because the record is not a log line: the
+    // frozen adapters classify the route by parsing this string again, from inside the encoder the
+    // catch is calling. Handing them the target that just failed to parse throws the same
+    // `Invalid URL` back out of `#json`, past the only catch there is, and hangs the socket exactly
+    // as before - on every protocol above v1, where classification starts. `/` is the honest answer
+    // to "which route is this": there is none, and both adapters encode it as the unclassified route
+    // it is. `url.pathname` replaces it the moment there is one.
+    this.#responseRoutes.set(response, {
+      method,
+      path: "/",
+      protocol: requestProtocol(request),
+      capabilities: requestCapabilities(request),
+    });
     try {
       response.setHeader("Cache-Control", "no-store");
       response.setHeader("X-Content-Type-Options", "nosniff");
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
-      const method = request.method ?? "GET";
-      const clientCapabilities = requestCapabilities(request);
       this.#responseRoutes.set(response, {
         method,
         path: url.pathname,
         protocol: requestProtocol(request),
-        capabilities: clientCapabilities,
+        capabilities: requestCapabilities(request),
       });
 
+      // Three gates, in this order, and the order is the whole point of writing them out.
+      //
+      // `compatibility` is above the protocol gate because it is the endpoint that tells an
+      // out-of-date client to update. Behind the gate it would answer 426 as well, and the client
+      // would have no way to read the instruction it was being given: a 426 loop with no exit.
+      //
+      // The remote-screen delegation sits between them, above the protocol gate for the same reason:
+      // a browser fetching the viewer sends neither protocol headers nor a bearer token. It is not a
+      // route in the table; the gateway decides for itself which paths are its own.
       if (method === "GET" && url.pathname === TEAM_API_ROUTES.compatibility) {
         return this.#json(response, 200, this.#protocolSupport());
       }
@@ -512,6 +407,10 @@ export class TeamApiServer {
       const protocolIssue = this.#protocolIssue(request);
       if (protocolIssue) return this.#json(response, protocolIssue.status, protocolIssue.body);
 
+      // The six unauthenticated routes stay here rather than moving to a module of their own. They
+      // sit astride the auth gate below, so a module holding them would need a context without a
+      // member while every other module needs one with a member - two shapes of the same type, to
+      // save sixty lines that have not changed in the life of the file.
       if (method === "GET" && url.pathname === TEAM_API_ROUTES.identity) {
         const challenge = url.searchParams.get("challenge");
         return this.#json(
@@ -578,668 +477,36 @@ export class TeamApiServer {
         return this.#json(response, 200, await this.#options.store.loginWithAccount(user));
       }
 
+      // The auth gate does not look at the path. An unknown route without a token is 401, not 404,
+      // and that is deliberate: answering 404 would let anyone map which endpoints this host has.
       const token = bearerToken(request.headers.authorization);
       const authenticated = token ? this.#options.store.authenticateSession(token) : null;
-      const member = authenticated?.member ?? null;
-      if (!member || !token || !authenticated) {
+      if (!authenticated || !token) {
         return this.#json(response, 401, { error: "Authentication required." });
       }
+      const context = this.#requestContext(request, response, url, token, authenticated);
 
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.auth.logout) {
-        await this.#options.store.logout(token);
-        await this.#options.remoteScreen?.revokeTeamSession(authenticated.sessionId);
-        this.refreshPresence();
-        return this.#empty(response, 204);
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.auth.password) {
-        const body = await readJson(request);
-        await this.#options.store.changePassword(
-          member.id,
-          stringField(body, "currentPassword", false, 256),
-          stringField(body, "newPassword", false, 256),
-        );
-        await this.#options.remoteScreen?.revokeMember(member.id);
-        this.refreshPresence();
-        return this.#empty(response, 204);
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.me) {
-        return this.#json(response, 200, member);
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.team.presence) {
-        return this.#json(response, 200, this.getPresence());
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.team.logo) {
-        const logo = this.#options.store.resolveLogo();
-        if (!logo || (url.searchParams.get("v") && url.searchParams.get("v") !== logo.version)) {
-          return this.#json(response, 404, { error: "Server logo not found." });
-        }
-        const bytes = await readFile(logo.path);
-        response.writeHead(200, {
-          "Content-Type": logo.mimeType,
-          "Content-Length": String(bytes.length),
-          "Cache-Control": "private, max-age=31536000, immutable",
-          "X-Content-Type-Options": "nosniff",
-        });
-        response.end(bytes);
-        return;
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.events) {
-        return this.#json(response, 426, { error: "Use WebSocket for remote events." });
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.remoteScreen.capabilities) {
-        if (!this.#options.remoteScreen)
-          throw new RemoteScreenError(503, "host_unavailable", "Remote control is unavailable.");
-        return this.#json(response, 200, this.#options.remoteScreen.capabilities());
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.remoteScreen.sessions) {
-        const identity = this.#options.store.getIdentity();
-        if (!identity || !this.#options.remoteScreen) {
-          throw new RemoteScreenError(503, "host_unavailable", "Remote control is unavailable.");
-        }
-        return this.#json(
-          response,
-          201,
-          await this.#options.remoteScreen.createSession({
-            serverId: identity.serverId,
-            memberId: member.id,
-            teamSessionId: authenticated.sessionId,
-            teamSessionExpiresAt: authenticated.sessionExpiresAt,
-            publicHttpBaseUrl: publicHttpBaseUrl(request),
-          }),
-        );
-      }
-      if (method === "PUT" && url.pathname === TEAM_API_ROUTES.remoteScreen.display) {
-        if (!this.#options.remoteScreen) {
-          throw new RemoteScreenError(503, "host_unavailable", "Remote control is unavailable.");
-        }
-        const body = await readJson(request);
-        await this.#options.remoteScreen.selectDisplay(stringField(body, "displayId"));
-        return this.#empty(response, 204);
-      }
-      const remoteScreenSessionMatch = url.pathname.match(/^\/v1\/remote-screen\/sessions\/([^/]+)$/);
-      if (method === "DELETE" && remoteScreenSessionMatch) {
-        if (!this.#options.remoteScreen) {
-          throw new RemoteScreenError(503, "host_unavailable", "Remote control is unavailable.");
-        }
-        const sessionId = pathIdentifier(remoteScreenSessionMatch[1], "sessionId");
-        if (!(await this.#options.remoteScreen.closeMemberSession(sessionId, member.id))) {
-          throw new RemoteScreenError(404, "session_expired", "Remote control session not found.");
-        }
-        return this.#empty(response, 204);
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.host.remoteMac) {
-        return this.#json(response, 426, { error: "Update required.", code: "protocol_mismatch" });
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.host.remoteDesktopAccess) {
-        return this.#json(response, 426, { error: "Update required.", code: "protocol_mismatch" });
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.direct.threads) {
-        return this.#json(response, 200, this.listDirectThreads(member.id));
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.messages.search) {
-        const query = url.searchParams.get("q") ?? "";
-        if (!query.trim() || query.length > INPUT_LIMITS.messageText) {
-          throw new HttpError(400, "A valid search query is required.");
-        }
-        return this.#json(
-          response,
-          200,
-          this.#options.agents.searchConversationMessages(
-            query,
-            // A query parameter is part of the released URL, and the versioned adapters translate JSON
-            // bodies only. `botId` is what every shipped client sends and what every shipped host reads.
-            url.searchParams.get("botId") ?? undefined,
-            url.searchParams.get("cursor") ?? undefined,
-            pageLimit(url),
-          ),
-        );
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.direct.messages) {
-        const body = await readJson(request);
-        return this.#json(
-          response,
-          201,
-          this.sendDirectMessage(member.id, {
-            memberId: stringField(body, "memberId", false, INPUT_LIMITS.identifier),
-            text: stringField(body, "text", false, INPUT_LIMITS.directMessageText),
-            clientMessageId: stringField(body, "clientMessageId", false, INPUT_LIMITS.identifier),
-          }),
-        );
-      }
-      const directConversationMatch = url.pathname.match(/^\/v1\/direct\/conversations\/([^/]+)(?:\/(read|page))?$/);
-      if (method === "GET" && directConversationMatch && !directConversationMatch[2]) {
-        return this.#json(
-          response,
-          200,
-          this.readDirectConversation(member.id, pathIdentifier(directConversationMatch[1], "memberId")),
-        );
-      }
-      if (method === "POST" && directConversationMatch?.[2] === "read") {
-        const body = await readJson(request);
-        const throughSequence = body.throughSequence;
-        if (!isNumber(throughSequence) || !Number.isSafeInteger(throughSequence)) {
-          throw new HttpError(400, "Invalid direct-message read boundary.");
-        }
-        return this.#json(
-          response,
-          200,
-          this.markDirectRead(member.id, pathIdentifier(directConversationMatch[1], "memberId"), throughSequence),
-        );
-      }
-      if (method === "GET" && directConversationMatch?.[2] === "page") {
-        return this.#json(
-          response,
-          200,
-          this.readDirectConversationPage(
-            member.id,
-            pathIdentifier(directConversationMatch[1], "memberId"),
-            pageAnchor(url),
-            pageLimit(url),
-          ),
-        );
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.browser.tabs) {
-        return this.#json(response, 200, this.#options.browser.listTabs());
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.browser.control) {
-        return this.#json(response, 200, this.#options.browser.getControlState());
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.browser.open) {
-        const body = await readJson(request);
-        const focus = body.focus ?? false;
-        if (!isBoolean(focus)) throw new HttpError(400, "focus must be a boolean.");
-        return this.#json(
-          response,
-          201,
-          await this.#options.browser.open(
-            stringField(body, "url", false, INPUT_LIMITS.browserUrl),
-            nullableString(body, "ownerThreadId"),
-            nullableString(body, "ownerAgentId"),
-            focus,
-          ),
-        );
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.browser.activate) {
-        const body = await readJson(request);
-        await this.#options.browser.activate(stringField(body, "tabId"));
-        return this.#empty(response, 204);
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.browser.navigate) {
-        const body = await readJson(request);
-        const direction = stringField(body, "direction");
-        if (direction !== "back" && direction !== "forward") {
-          throw new HttpError(400, "Invalid browser navigation direction.");
-        }
-        await this.#options.browser.navigate(stringField(body, "tabId"), direction);
-        return this.#empty(response, 204);
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.browser.reload) {
-        const body = await readJson(request);
-        await this.#options.browser.reload(stringField(body, "tabId"));
-        return this.#empty(response, 204);
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.browser.close) {
-        const body = await readJson(request);
-        await this.#options.browser.close(stringField(body, "tabId"));
-        return this.#empty(response, 204);
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.browser.preview) {
-        const body = await readJson(request);
-        return this.#json(response, 200, await this.#options.browser.capturePreview(stringField(body, "tabId")));
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.browser.visible) {
-        const body = await readJson(request);
-        if (!isBoolean(body.visible)) throw new HttpError(400, "visible is required.");
-        await this.#options.browser.setVisible({
-          visible: body.visible,
-          bounds: body.bounds === undefined ? undefined : parseBrowserBounds(body.bounds),
-        });
-        return this.#empty(response, 204);
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.attachments) {
-        const name = url.searchParams.get("name")?.trim();
-        const mimeType = url.searchParams.get("mime") ?? "application/octet-stream";
-        if (!name || basename(name) !== name || name.length > INPUT_LIMITS.attachmentName) {
-          throw new HttpError(400, "A safe attachment name is required.");
-        }
-        if (mimeType.length > INPUT_LIMITS.mimeType) {
-          throw new HttpError(400, "The attachment MIME type is too long.");
-        }
-        const bytes = await readBinary(request, ATTACHMENT_LIMITS.fileBytes);
-        const attachments = await this.#options.agents.prepareImportedAttachments([], [{ name, mimeType, bytes }]);
-        return this.#json(response, 201, attachments[0]);
-      }
-      const attachmentMatch = url.pathname.match(/^\/v1\/attachments\/([^/]+)$/);
-      if (attachmentMatch) {
-        const attachmentId = pathIdentifier(attachmentMatch[1], "attachmentId");
-        if (method === "DELETE") {
-          await this.#options.agents.discardDraftAttachment(attachmentId);
-          return this.#empty(response, 204);
-        }
-        if (method === "GET") {
-          const attachment = await this.#options.mailbox.resolveAttachment(attachmentId);
-          if (!attachment) throw new HttpError(404, "Attachment not found.");
-          const bytes = await readFile(attachment.path);
-          response.writeHead(200, {
-            "Content-Type": attachment.mimeType || "application/octet-stream",
-            "Content-Length": String(bytes.length),
-            "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(basename(attachment.path))}`,
-          });
-          response.end(bytes);
-          return;
-        }
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.sharedFiles) {
-        const sharedPath = url.searchParams.get("path");
-        if (!sharedPath || sharedPath.length > INPUT_LIMITS.path) {
-          throw new HttpError(400, "A valid shared file path is required.");
-        }
-        const sharedFile = await this.#options.agents.resolveSharedFile(sharedPath);
-        if (sharedFile.size > ATTACHMENT_LIMITS.fileBytes) {
-          throw new HttpError(413, "The shared file exceeds the 100 MB limit.");
-        }
-        const bytes = await readFile(sharedFile.path);
-        response.writeHead(200, {
-          "Content-Type": "application/octet-stream",
-          "Content-Length": String(bytes.length),
-          "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(sharedFile.name)}`,
-          "X-Content-Type-Options": "nosniff",
-        });
-        response.end(bytes);
-        return;
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.workspaceFiles) {
-        // The released URL spells this `botId`; only the local name follows the rename.
-        const agentId = url.searchParams.get("botId");
-        const workspacePath = url.searchParams.get("path");
-        if (!agentId || agentId.length > INPUT_LIMITS.identifier) {
-          throw new HttpError(400, "A valid agent id is required.");
-        }
-        if (!workspacePath || workspacePath.length > INPUT_LIMITS.path) {
-          throw new HttpError(400, "A valid workspace file path is required.");
-        }
-        const workspaceFile = await this.#options.agents.resolveWorkspaceFile(agentId, workspacePath);
-        if (workspaceFile.size > ATTACHMENT_LIMITS.fileBytes) {
-          throw new HttpError(413, "The workspace file exceeds the 100 MB limit.");
-        }
-        const bytes = await readFile(workspaceFile.path);
-        response.writeHead(200, {
-          "Content-Type": "application/octet-stream",
-          "Content-Length": String(bytes.length),
-          "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(workspaceFile.name)}`,
-          "X-Content-Type-Options": "nosniff",
-        });
-        response.end(bytes);
-        return;
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.team.members) {
-        requireAdmin(member);
-        return this.#json(response, 200, this.#options.store.listMembers());
-      }
-      const memberMatch = url.pathname.match(/^\/v1\/team\/members\/([^/]+)$/);
-      if (method === "PATCH" && memberMatch) {
-        requireAdmin(member);
-        const body = await readJson(request);
-        const role = body.role;
-        const disabled = body.disabled;
-        if (role !== undefined && role !== "admin" && role !== "member") {
-          throw new HttpError(400, "Invalid role.");
-        }
-        if (disabled !== undefined && !isBoolean(disabled)) {
-          throw new HttpError(400, "disabled must be a boolean.");
-        }
-        const updated = await this.#options.store.updateMember(pathIdentifier(memberMatch[1], "memberId"), {
-          ...(role ? { role } : {}),
-          ...(disabled === undefined ? {} : { disabled }),
-        });
-        if (updated.disabled) await this.#options.remoteScreen?.revokeMember(updated.id);
-        this.refreshPresence();
-        return this.#json(response, 200, updated);
-      }
-      if (method === "DELETE" && memberMatch) {
-        requireAdmin(member);
-        const removedMemberId = pathIdentifier(memberMatch[1], "memberId");
-        await this.#options.store.removeMember(removedMemberId);
-        await this.#options.remoteScreen?.revokeMember(removedMemberId);
-        this.refreshPresence();
-        return this.#empty(response, 204);
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.team.invites) {
-        requireAdmin(member);
-        const body = await readJson(request);
-        const role = stringField(body, "role");
-        if (role !== "admin" && role !== "member") throw new HttpError(400, "Invalid role.");
-        const email = nullableString(body, "email", INPUT_LIMITS.email) ?? undefined;
-        if (!this.#options.createInvite) throw new HttpError(503, "Invitation service is unavailable.");
-        return this.#json(response, 201, await this.#options.createInvite({ role, ...(email ? { email } : {}) }));
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.team.invites) {
-        requireAdmin(member);
-        return this.#json(response, 200, this.#options.store.listInvites());
-      }
-      const inviteMatch = url.pathname.match(/^\/v1\/team\/invites\/([^/]+)$/);
-      if (method === "DELETE" && inviteMatch) {
-        requireAdmin(member);
-        await this.#options.store.revokeInvite(pathIdentifier(inviteMatch[1], "inviteId"));
-        return this.#empty(response, 204);
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.team.sessions) {
-        requireAdmin(member);
-        return this.#json(response, 200, this.#options.store.listSessions());
-      }
-      const sessionMatch = url.pathname.match(/^\/v1\/team\/sessions\/([^/]+)$/);
-      if (method === "DELETE" && sessionMatch) {
-        requireAdmin(member);
-        const revokedSessionId = pathIdentifier(sessionMatch[1], "sessionId");
-        await this.#options.store.revokeSession(revokedSessionId);
-        await this.#options.onSessionRevoked?.(revokedSessionId);
-        await this.#options.remoteScreen?.revokeTeamSession(revokedSessionId);
-        this.refreshPresence();
-        return this.#empty(response, 204);
-      }
+      // First module that does not say "unmatched" wins, and the dispatcher then does nothing at
+      // all - work after a `writeHead` is an `ERR_HTTP_HEADERS_SENT` thrown into the catch below,
+      // over a response that has already been sent.
+      //
+      // Sequence is safe because the six prefixes are disjoint, so a request that falls out of one
+      // module could not have matched a later one in the single chain this replaced. What that
+      // relies on is each module answering "unmatched" for a method it does not serve rather than
+      // 404 on its own: the 404 below is the only one in the Team API, which is what keeps a wrong
+      // method on a known path answering 404 - never 405 - exactly as the released clients expect.
+      if ((await this.#routeTeam(context)) === "handled") return;
+      if ((await this.#routeRemoteScreen(context)) === "handled") return;
+      if ((await this.#routeDirect(context)) === "handled") return;
+      if ((await this.#routeBrowser(context)) === "handled") return;
+      if ((await this.#routeFiles(context)) === "handled") return;
+      if ((await this.#routeAgents(context)) === "handled") return;
 
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.agents.status) {
-        return this.#json(response, 200, this.#options.agents.getStatus());
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.sidebarLayout.state) {
-        return this.#json(response, 200, this.#options.sidebarLayout.getSnapshot());
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.sidebarLayout.actions) {
-        const action = parseSidebarLayoutAction(await readJson(request));
-        const layout = await this.#options.sidebarLayout.mutate(
-          action,
-          new Set(this.#options.agents.listAgents().map((agent) => agent.id)),
-        );
-        return this.#json(response, 200, layout);
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.agents.usage) {
-        return this.#json(response, 200, await this.#options.agents.getUsage());
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.agents.models) {
-        return this.#json(response, 200, await this.#options.agents.listModels());
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.agents.all) {
-        return this.#json(response, 200, this.#options.agents.listAgents());
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.agents.conversationReads) {
-        return this.#json(
-          response,
-          200,
-          this.#options.agents.listConversationReads(member.id, markerExclusionsForCapabilities(clientCapabilities)),
-        );
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.agents.all) {
-        const body = await readJson(request);
-        return this.#json(response, 201, await this.#options.agents.createAgent(agentCreate(body)));
-      }
-
-      const agentMatch = url.pathname.match(/^\/v1\/agents\/([^/]+)(?:\/(.*))?$/);
-      if (agentMatch) {
-        const agentId = pathIdentifier(agentMatch[1], "agentId");
-        const action = agentMatch[2] ?? "";
-        if (method === "GET" && action === "usage") {
-          return this.#json(response, 200, await this.#options.agents.getUsage(agentId));
-        }
-        if (method === "GET" && action === "skills") {
-          return this.#json(response, 200, (await this.#options.skills?.listInstalledForChatTags(agentId)) ?? []);
-        }
-        if (method === "PATCH" && !action) {
-          const body = await readJson(request);
-          return this.#json(response, 200, await this.#options.agents.updateAgent(agentUpdate(body, agentId)));
-        }
-        if (method === "POST" && action === "duplicate") {
-          const body = await readJson(request);
-          return this.#json(response, 201, await this.#duplicateAgent(agentId, stringField(body, "operationId")));
-        }
-        if (method === "DELETE" && !action) {
-          if (member.role === "member") throw new HttpError(403, "Members cannot delete agents.");
-          await this.#options.agents.deleteAgent(agentId);
-          await this.#options.sidebarLayout.removeAgent(agentId);
-          return this.#empty(response, 204);
-        }
-        if (action === "memories") {
-          if (method === "GET") {
-            return this.#json(response, 200, this.#options.agents.listMemories(agentId));
-          }
-          if (method === "POST") {
-            const body = await readJson(request);
-            return this.#json(
-              response,
-              201,
-              this.#options.agents.createMemory({
-                agentId,
-                text: stringField(body, "text", false, INPUT_LIMITS.agentMemoryText),
-              }),
-            );
-          }
-          if (method === "DELETE") {
-            this.#options.agents.clearMemories(agentId);
-            return this.#empty(response, 204);
-          }
-        }
-        const memoryMatch = action.match(/^memories\/([^/]+)$/);
-        if (memoryMatch) {
-          const memoryId = pathIdentifier(memoryMatch[1], "memoryId");
-          if (method === "PATCH") {
-            const body = await readJson(request);
-            return this.#json(
-              response,
-              200,
-              this.#options.agents.updateMemory({
-                agentId,
-                memoryId,
-                text: stringField(body, "text", false, INPUT_LIMITS.agentMemoryText),
-              }),
-            );
-          }
-          if (method === "DELETE") {
-            this.#options.agents.deleteMemory({ agentId, memoryId });
-            return this.#empty(response, 204);
-          }
-        }
-        if (action === "routines") {
-          if (method === "GET") {
-            return this.#json(response, 200, this.#options.agents.listRoutines(agentId));
-          }
-          if (method === "POST") {
-            const body = await readJson(request);
-            return this.#json(
-              response,
-              201,
-              this.#options.agents.createRoutine(parseCreateRoutine({ ...body, agentId })),
-            );
-          }
-        }
-        const routineMatch = action.match(/^routines\/([^/]+)(?:\/(test|runs))?$/);
-        if (routineMatch) {
-          const routineId = pathIdentifier(routineMatch[1], "routineId");
-          const routineAction = routineMatch[2] ?? "";
-          if (method === "PATCH" && !routineAction) {
-            const body = await readJson(request);
-            return this.#json(
-              response,
-              200,
-              this.#options.agents.updateRoutine(parseUpdateRoutine({ ...body, agentId, routineId })),
-            );
-          }
-          if (method === "DELETE" && !routineAction) {
-            await this.#options.agents.deleteRoutine({ agentId, routineId });
-            return this.#empty(response, 204);
-          }
-          if (method === "POST" && routineAction === "test") {
-            return this.#json(response, 201, await this.#options.agents.testRoutine({ agentId, routineId }));
-          }
-          if (method === "GET" && routineAction === "runs") {
-            const rawLimit = url.searchParams.get("limit");
-            const limit = rawLimit === null ? 50 : Number(rawLimit);
-            return this.#json(
-              response,
-              200,
-              this.#options.agents.listRoutineRuns(parseListRoutineRuns({ agentId, routineId, limit })),
-            );
-          }
-        }
-        if (action === "avatar") {
-          if (method === "PUT") {
-            const mimeType = request.headers["content-type"]?.split(";", 1)[0]?.trim() ?? "";
-            if (!isAvatarMimeType(mimeType)) {
-              throw new HttpError(415, "Choose a PNG, JPEG, or WebP image.");
-            }
-            const bytes = await readBinary(request, AVATAR_IMAGE_LIMITS.storedBytes);
-            return this.#json(response, 200, await this.#options.agents.setAvatar(agentId, { mimeType, bytes }));
-          }
-          if (method === "DELETE") {
-            return this.#json(response, 200, await this.#options.agents.setAvatar(agentId, null));
-          }
-          if (method === "GET") {
-            const avatar = this.#options.agents.resolveAvatar(agentId);
-            if (!avatar || avatar.version !== url.searchParams.get("v")) {
-              throw new HttpError(404, "Agent avatar not found.");
-            }
-            const bytes = await readFile(avatar.path);
-            response.writeHead(200, {
-              "Content-Type": avatar.mimeType,
-              "Content-Length": String(bytes.length),
-              "Cache-Control": "private, max-age=31536000, immutable",
-              "X-Content-Type-Options": "nosniff",
-            });
-            response.end(bytes);
-            return;
-          }
-        }
-        if (method === "GET" && action === "conversation") {
-          const conversation = await this.#options.agents.readConversationFor(agentId, member.id);
-          return this.#json(response, 200, conversationForCapabilities(conversation, clientCapabilities));
-        }
-        if (method === "GET" && action === "conversation-page") {
-          const page = await this.#options.agents.readConversationPageFor(
-            agentId,
-            member.id,
-            pageAnchor(url),
-            pageLimit(url),
-            markerExclusionsForCapabilities(clientCapabilities),
-          );
-          return this.#json(response, 200, page);
-        }
-        if (method === "POST" && action === "conversation/unread") {
-          if (requestProtocol(request) !== TEAM_PROTOCOL_V3 || !clientCapabilities.has("conversation-unread")) {
-            throw new HttpError(400, "This client does not support marking conversations unread.");
-          }
-          await readJson(request);
-          return this.#json(response, 200, await this.#options.agents.markConversationUnread(agentId, member.id));
-        }
-        if (method === "POST" && action === "conversation/read") {
-          const body = await readJson(request);
-          return this.#json(
-            response,
-            200,
-            await this.#options.agents.markConversationRead(
-              agentId,
-              member.id,
-              nullableString(body, "throughMessageId"),
-              markerExclusionsForCapabilities(clientCapabilities),
-            ),
-          );
-        }
-        if (method === "POST" && action === "messages") {
-          const body = await readJson(request);
-          return this.#json(
-            response,
-            202,
-            await this.#options.agents.sendMessage({
-              agentId,
-              text: stringField(body, "text", true, INPUT_LIMITS.messageText),
-              attachmentDraftIds: stringArray(body, "attachmentDraftIds"),
-              replyToMessageId: nullableString(body, "replyToMessageId"),
-            }),
-          );
-        }
-        if (method === "GET" && action === "queue") {
-          return this.#json(response, 200, this.#options.agents.listQueue(agentId));
-        }
-        if (method === "POST" && action === "failures/acknowledge") {
-          const body = await readJson(request);
-          this.#options.agents.acknowledgeFailedTurn(agentId, stringField(body, "turnId"));
-          return this.#empty(response, 204);
-        }
-        if (method === "POST" && action === "reactions") {
-          const body = await readJson(request);
-          const emoji = body.emoji;
-          if (emoji !== null && !isMessageReaction(emoji)) throw new HttpError(400, "Invalid emoji.");
-          await this.#options.agents.setMessageReaction({
-            agentId,
-            messageId: stringField(body, "messageId"),
-            emoji,
-          });
-          return this.#empty(response, 204);
-        }
-        if (method === "POST" && action === "queue/cancel") {
-          const body = await readJson(request);
-          await this.#options.agents.cancelQueuedMessage(agentId, stringField(body, "deliveryId"));
-          return this.#empty(response, 204);
-        }
-        if (method === "POST" && action === "queue/steer") {
-          const body = await readJson(request);
-          await this.#options.agents.steerQueuedMessage({
-            agentId,
-            deliveryId: stringField(body, "deliveryId"),
-            expectedTurnId: stringField(body, "expectedTurnId"),
-          } satisfies SteerQueuedMessageInput);
-          return this.#empty(response, 204);
-        }
-        if (method === "POST" && action === "queue/update") {
-          const body = await readJson(request);
-          await this.#options.agents.updateQueuedMessage({
-            agentId,
-            deliveryId: stringField(body, "deliveryId"),
-            text: stringField(body, "text", true, INPUT_LIMITS.messageText),
-            keepAttachmentIds: stringArray(body, "keepAttachmentIds"),
-            attachmentDraftIds: stringArray(body, "attachmentDraftIds"),
-          } satisfies UpdateQueuedMessageInput);
-          return this.#empty(response, 204);
-        }
-        if (method === "POST" && action === "queue/reorder") {
-          const body = await readJson(request);
-          await this.#options.agents.reorderQueue({
-            agentId,
-            deliveryIds: stringArray(body, "deliveryIds", INPUT_LIMITS.messageRecipients),
-          } satisfies ReorderQueueInput);
-          return this.#empty(response, 204);
-        }
-        if (method === "POST" && action === "interrupt") {
-          const body = await readJson(request);
-          await this.#options.agents.interrupt(agentId, stringField(body, "turnId"));
-          return this.#empty(response, 204);
-        }
-      }
-
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.respond.prompt) {
-        const body = await readJson(request);
-        await this.#options.agents.respondToPrompt({
-          requestId: promptRequestId(body.requestId),
-          answers: promptAnswers(body.answers),
-        });
-        return this.#empty(response, 204);
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.respond.approval) {
-        const body = await readJson(request);
-        await this.#options.agents.respondToApproval({
-          requestId: promptRequestId(body.requestId),
-          decision: approvalDecision(body.decision),
-        });
-        return this.#empty(response, 204);
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.respond.browserTakeover) {
-        const body = await readJson(request);
-        await this.#options.agents.respondToBrowserTakeover({
-          requestId: promptRequestId(body.requestId),
-          decision: browserTakeoverDecision(body.decision),
-        });
-        return this.#empty(response, 204);
-      }
-
+      // The only 404 in the Team API.
       return this.#json(response, 404, { error: "Route not found." });
     } catch (error) {
+      // The only catch, too. A module with its own would cut an unexpected error off from the
+      // logger below and answer 400 where the failure was a 500 nobody would then ever see.
       const expected =
         error instanceof HttpError || error instanceof RemoteScreenError || error instanceof TeamStoreError;
       const status =
@@ -1251,7 +518,56 @@ export class TeamApiServer {
     }
   }
 
-  #checkRate(request: import("node:http").IncomingMessage, username: string): void {
+  // One method per module, so the dispatcher above reads as a list of domains and the wiring of
+  // each narrow `*RouteDependencies` sits next to nothing else.
+  #routeTeam(context: TeamApiRequestContext): Promise<RouteOutcome> {
+    return routeTeam(context, {
+      store: this.#options.store,
+      remoteScreen: this.#options.remoteScreen,
+      createInvite: this.#options.createInvite,
+      onSessionRevoked: this.#options.onSessionRevoked,
+      getPresence: () => this.getPresence(),
+      refreshPresence: () => this.refreshPresence(),
+    });
+  }
+
+  #routeRemoteScreen(context: TeamApiRequestContext): Promise<RouteOutcome> {
+    return routeRemoteScreen(context, {
+      store: this.#options.store,
+      remoteScreen: this.#options.remoteScreen,
+    });
+  }
+
+  #routeDirect(context: TeamApiRequestContext): Promise<RouteOutcome> {
+    return routeDirect(context, {
+      listDirectThreads: (memberId) => this.listDirectThreads(memberId),
+      readDirectConversation: (memberId, otherMemberId) => this.readDirectConversation(memberId, otherMemberId),
+      readDirectConversationPage: (memberId, otherMemberId, anchor, limit) =>
+        this.readDirectConversationPage(memberId, otherMemberId, anchor, limit),
+      sendDirectMessage: (senderMemberId, input) => this.sendDirectMessage(senderMemberId, input),
+      markDirectRead: (memberId, otherMemberId, throughSequence) =>
+        this.markDirectRead(memberId, otherMemberId, throughSequence),
+    });
+  }
+
+  #routeBrowser(context: TeamApiRequestContext): Promise<RouteOutcome> {
+    return routeBrowser(context, { browser: this.#options.browser });
+  }
+
+  #routeFiles(context: TeamApiRequestContext): Promise<RouteOutcome> {
+    return routeFiles(context, { agents: this.#options.agents, mailbox: this.#options.mailbox });
+  }
+
+  #routeAgents(context: TeamApiRequestContext): Promise<RouteOutcome> {
+    return routeAgents(context, {
+      agents: this.#options.agents,
+      skills: this.#options.skills,
+      sidebarLayout: this.#options.sidebarLayout,
+      duplicateAgent: (agentId, operationId) => this.#duplicateAgent(agentId, operationId),
+    });
+  }
+
+  #checkRate(request: IncomingMessage, username: string): void {
     const key = `${request.socket.remoteAddress ?? "local"}:${username.toLowerCase()}`;
     const now = this.#now();
     this.#pruneRateLimits(now, this.#rateLimits.size >= this.#rateLimitCapacity);
@@ -1659,7 +975,7 @@ export class TeamApiServer {
     return recipient;
   }
 
-  #json(response: ServerResponse, status: number, value: object | null): void {
+  #json(response: ServerResponse, status: number, value: object | null): RouteOutcome {
     const route = this.#responseRoutes.get(response);
     if (!route) throw new Error("Team API response route is unavailable.");
     const options = { preserveSemanticTags: supportsTeamSemanticTags(route.capabilities) };
@@ -1674,6 +990,7 @@ export class TeamApiServer {
         : encodeTeamProtocolV1CurrentHttpResponse(route.method, route.path, status, value, options);
     response.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
     response.end(`${body}\n`);
+    return "handled";
   }
 
   #protocolSupport(): TeamProtocolSupportV1 {
@@ -1684,7 +1001,7 @@ export class TeamApiServer {
     };
   }
 
-  #protocolIssue(request: import("node:http").IncomingMessage): TeamProtocolIssue | null {
+  #protocolIssue(request: IncomingMessage): TeamProtocolIssue | null {
     if (!this.#options.appVersion) return null;
     const rawProtocol = firstHeaderValue(request.headers[TEAM_PROTOCOL_VERSION_HEADER.toLowerCase()]);
     const clientAppVersion = firstHeaderValue(request.headers[TEAM_APP_VERSION_HEADER.toLowerCase()]);
@@ -1727,9 +1044,35 @@ export class TeamApiServer {
     };
   }
 
-  #empty(response: ServerResponse, status: number): void {
+  #empty(response: ServerResponse, status: number): RouteOutcome {
     response.writeHead(status);
     response.end();
+    return "handled";
+  }
+
+  // The context is assembled here rather than in `request-context.ts` because `json` and `empty`
+  // have to close over the per-response route record, which only this class holds.
+  #requestContext(
+    request: IncomingMessage,
+    response: ServerResponse,
+    url: URL,
+    token: string,
+    authenticated: { member: TeamMemberSummary; sessionId: string; sessionExpiresAt: string },
+  ): TeamApiRequestContext {
+    return {
+      request,
+      response,
+      method: request.method ?? "GET",
+      url,
+      protocol: requestProtocol(request),
+      capabilities: requestCapabilities(request),
+      member: authenticated.member,
+      token,
+      sessionId: authenticated.sessionId,
+      sessionExpiresAt: authenticated.sessionExpiresAt,
+      json: (status, value) => this.#json(response, status, value),
+      empty: (status) => this.#empty(response, status),
+    };
   }
 }
 
@@ -1760,82 +1103,6 @@ function unavailableSidebarLayout(): TeamApiSidebarLayout {
   };
 }
 
-function requestCapabilities(request: import("node:http").IncomingMessage): Set<string> {
-  const header = request.headers[TEAM_CAPABILITIES_HEADER.toLowerCase()];
-  const value = Array.isArray(header) ? header.join(",") : header;
-  if (!value || value.length > 4_096) return new Set();
-  const capabilities = value.split(",").map((capability) => capability.trim());
-  if (capabilities.length > 64) return new Set();
-  return new Set(capabilities.filter(isTeamCurrentCapability));
-}
-
-function conversationSnapshotForCapabilities(
-  snapshot: ConversationSnapshot,
-  capabilities: ReadonlySet<string>,
-): ConversationSnapshot {
-  return {
-    ...snapshot,
-    messages: snapshot.messages.filter((message) => markerSupported(message.itemType, capabilities)),
-  };
-}
-
-function conversationForCapabilities(
-  conversation: ConversationWithReadState,
-  capabilities: ReadonlySet<string>,
-): ConversationWithReadState {
-  const messages = conversation.messages.filter((message) => markerSupported(message.itemType, capabilities));
-  if (!conversation.readState) return { ...conversation, messages };
-  return {
-    ...conversation,
-    messages,
-    readState: {
-      ...conversation.readState,
-      throughMessageId: supportedConversationCursor(
-        conversation.messages,
-        conversation.readState.throughMessageId,
-        capabilities,
-      ),
-    },
-  };
-}
-
-function supportedConversationCursor(
-  messages: ConversationSnapshot["messages"],
-  throughMessageId: string | null,
-  capabilities: ReadonlySet<string>,
-): string | null {
-  if (!throughMessageId) return null;
-  const boundary = messages.findIndex((message) => message.id === throughMessageId);
-  for (let index = boundary; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message && markerSupported(message.itemType, capabilities)) return message.id;
-  }
-  return null;
-}
-
-function markerExclusionsForCapabilities(capabilities: ReadonlySet<string>): {
-  excludeRoutineEvents: boolean;
-  excludeRoutineRunEvents: boolean;
-  excludeHostedSiteEvents: boolean;
-} {
-  return {
-    excludeRoutineEvents: !capabilities.has("routine-event-markers"),
-    excludeRoutineRunEvents: !capabilities.has("routine-run-event-markers"),
-    excludeHostedSiteEvents: !capabilities.has("hosted-site-event-markers"),
-  };
-}
-
-function markerSupported(itemType: string | undefined, capabilities: ReadonlySet<string>): boolean {
-  if (itemType?.startsWith(ROUTINE_EVENT_ITEM_TYPE_PREFIX)) return capabilities.has("routine-event-markers");
-  if (itemType?.startsWith(ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX)) {
-    return capabilities.has("routine-run-event-markers");
-  }
-  if (itemType?.startsWith(HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX)) {
-    return capabilities.has("hosted-site-event-markers");
-  }
-  return true;
-}
-
 function eventCapability(event: AgentEvent): TeamCurrentCapability | null {
   if (event.type === "turn-progress") return TEAM_AGENT_ACTIVITY_CAPABILITY;
   if (event.type === "runtime-snapshot") return "agent-runtime-snapshots";
@@ -1843,295 +1110,4 @@ function eventCapability(event: AgentEvent): TeamCurrentCapability | null {
   if (event.type === "browser-changed" || event.type === "browser-control-changed") return "browser-control";
   if (event.type === "conversation-page") return "conversation-pagination";
   return null;
-}
-
-class HttpError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
-
-function bearerToken(value: string | undefined): string | null {
-  const match = value?.match(/^Bearer ([A-Za-z0-9_-]{20,512})$/);
-  return match?.[1] ?? null;
-}
-
-function publicHttpBaseUrl(request: import("node:http").IncomingMessage): string {
-  const forwardedHost = firstHeaderValue(request.headers["x-forwarded-host"]);
-  const host = forwardedHost || request.headers.host;
-  if (!host || !/^[A-Za-z0-9.:[\]-]+$/.test(host)) {
-    throw new HttpError(400, "A valid public host is required.");
-  }
-  const forwardedProtocol = firstHeaderValue(request.headers["x-forwarded-proto"]);
-  const protocol = forwardedProtocol === "https" ? "https" : "http";
-  return `${protocol}://${host}`;
-}
-
-function firstHeaderValue(value: string | string[] | undefined): string | undefined {
-  const first = Array.isArray(value) ? value[0] : value?.split(",", 1)[0];
-  return first?.trim();
-}
-
-function requireAdmin(member: TeamMemberSummary): void {
-  if (member.role === "member") throw new HttpError(403, "Administrator access is required.");
-}
-
-function parseBrowserBounds(value: unknown): {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-} {
-  if (!isDynamicRecord(value)) throw new HttpError(400, "Invalid browser bounds.");
-  const x = value.x;
-  const y = value.y;
-  const width = value.width;
-  const height = value.height;
-  if (
-    !isNumber(x) ||
-    !isNumber(y) ||
-    !isNumber(width) ||
-    !isNumber(height) ||
-    ![x, y, width, height].every(Number.isFinite)
-  ) {
-    throw new HttpError(400, "Invalid browser bounds.");
-  }
-  return { x, y, width, height };
-}
-
-async function readJson(request: import("node:http").IncomingMessage): Promise<DynamicRecord> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of request) {
-    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    size += bytes.length;
-    if (size > JSON_LIMIT) throw new HttpError(413, "Request body is too large.");
-    chunks.push(bytes);
-  }
-  try {
-    const value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    return requestProtocol(request) === TEAM_PROTOCOL_V3
-      ? decodeTeamProtocolV3CurrentHttpRequest(request.method ?? "GET", request.url ?? "/", value, {
-          preserveSemanticTags: supportsTeamSemanticTags(requestCapabilities(request)),
-        })
-      : decodeTeamProtocolV1CurrentHttpRequest(request.method ?? "GET", request.url ?? "/", value);
-  } catch {
-    throw new HttpError(400, "A valid JSON object is required.");
-  }
-}
-
-function requestProtocol(request: import("node:http").IncomingMessage): number {
-  const raw = firstHeaderValue(request.headers[TEAM_PROTOCOL_VERSION_HEADER.toLowerCase()]);
-  const protocol = raw ? Number(raw) : TEAM_PROTOCOL_V1;
-  return Number.isSafeInteger(protocol) ? protocol : TEAM_PROTOCOL_V1;
-}
-
-function stringField(
-  value: DynamicRecord,
-  field: string,
-  allowEmpty = false,
-  maxLength: number = INPUT_LIMITS.identifier,
-): string {
-  const item = value[field];
-  if (!isString(item) || (!allowEmpty && !item.trim())) {
-    throw new HttpError(400, `${field} is required.`);
-  }
-  if (item.length > maxLength) throw new HttpError(400, `${field} is too long.`);
-  return item;
-}
-
-function nullableString(
-  value: DynamicRecord,
-  field: string,
-  maxLength: number = INPUT_LIMITS.identifier,
-): string | null {
-  const item = value[field];
-  if (item === undefined || item === null || item === "") return null;
-  if (!isString(item)) throw new HttpError(400, `${field} must be a string.`);
-  if (item.length > maxLength) throw new HttpError(400, `${field} is too long.`);
-  return item;
-}
-
-function pathIdentifier(value: string | undefined, field: string): string {
-  let decoded: string;
-  try {
-    decoded = decodeURIComponent(value ?? "");
-  } catch {
-    throw new HttpError(400, `${field} is invalid.`);
-  }
-  if (!decoded || decoded.length > INPUT_LIMITS.identifier) {
-    throw new HttpError(400, `${field} is invalid.`);
-  }
-  return decoded;
-}
-
-function stringArray(
-  value: DynamicRecord,
-  field: string,
-  maxItems: number = INPUT_LIMITS.attachments,
-  maxLength: number = INPUT_LIMITS.identifier,
-): string[] {
-  const item = value[field];
-  if (item === undefined) return [];
-  if (
-    !Array.isArray(item) ||
-    item.length > maxItems ||
-    !item.every((entry) => isString(entry) && entry.length <= maxLength)
-  ) {
-    throw new HttpError(400, `${field} must be a string array.`);
-  }
-  return item;
-}
-
-function promptRequestId(value: unknown): string | number {
-  if (isNumber(value) && Number.isSafeInteger(value)) return value;
-  if (isString(value) && value.length > 0 && value.length <= INPUT_LIMITS.identifier) {
-    return value;
-  }
-  throw new HttpError(400, "requestId is invalid.");
-}
-
-function promptAnswers(value: unknown): Record<string, string[]> {
-  if (!isDynamicRecord(value)) {
-    throw new HttpError(400, "answers is required.");
-  }
-  const entries = Object.entries(value);
-  if (entries.length > INPUT_LIMITS.promptQuestions) {
-    throw new HttpError(400, "Too many prompt answers.");
-  }
-  const answers: Record<string, string[]> = {};
-  let totalTextLength = 0;
-  for (const [key, answer] of entries) {
-    if (
-      key.length > INPUT_LIMITS.identifier ||
-      !Array.isArray(answer) ||
-      answer.length > INPUT_LIMITS.promptAnswersPerQuestion ||
-      !answer.every((item) => isString(item) && item.length <= INPUT_LIMITS.promptAnswerText)
-    ) {
-      throw new HttpError(400, "A prompt answer is invalid.");
-    }
-    totalTextLength += answer.reduce((length, item) => length + item.length, 0);
-    if (totalTextLength > INPUT_LIMITS.promptAnswersTotalText) {
-      throw new HttpError(400, "Prompt answers are too long.");
-    }
-    answers[key] = answer;
-  }
-  return answers;
-}
-
-function approvalDecision(value: unknown): RespondToApprovalInput["decision"] {
-  if (value === "accept" || value === "decline") return value;
-  throw new HttpError(400, "approval decision is invalid.");
-}
-
-function browserTakeoverDecision(value: unknown): RespondToBrowserTakeoverInput["decision"] {
-  if (value === "complete" || value === "cancel") return value;
-  throw new HttpError(400, "browser takeover decision is invalid.");
-}
-
-function agentUpdate(value: DynamicRecord, agentId: string): UpdateAgentInput {
-  if (value.role !== undefined) throw new HttpError(400, "role is invalid.");
-  const result: UpdateAgentInput = { agentId };
-  const textFields = {
-    name: INPUT_LIMITS.agentName,
-    title: INPUT_LIMITS.agentTitle,
-    description: INPUT_LIMITS.agentDescription,
-  } as const;
-  for (const [field, maxLength] of Object.entries(textFields)) {
-    const item = value[field];
-    if (item === undefined) continue;
-    if (!isString(item) || item.length > maxLength) {
-      throw new HttpError(400, `${field} is invalid.`);
-    }
-    if (field === "name") result.name = item;
-    else if (field === "title") result.title = item;
-    else result.description = item;
-  }
-  if (value.notifications !== undefined) {
-    if (!isBoolean(value.notifications)) {
-      throw new HttpError(400, "notifications is invalid.");
-    }
-    result.notifications = value.notifications;
-  }
-  if (value.provider !== undefined) {
-    if (value.provider !== "codex" && value.provider !== "claude" && value.provider !== "grok") {
-      throw new HttpError(400, "provider is invalid.");
-    }
-    result.provider = value.provider;
-  }
-  if (value.model !== undefined) {
-    if (!isAgentModel(value.model)) throw new HttpError(400, "model is invalid.");
-    result.model = value.model;
-  }
-  if (value.reasoningEffort !== undefined) {
-    if (!isReasoningEffort(value.reasoningEffort)) {
-      throw new HttpError(400, "reasoningEffort is invalid.");
-    }
-    result.reasoningEffort = value.reasoningEffort;
-  }
-  if (value.avatarSeed !== undefined) {
-    if (!isAvatarSeed(value.avatarSeed)) throw new HttpError(400, "avatarSeed is invalid.");
-    result.avatarSeed = value.avatarSeed;
-  }
-  if (value.avatarHue !== undefined) {
-    if (value.avatarHue !== null && !isAvatarHue(value.avatarHue)) {
-      throw new HttpError(400, "avatarHue is invalid.");
-    }
-    result.avatarHue = value.avatarHue;
-  }
-  return result;
-}
-
-function agentCreate(value: DynamicRecord): CreateAgentInput {
-  const avatarHue = value.avatarHue;
-  if (!isAvatarSeed(value.avatarSeed)) throw new HttpError(400, "avatarSeed is invalid.");
-  if (avatarHue !== null && !isAvatarHue(avatarHue)) throw new HttpError(400, "avatarHue is invalid.");
-  return {
-    name: requiredCreateText(value.name, "name", INPUT_LIMITS.agentName),
-    description: requiredCreateText(value.description, "description", INPUT_LIMITS.agentDescription),
-    avatarSeed: value.avatarSeed,
-    avatarHue,
-    initialMessage: requiredCreateText(value.initialMessage, "initialMessage", INPUT_LIMITS.messageText),
-  };
-}
-
-function requiredCreateText(value: unknown, field: string, maximum: number): string {
-  if (!isString(value) || !value.trim() || value.length > maximum) {
-    throw new HttpError(400, `${field} is invalid.`);
-  }
-  return value;
-}
-
-async function readBinary(request: import("node:http").IncomingMessage, limit: number): Promise<Uint8Array> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of request) {
-    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    size += bytes.length;
-    if (size > limit) throw new HttpError(413, "Attachment exceeds the 100 MB limit.");
-    chunks.push(bytes);
-  }
-  return new Uint8Array(Buffer.concat(chunks));
-}
-
-function pageAnchor(url: URL): ConversationPageAnchor {
-  const before = url.searchParams.get("before");
-  const around = url.searchParams.get("around");
-  if (before && around) throw new HttpError(400, "Choose one conversation page anchor.");
-  if (before) return { type: "before", cursor: before };
-  if (around) return { type: "around", messageId: around };
-  return { type: "latest" };
-}
-
-function pageLimit(url: URL): number {
-  const raw = url.searchParams.get("limit");
-  if (raw === null) return 50;
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value < 1 || value > 100) {
-    throw new HttpError(400, "The conversation page limit must be between 1 and 100.");
-  }
-  return value;
 }
