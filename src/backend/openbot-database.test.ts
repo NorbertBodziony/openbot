@@ -1141,6 +1141,14 @@ describe("OpenBotDatabase", () => {
         )
         .get(),
     ).toEqual({ seed: legacyId, id: agentId });
+    // The whole-database substitution can make two rows equal. These two memories say the same sentence in
+    // the two spellings, so rewriting one duplicates the other under `UNIQUE(agent_id, normalized_text)`.
+    // Aborting would roll this migration back on every launch and lock the user out over a duplicated
+    // sentence, and skipping the row would leave a memory attached to an agent id that no longer exists.
+    // The pair collapses to one memory, still the agent's own.
+    expect(migrated.connection.prepare("SELECT agent_id, text FROM projection_agent_memories").all()).toEqual([
+      { agent_id: agentId, text: `remember ${agentId} deploys` },
+    ]);
     expect(migrated.connection.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     migrated.close();
   });
@@ -1393,6 +1401,11 @@ function seedLegacyAgent(database: DatabaseSync, legacyId: string, workspacePath
     createdAt: "2026-09-01T12:00:00.000Z",
   });
 
+  // Two memories of one agent that quote the id in each spelling. Rewriting the first makes it equal to the
+  // second under `UNIQUE(agent_id, normalized_text)`, which is a duplicated sentence, not a reason to lock
+  // the user out of their database.
+  const memories = [`remember ${legacyId} deploys`, `remember ${legacyId.replace(/^bot-/u, "agent-")} deploys`];
+
   const insert = database.prepare(
     `INSERT INTO projection_threads (thread_id, agent_id, title, active_turn_id, created_at, updated_at, last_event_sequence)
      VALUES (?, ?, 'Chief', NULL, '2026-09-01T12:00:00.000Z', '2026-09-01T12:00:00.000Z', 1)`,
@@ -1404,6 +1417,15 @@ function seedLegacyAgent(database: DatabaseSync, legacyId: string, workspacePath
        VALUES (?, ?, 'gpt-5.6-luna', '2026-09-01T12:00:00.000Z', 0, ?, 1)`,
     )
     .run(legacyId, threadId, agentJson);
+  for (const [index, memory] of memories.entries()) {
+    database
+      .prepare(
+        `INSERT OR IGNORE INTO projection_agent_memories
+           (memory_id, agent_id, text, normalized_text, origin, source_turn_id, created_at, updated_at, last_event_sequence)
+         VALUES (?, ?, ?, ?, 'manual', NULL, '2026-09-01T12:00:00.000Z', '2026-09-01T12:00:00.000Z', 1)`,
+      )
+      .run(`memory-${legacyId}-${index}`, legacyId, memory, memory);
+  }
   database
     .prepare(
       `INSERT INTO projection_thread_messages

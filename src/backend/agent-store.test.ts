@@ -681,10 +681,25 @@ describe("AgentStore", () => {
 
     const agent = await store.createAgent(AGENT_PROFILE_INPUT);
     await writeFile(join(agent.workspacePath, "generated.txt"), "workspace data");
-    await store.deleteAgent(agent.id);
-    expect(store.list()).toEqual([]);
-    await expect(readFile(join(agent.workspacePath, "generated.txt"))).rejects.toMatchObject({ code: "ENOENT" });
 
+    // Deleting an agent also clears the directories a pre-rename build would have given it, and that name
+    // is derived from this id's own spelling. `bot-<uuid>` is a valid id in its own right, so a second
+    // agent can be sitting under exactly that derived name -- and these are recursive deletes.
+    const sibling = `bot-${agent.id.slice("agent-".length)}`;
+    await store.getOrCreate(sibling);
+    const siblingLegacyWorkspace = join(home, "OpenBot", "Bots", sibling);
+    await mkdir(siblingLegacyWorkspace, { recursive: true });
+    await writeFile(join(siblingLegacyWorkspace, "notes.md"), "sibling data");
+    await mkdir(join(userData, "avatars", sibling), { recursive: true });
+    await writeFile(join(userData, "avatars", sibling, "avatar.png"), "sibling face");
+
+    await store.deleteAgent(agent.id);
+    expect(store.list().map((entry) => entry.id)).toEqual([sibling]);
+    await expect(readFile(join(agent.workspacePath, "generated.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(siblingLegacyWorkspace, "notes.md"), "utf8")).resolves.toBe("sibling data");
+    await expect(readFile(join(userData, "avatars", sibling, "avatar.png"), "utf8")).resolves.toBe("sibling face");
+
+    await store.deleteAgent(sibling);
     const restored = new AgentStore(userData, home);
     await restored.initialize();
     expect(restored.list()).toEqual([]);

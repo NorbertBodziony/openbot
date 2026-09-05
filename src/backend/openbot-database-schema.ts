@@ -647,7 +647,7 @@ interface AgentIdRename {
 
 interface TextColumnStatement {
   readonly table: string;
-  readonly column: string;
+  readonly columns: readonly string[];
   readonly substitute: ReturnType<DatabaseSync["prepare"]>;
 }
 
@@ -711,6 +711,10 @@ function readAgentIdRenames(db: DatabaseSync): readonly AgentIdRename[] {
        WHERE agent_id LIKE 'bot-%'`,
     )
     .all();
+  const taken = new Set<string>();
+  for (const row of db.prepare("SELECT agent_id FROM projection_agents").all()) {
+    if (isDynamicRecord(row) && isString(row.agent_id)) taken.add(row.agent_id);
+  }
   const renames: AgentIdRename[] = [];
   for (const row of rows) {
     if (!isDynamicRecord(row) || !isString(row.agent_id)) continue;
@@ -720,9 +724,17 @@ function readAgentIdRenames(db: DatabaseSync): readonly AgentIdRename[] {
     // migration throws, `runMigration` rolls back -- and the next launch tries the same thing again, so the
     // user never gets back in. The UUID suffix is what distinguishes the two, so only it is rewritten.
     if (!isGeneratedAgentId(row.agent_id)) continue;
+    const newId = `agent-${row.agent_id.slice("bot-".length)}`;
+    // A UUID suffix says the id has the shape the application mints; it does not say *this* row came from
+    // one. `getOrCreate` takes a caller-supplied id and `bots.json` carried whatever the file held, so a
+    // `bot-<uuid>` can be sitting in this table beside an `agent-<uuid>` sharing that UUID. Renaming the
+    // first onto the second collides on the primary key, and the substitution below resolves a collision by
+    // replacing the row -- so an agent nobody touched would quietly disappear on upgrade. An id whose target
+    // is taken is left alone instead: a stale spelling is legible, a deleted agent is not recoverable.
+    if (taken.has(newId)) continue;
     renames.push({
       oldId: row.agent_id,
-      newId: `agent-${row.agent_id.slice("bot-".length)}`,
+      newId,
       workspacePath: isString(row.workspace_path) ? row.workspace_path : null,
     });
   }
@@ -764,6 +776,13 @@ function jsonEscape(value: string): string {
   return JSON.stringify(value).slice(1, -1);
 }
 
+/**
+ * One statement per table, rewriting every TEXT column of a row together.
+ *
+ * Together is the point. A per-column statement lets the conflict resolution below act on one column of a
+ * row and not another, leaving a memory whose `text` and `normalized_text` say different things -- and
+ * dedupe reads the normalized column, so the divergence outlives the migration.
+ */
 function textColumnStatements(db: DatabaseSync): readonly TextColumnStatement[] {
   const statements: TextColumnStatement[] = [];
   for (const table of db
@@ -773,26 +792,46 @@ function textColumnStatements(db: DatabaseSync): readonly TextColumnStatement[] 
     )
     .all()) {
     if (!isDynamicRecord(table) || !isString(table.name)) continue;
+    const columns: string[] = [];
     for (const column of db.prepare(`PRAGMA table_info(${quoteSqlIdentifier(table.name)})`).all()) {
       if (!isDynamicRecord(column) || !isString(column.name) || !isString(column.type)) continue;
       if (column.type.toUpperCase() !== "TEXT") continue;
-      statements.push({
-        table: table.name,
-        column: column.name,
-        substitute: db.prepare(
-          `UPDATE ${quoteSqlIdentifier(table.name)}
-           SET ${quoteSqlIdentifier(column.name)} = replace(${quoteSqlIdentifier(column.name)}, ?, ?)
-           WHERE ${quoteSqlIdentifier(column.name)} LIKE ? ESCAPE '\\'`,
-        ),
-      });
+      columns.push(column.name);
     }
+    if (columns.length === 0) continue;
+    const assignments = columns
+      .map((column) => `${quoteSqlIdentifier(column)} = replace(${quoteSqlIdentifier(column)}, ?, ?)`)
+      .join(", ");
+    const matches = columns.map((column) => `${quoteSqlIdentifier(column)} LIKE ? ESCAPE '\\'`).join(" OR ");
+    statements.push({
+      table: table.name,
+      columns,
+      // `OR REPLACE`, because a whole-database substitution can make two rows equal. Two memories of one
+      // agent quoting `bot-<uuid>` and `agent-<uuid>` collapse to the same `normalized_text` under
+      // `UNIQUE(agent_id, normalized_text)`, and two files recorded under the two workspace roots collapse
+      // to the same `projection_files.path`. Aborting would roll the migration back on every launch and
+      // lock the user out over a duplicated sentence; `OR IGNORE` would be worse still, leaving the skipped
+      // row's `agent_id` spelling an agent that no longer exists, so the memory survives attached to
+      // nobody. Collapsing the pair is what the constraint means and what would have happened had the
+      // duplicate been written today.
+      //
+      // What keeps this from reaching an identifier is `readAgentIdRenames`, which drops a rename whose
+      // target id is already taken. That leaves every identifier this rewrites one-to-one, so the only rows
+      // it can collapse are the free-text ones. Foreign keys are off for this migration, so a replace here
+      // would not cascade -- `runMigration` runs `PRAGMA foreign_key_check` over the result.
+      substitute: db.prepare(`UPDATE OR REPLACE ${quoteSqlIdentifier(table.name)} SET ${assignments} WHERE ${matches}`),
+    });
   }
   return statements;
 }
 
 function substitute(statements: readonly TextColumnStatement[], search: string, replacement: string): void {
   const pattern = `%${search.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_")}%`;
-  for (const statement of statements) statement.substitute.run(search, replacement, pattern);
+  for (const statement of statements) {
+    const parameters = statement.columns.flatMap(() => [search, replacement]);
+    for (const _ of statement.columns) parameters.push(pattern);
+    statement.substitute.run(...parameters);
+  }
 }
 
 function quoteSqlIdentifier(identifier: string): string {

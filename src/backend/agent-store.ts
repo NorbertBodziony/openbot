@@ -480,16 +480,21 @@ export class AgentStore {
     await Promise.all([
       rm(join(this.#avatarsRoot, id), { recursive: true, force: true }),
       rm(`${join(this.#avatarsRoot, id)}.openbot-stage`, { recursive: true, force: true }),
-      rm(join(this.#avatarsRoot, legacyAgentId(id)), { recursive: true, force: true }),
       rm(join(this.#agentsRoot, id), { recursive: true, force: true }),
       rm(`${join(this.#agentsRoot, id)}.openbot-stage`, { recursive: true, force: true }),
-      // A workspace that could not follow the rename legitimately sits under the pre-rename root, and
-      // deleting only the derived path would leave that agent's files behind. The path is derived rather
-      // than read from `workspacePath`, because that column comes out of the user's own database file and
-      // a recursive delete must never follow a string this code did not build.
-      rm(join(this.#legacyAgentsRoot, legacyAgentId(id)), { recursive: true, force: true }),
       rm(this.#duplicationMarkerPath(id), { force: true }),
     ]);
+    // A workspace that could not follow the rename legitimately sits under the pre-rename root, and
+    // deleting only the derived path would leave that agent's files behind. The path is derived rather than
+    // read from `workspacePath`, because that column comes out of the user's own database file and a
+    // recursive delete must never follow a string this code did not build.
+    const legacyId = this.#unclaimedLegacyId(id);
+    if (legacyId !== null) {
+      await Promise.all([
+        rm(join(this.#avatarsRoot, legacyId), { recursive: true, force: true }),
+        rm(join(this.#legacyAgentsRoot, legacyId), { recursive: true, force: true }),
+      ]);
+    }
     return { ...agent };
   }
 
@@ -543,9 +548,25 @@ export class AgentStore {
     await this.#removeLegacyWorkspaceRoot();
   }
 
+  /**
+   * The name a pre-rename build would have given this agent, or `null` when another agent in the store is
+   * living under it right now. `legacyAgentId` reads syntax, and syntax is not ownership: `bot-<uuid>` is
+   * a valid id in its own right, so migration v13 leaving one in place beside an `agent-<uuid>` that shares
+   * its UUID is a state the user can reach. Every caller here either deletes a directory recursively or
+   * moves one, so a derived name that belongs to somebody else is the difference between tidying up after
+   * the rename and destroying an agent nobody touched.
+   */
+  #unclaimedLegacyId(id: string): string | null {
+    const legacyId = legacyAgentId(id);
+    if (legacyId === id) return null;
+    return this.#state.agents.some((candidate) => candidate.id === legacyId) ? null : legacyId;
+  }
+
   /** Answers whether the agent's stored workspace path had to change, which is what has to be persisted. */
   async #reconcileWorkspaceDirectory(agent: StoredAgent): Promise<boolean> {
-    const legacyPath = join(this.#legacyAgentsRoot, legacyAgentId(agent.id));
+    const legacyId = this.#unclaimedLegacyId(agent.id);
+    if (legacyId === null) return false;
+    const legacyPath = join(this.#legacyAgentsRoot, legacyId);
     if (legacyPath === agent.workspacePath) return false;
     // A probe that cannot answer is not permission to guess. `EACCES` on either directory, or a Windows
     // lock, leaves this run unable to tell a moved workspace from a missing one -- so it does nothing and
@@ -574,8 +595,8 @@ export class AgentStore {
    * app looks for it under the new one, so every uploaded avatar silently falls back to a drawn face.
    */
   async #reconcileAvatarDirectory(agent: StoredAgent): Promise<void> {
-    const legacyId = legacyAgentId(agent.id);
-    if (legacyId === agent.id) return;
+    const legacyId = this.#unclaimedLegacyId(agent.id);
+    if (legacyId === null) return;
     const currentPath = join(this.#avatarsRoot, agent.id);
     const legacyPath = join(this.#avatarsRoot, legacyId);
     if ((await probeDirectory(currentPath)) !== false || (await probeDirectory(legacyPath)) !== true) return;
