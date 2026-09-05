@@ -40,7 +40,7 @@
     "yaml": "catalog:"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.52.1",
+    "@cloudflare/vite-plugin": "1.54.3",
     "@cloudflare/workers-types": "catalog:",
     "@solidjs/testing-library": "catalog:",
     "@solidjs/vite-plugin": "catalog:",
