@@ -989,7 +989,7 @@ if (!hasSingleInstanceLock) {
           developmentUrl && process.env.OPENBOT_DEV_ICE_TRANSPORT_POLICY === "relay" ? "relay" : "all",
       });
       browserHost = new BrowserHost(mainWindow, store.downloadsRoot, join(app.getPath("userData"), BROWSER_STATE_FILE));
-      await browserHost.restore();
+      await browserHost.restore(store.list().map((agent) => ({ id: agent.id, threadId: agent.threadId })));
       browserPictureInPicture = new BrowserPictureInPicture({
         mainWindow,
         browser: browserHost,

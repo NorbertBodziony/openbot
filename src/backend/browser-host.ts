@@ -19,7 +19,13 @@ import { createOpenBotLogger, toLogValue } from "@openbot/logging";
 import { app, type BrowserWindow, type Session, session, type WebContents, WebContentsView } from "electron";
 import { embeddedBrowserUserAgent, embeddedBrowserUserAgentForUrl } from "./browser-identity";
 import { isCloseBrowserTabShortcut, isGlobalSearchShortcut, isToggleDevToolsShortcut } from "./browser-shortcuts";
-import { isPersistableBrowserUrl, persistentBrowserUrl, storedBrowserTab } from "./browser-state";
+import {
+  type BrowserTabOwner,
+  isPersistableBrowserUrl,
+  persistentBrowserUrl,
+  reownStoredBrowserTab,
+  storedBrowserTab,
+} from "./browser-state";
 import type { DynamicToolCallParams, DynamicToolResult } from "./protocol";
 import { isRecord } from "./protocol";
 
@@ -180,16 +186,24 @@ export class BrowserHost {
     this.#configureSession();
   }
 
-  async restore(): Promise<void> {
+  /**
+   * `agents` is the roster as it stands after the migrations have run, and is what points a tab a
+   * pre-rename build wrote at the agent that owns it now. Without it the owner and thread ids in the file
+   * name an agent that no longer answers to them, and every tool call against the tab is refused.
+   */
+  async restore(agents: readonly BrowserTabOwner[] = []): Promise<void> {
     const state = await readBrowserState(this.#statePath);
     if (state.tabs.length === 0) return;
 
-    const tabs = state.tabs.slice(0, INPUT_LIMITS.browserTabs).map((stored) => {
-      const tab = this.#createTab(stored.id, stored.url, stored.ownerThreadId, stored.ownerAgentId);
-      this.#tabs.set(tab.id, tab);
-      this.#bindTabEvents(tab);
-      return tab;
-    });
+    const tabs = state.tabs
+      .slice(0, INPUT_LIMITS.browserTabs)
+      .map((tab) => reownStoredBrowserTab(tab, agents))
+      .map((stored) => {
+        const tab = this.#createTab(stored.id, stored.url, stored.ownerThreadId, stored.ownerAgentId);
+        this.#tabs.set(tab.id, tab);
+        this.#bindTabEvents(tab);
+        return tab;
+      });
     this.#activeTabId = this.#tabs.has(state.activeTabId ?? "") ? state.activeTabId : (tabs[0]?.id ?? null);
     this.#syncAttachedView();
     this.#emitChanged();
