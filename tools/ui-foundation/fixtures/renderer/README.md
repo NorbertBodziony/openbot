@@ -1,7 +1,9 @@
 # ui-foundation fixture
 
-A miniature `src/renderer/src` that breaks every check in `scripts/ui-foundation-check.ts`
-exactly once, beside correct code each check must leave alone. `scripts/ui-foundation-check.test.ts`
+A miniature `src/renderer/src` that breaks every check in `scripts/ui-foundation-check.ts`,
+beside correct code each check must leave alone. Where a check names two things that can break
+independently - `@kobalte/core` and `lucide-solid`, a hex colour and a named one - each gets its
+own line here, because one of them firing says nothing about the other. `scripts/ui-foundation-check.test.ts`
 asserts the resulting report line for line, so a check that stops matching turns red here instead of
 staying green in CI.
 

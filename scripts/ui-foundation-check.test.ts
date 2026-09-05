@@ -30,12 +30,18 @@ describe("ui foundation check", () => {
         "components/Bad.tsx: ręczny switch jest zabroniony; użyj components/ui/Switch",
         "components/Bad.tsx: literał koloru w inline style jest zabroniony; użyj tokenu palety",
         "components/Bad.tsx: font-size, radius i transition w inline style muszą używać tokenów",
+        // The same check, reached through the other package it names. Kobalte firing says
+        // nothing about this branch of the pattern.
+        "components/Icons.tsx: import Kobalte/Lucide jest dozwolony wyłącznie w components/ui",
         "components/ui/complex.tsx: namespace Kobalte musi przechodzić przez adapter, nie bezpośredni alias",
         budget("ręczne złożone role ARIA", 1),
-        // One hex in styles/legacy.css and one rgb() in preview/preview.css. The second is
-        // the file the old hand-written scope missed, so this number is 2 or the scope
-        // has narrowed back to a list of directory names.
-        budget("literały kolorów poza paletą", 2),
+        // A hex and a named colour in styles/legacy.css, an rgb() in preview/preview.css.
+        // The rgb() is in the file the old hand-written scope missed, so a scope narrowed
+        // back to a list of directory names reads 2; the named colour is matched by a
+        // second pattern entirely, which the hex does not exercise, so losing that reads 2
+        // as well. The token spelling a colour in tokens.css must stay uncounted, or this
+        // reads 4 and the word boundaries have gone.
+        budget("literały kolorów poza paletą", 3),
         budget("nietokenizowane font-size", 1),
         budget("nietokenizowane border-radius", 1),
         budget("nietokenizowane czasy transition", 1),

@@ -1,7 +1,9 @@
-/* One unit of each migration budget, so every count in the report is exactly 1. */
+/* One unit of each migration budget. The last declaration is matched by a second,
+   separate pattern - the list of named colours - which the hex above does not exercise. */
 .legacy {
   color: #ff0000;
   font-size: 14px;
   border-radius: 6px;
   transition: opacity 200ms ease;
+  border-color: red;
 }
