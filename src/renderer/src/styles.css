@@ -12,7 +12,7 @@
 @import "./styles/base.css";
 @import "./features/account/auth.css";
 @import "./features/onboarding/onboarding.css";
-@import "./styles/first-agent-setup.css";
+@import "./features/agents/first-agent-setup.css";
 @import "./styles/app-shell.css";
 @import "./features/account/account-update-island.css";
 @import "./styles/join-server-dialog.css";
