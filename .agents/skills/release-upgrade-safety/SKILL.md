@@ -31,13 +31,23 @@ This runs *before* `docs/RELEASING.md`, which stays authoritative for the publis
 ## Step 1 — establish the range, then account for every file in it
 
 ```bash
+git status --porcelain
 git tag --list 'v*' --sort=-v:refname | head -1
 git diff --stat <tag>..HEAD
 ```
 
-The audit is over that commit range, not over the working tree: an uncommitted edit is not what
-ships, and a hazard three commits back is. State the tag and the changed-file count up front, and
-run every gate's `git diff` over that same range.
+**Stop if the tree is not clean.** The audit is over the commit range, not the working tree, and
+that is only sound if the working tree is empty — otherwise the range you audit and the range that
+ships are different sets. Nothing upstream of you enforces this: `scripts/prepare-release.ts` writes
+the version bump without looking at `git status`, and its closing instruction is "Review, commit,
+push, run preflight, then tag it", so following it sweeps whatever was uncommitted into the release.
+`scripts/release-preflight.ts` does check `git status --porcelain`, but it runs *after* that commit,
+by which point the tree is clean and the unaudited work is inside the tag. Commit or stash first,
+then establish the range.
+
+State the tag and the changed-file count up front, and run every gate's `git diff` over that same
+range. A hazard three commits back is in scope; the file you have open is not, unless it is
+committed.
 
 **The diff drives the audit, not the trigger lists.** Take the whole changed-file list and assign
 every entry to a gate or dismiss it by name:
@@ -63,9 +73,11 @@ git diff --name-only <tag>..HEAD | cut -d/ -f1-2 | sort | uniq -c | sort -rn
 Then handle each bucket one of three ways, and say in the Step 3 table which one you used:
 
 - **Dismissed as a bucket**, with the reason stated once. A bucket qualifies only if you can say
-  what makes *every* file in it inert — `src/renderer/**` and `apps/mobile/**` ship in the same
-  binary as their callers and write nothing a later build reads; `**/*.test.ts`, `docs/**` and
-  `tools/**` are not in the shipped app at all. "Nothing looked interesting" is not a reason.
+  what makes *every* file in it inert. `**/*.test.ts`, `docs/**`, `tools/**` and
+  `src/renderer/stories/**` are not in the shipped app at all, which is such a reason. "Nothing
+  looked interesting" is not. **`src/renderer/**` does not qualify** — the renderer writes
+  `localStorage`, that store lives in the user's Electron partition, and it outlives the build that
+  wrote it exactly the way a file under `userData` does. Route it through gate B instead.
 - **Cleared by a derived query.** This is how a large hazard-bearing directory gets honestly
   covered: gate B's `git grep` over `src/main` and `src/backend` names every file that decodes a
   versioned payload, so the other two hundred are cleared by the query having asked the right
@@ -175,6 +187,29 @@ The list is still only a starting point, and it is short enough to eyeball: if i
 far less than the file inventory in `references/surfaces.md`, the pattern is broken rather than the
 release clean. Step 1 is what actually guarantees an unmatched file gets looked at — a persistence
 change spelled in a way no pattern anticipates is caught by having to dismiss the file by name.
+
+**The renderer persists too, and its store is not on any of the lists above.** `localStorage` lives
+in the user's Electron partition, so it survives an upgrade exactly the way a file under `userData`
+does — sidebar pins, collapsed sections, people order, panel widths and the completion-sound
+preference are all kept there. The query above never reaches it, because the renderer keys its state
+by string rather than guarding a `version` field. Run the key inventory as a second derived list:
+
+```bash
+git grep -hoE '"openbot:[a-z0-9:-]+"' <tag> -- 'src/renderer/src/**' \
+  ':(exclude)*.test.ts' ':(exclude)*.test.tsx' | sort -u > /tmp/keys-tag.txt
+git grep -hoE '"openbot:[a-z0-9:-]+"' HEAD -- 'src/renderer/src/**' \
+  ':(exclude)*.test.ts' ':(exclude)*.test.tsx' | sort -u > /tmp/keys-head.txt
+diff /tmp/keys-tag.txt /tmp/keys-head.txt
+```
+
+A key that disappears from the tag side is the renderer's version of a renamed filename constant:
+the old entry is never read again, never cleaned up, and the user's state is silently back to
+defaults. Three keys already carry their own version suffix — `openbot:sidebar-pins:v1`,
+`openbot:sidebar-collapsed:v1`, `openbot:sidebar-people-order:v1` — so bumping one to `:v2` is a
+deliberate reset and needs the same justification as a `userData` version bump, plus a
+`CHANGELOG.md` note under gate G if the user has to redo anything. Moving a file between directories
+does not rename its key, so expect the owner list to churn while the key list stays still; it is the
+`diff` that matters, not which file holds the literal.
 
 The trigger lives here rather than in `references/surfaces.md` because you classify triggers before
 you open any reference; a trigger that pointed at the inventory would need the inventory read first,
