@@ -31,12 +31,12 @@ const IMPORT_OF: Readonly<Record<string, string>> = {
 const SURFACES = [
   {
     name: "desktop renderer",
-    // styles.css imports every partial under styles/, and Storybook renders the
-    // same components against the same palette.
+    // styles.css imports the base partials under styles/ and each feature's own
+    // sheet, and Storybook renders the same components against the same palette.
     sources: ["src/renderer/src", "src/renderer/stories", ".storybook"],
     entry: "src/renderer/src/styles.css",
     imports: [SHARED_TOKENS],
-    scopedDeclarations: ["src/renderer/src/styles/settings-modal.css"],
+    scopedDeclarations: ["src/renderer/src/features/settings/settings-modal.css"],
   },
   {
     name: "public web",
@@ -44,7 +44,7 @@ const SURFACES = [
     entry: "apps/auth-api/src/styles.css",
     imports: [SHARED_TOKENS],
     // The /app-preview route imports the renderer's stylesheet wholesale.
-    scopedDeclarations: ["src/renderer/src/styles/settings-modal.css"],
+    scopedDeclarations: ["src/renderer/src/features/settings/settings-modal.css"],
   },
   {
     name: "mobile",

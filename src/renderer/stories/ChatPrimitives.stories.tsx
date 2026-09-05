@@ -3,8 +3,6 @@ import type { JSX } from "@solidjs/web";
 import { createMemo, createSignal, Show } from "solid-js";
 import { expect, fn, waitFor, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
-import { ChoiceCard } from "../src/components/ConversationPrompts";
-import { MessageActions, MessageBody } from "../src/components/conversation/MessageRendering";
 import {
   Bubble,
   BubbleContent,
@@ -22,6 +20,8 @@ import {
   Text,
 } from "../src/components/ui";
 import type { AgentMessage } from "../src/data";
+import { ChoiceCard } from "../src/features/conversation/ConversationPrompts";
+import { MessageActions, MessageBody } from "../src/features/conversation/MessageRendering";
 import { STORY_AGENTS, STORY_ATTACHMENTS } from "./fixtures";
 
 const previewImage = new URL("../src/assets/openbot-logo-production.png", import.meta.url).href;

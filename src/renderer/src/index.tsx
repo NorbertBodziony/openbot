@@ -1,7 +1,7 @@
 import { render } from "@solidjs/web";
 import { App } from "./App";
-import { ComputerUseSetupSurface } from "./ComputerUseSetupSurface";
-import { DynamicIslandSurface } from "./DynamicIslandSurface";
+import { ComputerUseSetupSurface } from "./features/computer-use/ComputerUseSetupSurface";
+import { DynamicIslandSurface } from "./features/dynamic-island/DynamicIslandSurface";
 import "./styles.css";
 
 const root = document.getElementById("root");

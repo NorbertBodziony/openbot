@@ -1,9 +1,9 @@
 import type { ComputerUseMacSetupState } from "@openbot/contracts/ipc";
 import { onCleanup } from "solid-js";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
-import { ComputerUseSetupSurface } from "../src/ComputerUseSetupSurface";
-import { ComputerUseMacSetup } from "../src/components/ComputerUseMacSetup";
 import { Toaster, toast } from "../src/components/ui";
+import { ComputerUseMacSetup } from "../src/features/computer-use/ComputerUseMacSetup";
+import { ComputerUseSetupSurface } from "../src/features/computer-use/ComputerUseSetupSurface";
 import { createMockOpenBot } from "./mock-openbot";
 
 const availableState: ComputerUseMacSetupState = {

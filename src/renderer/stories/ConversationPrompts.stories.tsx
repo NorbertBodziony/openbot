@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
-import { ChoiceCard } from "../src/components/ConversationPrompts";
+import { ChoiceCard } from "../src/features/conversation/ConversationPrompts";
 
 const choiceArgs: Parameters<typeof ChoiceCard>[0] = {
   title: "What should I help with first?",

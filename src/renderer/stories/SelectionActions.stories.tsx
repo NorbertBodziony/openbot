@@ -1,7 +1,7 @@
 import { createSignal, onSettled, Show } from "solid-js";
 import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
-import { type MessageTextSelection, SelectionActionsBar } from "../src/components/conversation/SelectionActions";
+import { type MessageTextSelection, SelectionActionsBar } from "../src/features/conversation/SelectionActions";
 
 function SelectionActionsDemo(props: {
   onSend?: (messageId: string, body: string) => Promise<boolean>;

@@ -1,3 +1,26 @@
+/**
+ * The one stylesheet that did not move into a feature directory, deliberately.
+ *
+ * Its last few hundred lines are a theme layer, not app-shell content: fourteen
+ * grouped rules assign the palette to selectors from every domain at once, and
+ * some of those selectors - .browser-tab, .message-action-button,
+ * .composer-button, .choice-card - are not even declared in this file. Splitting
+ * the sidebar or remote-desktop rules out means either duplicating those
+ * declarations into a second file, which is the one thing the shared palette
+ * exists to prevent, or leaving them here while their domain's own rules move
+ * past them. The second is not theoretical: .sidebar-icon-button:hover is
+ * declared twice at equal specificity, once here and once in the theme block, so
+ * moving the first past the second silently turns the hover background from
+ * --openbot-bg-control-hover into --openbot-border. Nothing in tsc, vitest or
+ * check:ui sees that.
+ *
+ * If you want the sidebar rules in features/sidebar/, lift the theme layer out
+ * first - into its own sheet that loads last, for every domain - and the split
+ * becomes mechanical. Until then this file stays whole, and
+ * noDescendingSpecificity stays off for it in biome.json because its source
+ * order is load-bearing.
+ */
+
 .app-frame {
   --left-header-height: 38px;
   --server-rail-width: 64px;

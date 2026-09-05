@@ -2,8 +2,8 @@ import type { Routine, RoutineRun } from "@openbot/contracts/ipc";
 import { onCleanup } from "solid-js";
 import { expect, fn, waitFor, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
-import { AgentRoutinesSettings } from "../src/components/conversation/AgentRoutinesSettings";
-import AgentSettingsPanel from "../src/components/conversation/AgentSettingsPanel";
+import { AgentRoutinesSettings } from "../src/features/conversation/AgentRoutinesSettings";
+import AgentSettingsPanel from "../src/features/conversation/AgentSettingsPanel";
 import { STORY_AGENT_STATUS, STORY_AGENTS, STORY_MODELS } from "./fixtures";
 import { createMockOpenBot } from "./mock-openbot";
 

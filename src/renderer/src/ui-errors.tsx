@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js";
 import { formatTime } from "./app-message-projection";
-import { agentConversationKey } from "./conversation-keys";
 import type { AgentMessage } from "./data";
+import { agentConversationKey } from "./features/conversation/conversation-keys";
 import { createSimpleContext } from "./simple-context";
 
 /**

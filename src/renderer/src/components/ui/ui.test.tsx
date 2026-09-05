@@ -16,7 +16,7 @@ import {
   Textarea,
   Toaster,
   toast,
-} from ".";
+} from "./index";
 
 const originalClipboard = navigator.clipboard;
 
