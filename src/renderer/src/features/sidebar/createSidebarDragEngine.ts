@@ -14,7 +14,6 @@ import type { TeamPresenceMember } from "@openbot/contracts/ipc";
 import { createBoundedDragPreview } from "../../components/createBoundedDragPreview";
 import type { createScrollFades } from "../../components/createScrollFades";
 import type { AgentProfile } from "../../data";
-import type { SidebarProps } from "./Sidebar";
 import { clearSidebarDragDecorations, createSidebarAgentDragCard, measureSidebarDragSlots } from "./sidebar-drag-dom";
 import {
   type AgentDragSlot,
@@ -36,6 +35,7 @@ import {
   sidebarDropTargetsEqual,
 } from "./sidebar-drag-model";
 import type { SidebarPinnedItem } from "./sidebar-pins";
+import type { SidebarProps } from "./sidebar-types";
 import type { SidebarDragWriters } from "./stores/drag-state-store";
 
 export interface SidebarDragEngineDeps {

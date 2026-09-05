@@ -6,7 +6,7 @@
 
 import type { SidebarSection } from "@openbot/contracts/ipc";
 import { createMemo, createStore } from "solid-js";
-import type { SidebarProps } from "../Sidebar";
+import type { SidebarProps } from "../sidebar-types";
 
 /**
  * The one delete confirmation the sidebar can have open: an agent, or a custom section, never both.

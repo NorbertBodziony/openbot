@@ -12,7 +12,6 @@ import {
 } from "@openbot/contracts/ipc";
 import { teamMemberName } from "../../../components/TeamPersonAvatar";
 import type { AgentProfile } from "../../../data";
-import type { SidebarProps } from "../Sidebar";
 import type {
   AgentDropTarget,
   PersonDropTarget,
@@ -21,6 +20,7 @@ import type {
   SidebarDropTarget,
 } from "../sidebar-drag-model";
 import { type SidebarPinnedItem, sidebarPinnedItemKey } from "../sidebar-pins";
+import type { SidebarProps } from "../sidebar-types";
 
 export function createSidebarLayoutActions(deps: {
   agentPinnedItems: () => SidebarPinnedItem[];

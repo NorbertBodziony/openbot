@@ -1,5 +1,5 @@
 import type { QueueSnapshot } from "@openbot/contracts/ipc";
-import type { SidebarAgentState } from "./Sidebar";
+import type { SidebarAgentState } from "./sidebar-types";
 
 export interface SidebarAgentStatesInput {
   agentIds: readonly string[];

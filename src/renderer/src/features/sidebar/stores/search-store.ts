@@ -4,7 +4,7 @@
  */
 
 import { createMemo, createSignal } from "solid-js";
-import type { SidebarProps } from "../Sidebar";
+import type { SidebarProps } from "../sidebar-types";
 
 export function createSidebarSearchStore(deps: { props: SidebarProps }) {
   const [query, setQuery] = createSignal("");

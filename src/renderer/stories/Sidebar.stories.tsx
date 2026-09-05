@@ -2,7 +2,6 @@ import type { SidebarLayoutAction, SidebarLayoutSnapshot } from "@openbot/contra
 import { createSignal, untrack } from "solid-js";
 import { expect, fireEvent, fn, waitFor, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
-import type { SidebarAgentState } from "../src/features/sidebar/Sidebar";
 import { Sidebar } from "../src/features/sidebar/Sidebar";
 import {
   MAX_SIDEBAR_PINNED_ITEMS,
@@ -10,6 +9,7 @@ import {
   type SidebarPinnedItem,
 } from "../src/features/sidebar/sidebar-pins";
 import { defaultSidebarLayout } from "../src/features/sidebar/sidebar-sections";
+import type { SidebarAgentState } from "../src/features/sidebar/sidebar-types";
 import { STORY_AGENTS, STORY_DIRECT_THREADS, STORY_PRESENCE } from "./fixtures";
 
 const agentStates: Record<string, SidebarAgentState> = {
