@@ -39,7 +39,7 @@ export default defineConfig({
             "packages/contracts/**/*.test.ts",
             "packages/logging/**/*.test.ts",
             "packages/team-client/**/*.test.ts",
-            "apps/mobile/src/features/auth/api/*.test.ts",
+            "apps/mobile/src/**/*.test.ts",
           ],
           exclude: [...configDefaults.exclude, "**/*.dom.test.ts"],
         },
