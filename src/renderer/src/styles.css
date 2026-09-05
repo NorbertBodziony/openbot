@@ -16,7 +16,7 @@
 @import "./styles/app-shell.css";
 @import "./styles/account-update-island.css";
 @import "./styles/join-server-dialog.css";
-@import "./styles/conversation.css";
+@import "./features/conversation/conversation.css";
 @import "./styles/settings-modal.css";
 @import "./styles/computer-use.css";
 @import "./styles/server-settings-modal.css";
