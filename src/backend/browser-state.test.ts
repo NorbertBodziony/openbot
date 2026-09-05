@@ -70,6 +70,14 @@ describe("storedBrowserTab", () => {
       ]),
     ).toEqual(tab);
 
+    // A generated agent's thread id is a bare UUID that v13 never rewrote, so it matches on its own while
+    // the owner id beside it is still the old spelling. Calling that tab correct leaves `#canUseToolTab`,
+    // which checks both, refusing every tool call against it.
+    const threadId = `openbot-thread-${uuid}`;
+    expect(
+      reownStoredBrowserTab({ ...tab, ownerThreadId: threadId }, [{ id: `agent-${uuid}`, threadId }]),
+    ).toMatchObject({ ownerAgentId: `agent-${uuid}`, ownerThreadId: threadId });
+
     // Nobody to give it to. Keeping the id it was found with orphans the tab; inventing one hands it over.
     expect(reownStoredBrowserTab(tab, [{ id: "chief", threadId: "openbot-thread-chief" }])).toEqual(tab);
   });

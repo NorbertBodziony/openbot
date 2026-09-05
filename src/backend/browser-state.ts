@@ -80,24 +80,35 @@ export interface BrowserTabOwner {
  */
 export function reownStoredBrowserTab(tab: StoredBrowserTab, agents: readonly BrowserTabOwner[]): StoredBrowserTab {
   if (tab.ownerAgentId === null && tab.ownerThreadId === null) return tab;
-  const current = agents.find(
-    (agent) =>
-      (tab.ownerAgentId !== null && agent.id === tab.ownerAgentId) ||
-      (tab.ownerThreadId !== null && agent.threadId === tab.ownerThreadId),
-  );
+  const owner = tabOwner(tab, agents);
+  if (!owner) return tab;
+  // Both fields are brought to the owner, not just the one that failed to match. A generated agent's
+  // thread id is `openbot-thread-<uuid>` with no agent id inside it, so v13 never touched it and it
+  // matches on its own -- while the owner id beside it is still the pre-rename spelling. Stopping at the
+  // first match would call that tab correct and leave `#canUseToolTab`, which checks both, refusing it.
+  const ownerThreadId = tab.ownerThreadId === null || owner.threadId === null ? tab.ownerThreadId : owner.threadId;
+  const ownerAgentId = tab.ownerAgentId === null ? null : owner.id;
+  if (ownerThreadId === tab.ownerThreadId && ownerAgentId === tab.ownerAgentId) return tab;
+  return { ...tab, ownerThreadId, ownerAgentId };
+}
 
-  if (current) return tab;
-  const renamed = agents.find(
-    (agent) =>
-      (tab.ownerAgentId !== null && legacyAgentId(agent.id) === tab.ownerAgentId) ||
-      (tab.ownerThreadId !== null && agent.threadId !== null && legacyThreadId(agent) === tab.ownerThreadId),
-  );
-  if (!renamed) return tab;
-  return {
-    ...tab,
-    ownerThreadId: tab.ownerThreadId === null ? null : renamed.threadId,
-    ownerAgentId: tab.ownerAgentId === null ? null : renamed.id,
-  };
+/**
+ * The roster entry a tab belongs to. Both current spellings are asked before either historical one,
+ * because v13 declines to rename onto an id that is taken: a `bot-<uuid>` agent can be sitting beside the
+ * `agent-<uuid>` it would otherwise have become, and the one that literally holds the id owns the tab.
+ */
+function tabOwner(tab: StoredBrowserTab, agents: readonly BrowserTabOwner[]): BrowserTabOwner | undefined {
+  const claims: ((agent: BrowserTabOwner) => boolean)[] = [
+    (agent) => agent.id === tab.ownerAgentId,
+    (agent) => tab.ownerThreadId !== null && agent.threadId === tab.ownerThreadId,
+    (agent) => tab.ownerAgentId !== null && legacyAgentId(agent.id) === tab.ownerAgentId,
+    (agent) => tab.ownerThreadId !== null && legacyThreadId(agent) === tab.ownerThreadId,
+  ];
+  for (const claim of claims) {
+    const owner = agents.find(claim);
+    if (owner) return owner;
+  }
+  return undefined;
 }
 
 /**
