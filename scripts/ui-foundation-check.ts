@@ -55,7 +55,11 @@ if (/export const \w+\s*=\s*\w+Primitive\s*;/u.test(complexApi)) {
   failures.push("components/ui/complex.tsx: namespace Kobalte musi przechodzić przez adapter, nie bezpośredni alias");
 }
 
-const componentSource = filesUnder(resolve(rendererRoot, "components"))
+// Every renderer component outside the shared layer, wherever it lives. This
+// used to walk `components/` alone, which stopped seeing a component the moment
+// it moved into `features/` - the budget stayed at zero by going blind, not by
+// being met.
+const componentSource = filesUnder(rendererRoot)
   .filter((path) => path.endsWith(".tsx") && !path.startsWith(uiRoot))
   .filter((path) => !path.endsWith(".test.tsx"))
   .map((path) => readFileSync(path, "utf8"))
@@ -68,13 +72,13 @@ const manualCompositeCount = matches(
 // The palette moved to @openbot/brand, which is now the only file allowed to hold
 // a colour literal, so every stylesheet the renderer owns is scanned whole. This
 // used to slice styles.css after its :root block to spare the palette, which also
-// spared everything else declared in there.
-const styles = readFileSync(resolve(rendererRoot, "styles.css"), "utf8");
-const featureStyles = filesUnder(resolve(rendererRoot, "styles"))
+// spared everything else declared in there. The walk is the whole renderer rather
+// than `styles/` plus the entry, so a stylesheet that moves next to the feature it
+// dresses stays inside the budget instead of leaving it.
+const legacyStyles = filesUnder(rendererRoot)
   .filter((path) => path.endsWith(".css"))
   .map((path) => readFileSync(path, "utf8"))
   .join("\n");
-const legacyStyles = `${styles}\n${featureStyles}`;
 const colorLiteralCount =
   matches(legacyStyles, /#[\da-f]{3,8}|rgba?\([^)]*\)|hsla?\([^)]*\)/giu) +
   matches(legacyStyles, /(?<![-\w])(?:white|black|red|blue|green|yellow|purple|orange|gray|grey|pink)(?![-\w])/giu);
