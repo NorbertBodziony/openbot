@@ -25,8 +25,9 @@ belongs.
 
 ## Do not run repo-wide checks. CI owns the full suite.
 
-Run the narrowest test for what you touched, `biome check <paths>`, and a targeted `tsc` on the
-project you changed. Do not run `bun run check`, `check:desktop`, `test`, or `build-storybook`: each
+Run the narrowest test for what you touched, `biome check <paths>`, `bun run check:ui` if you
+touched `src/renderer` — it scans the whole renderer in 60 ms and is not one of the slow ones — and
+a targeted `tsc` on the project you changed. Do not run `bun run check`, `check:desktop`, `test`, or `build-storybook`: each
 takes minutes, and the desktop suite flakes under load, so a red result tells you nothing about your
 change. CI owns all of it on every push:
 

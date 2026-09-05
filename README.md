@@ -150,6 +150,7 @@ Use `bun run dev:seed --dry-run` to inspect the target and fixture counts withou
 | `bun run dev:reset` | Delete the local app, test-client, and legacy host development state. |
 | `bun run dev:automation` | Drive the running dev app over CDP: `instances`, `pages`, `snapshot`, `screenshot`, `click`/`type` by accessible role. `--page=<target-id\|url-substring>` aims at any window, including embedded browser views; `--wait-for=<role>,<name>` settles on an accessible target instead of polling; mutations need `--allow-mutations` and a named instance (this worktree's record, `--instance=<id>` or `--port=`). |
 | `bun run check` | Run Biome, both typechecks, offline tests, the browser smoke test, and the production build. |
+| `bun run check:ui` | Check the renderer against the design system: shared primitives, Kobalte and Lucide confined to `components/ui`, palette tokens instead of colour, size, radius and transition literals. Reads the whole renderer in 60 ms. |
 | `bun run test:backend` | Run backend tests only. |
 | `bun run test:browser` | Run the local embedded-browser smoke test. |
 | `bun run test:codex` | Probe the real CLI handshake and account without starting a paid turn. |

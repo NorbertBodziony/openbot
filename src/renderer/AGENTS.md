@@ -13,6 +13,10 @@ for the component patterns, not the imports.
 - `bun run dev` for integrated work — it starts the local Auth API and the Electron dev app
   together. `bun run dev:api` is for API-only debugging.
 - `bun run storybook` verifies isolated components. CI builds it; do not run `build-storybook`.
+- `bun run check:ui` is the design-system guard for this directory: shared primitives over native
+  controls, Kobalte and Lucide only inside `components/ui`, and palette tokens instead of colour,
+  size, radius and transition literals. It reads the whole renderer in 60 ms, so run it on any
+  change here rather than waiting for CI — its budgets all sit at zero and only ever go down.
 - Never verify UI with `dist/`, a packaged `.app`, a production build, or an ad-hoc preview — those
   are for release verification the user asked for. If the dev app will not start, report the blocker
   instead of falling back to one.
