@@ -13,7 +13,7 @@ import {
   testConversationPage,
   testServer,
 } from "./app-test-harness";
-import { useConversation } from "./conversation";
+import { useConversation } from "./features/conversation/conversation-context";
 import { useServerScope } from "./server-scope";
 
 describe("OpenBot connected desktop shell", () => {

@@ -1,7 +1,6 @@
 import { createMemo } from "solid-js";
 import { useAgentActions } from "../../agent-actions";
 import { useAgents } from "../../agents";
-import { useConversation } from "../../conversation";
 import { useDirectMessages } from "../../direct-messages";
 import { useLayout } from "../../layout";
 import { DirectConversation } from "../../lazy-views";
@@ -11,6 +10,7 @@ import { useServerSettings } from "../../server-settings";
 import { useServers } from "../../servers";
 import { useSettings } from "../../settings";
 import { useTurns } from "../../turns";
+import { useConversation } from "../conversation/conversation-context";
 import { Sidebar } from "./Sidebar";
 import { computeSidebarAgentStates } from "./sidebar-agent-states";
 import { useSidebar } from "./sidebar-context";

@@ -8,9 +8,9 @@ import type {
   ProviderRuntimeStatus,
 } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, For, Match, onCleanup, Show, Switch } from "solid-js";
+import { PlusIcon } from "../features/conversation/ConversationIcons";
 import { AgentAvatar } from "./AgentAvatar";
 import { ComputerUseMacSetup } from "./ComputerUseMacSetup";
-import { PlusIcon } from "./conversation/ConversationIcons";
 import { ProviderPicker, type ProviderPickerOption } from "./ProviderPicker";
 import { Button } from "./ui";
 

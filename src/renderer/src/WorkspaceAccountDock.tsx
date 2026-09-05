@@ -3,13 +3,13 @@ import { createEffect, createMemo, Loading } from "solid-js";
 import { useAgents } from "./agents";
 import { useAuth } from "./auth";
 import { StaticAccountDock } from "./components/StaticAccountDock";
+import { useUpdates } from "./features/updates/updates-context";
 import { useLayout } from "./layout";
 import { AccountDock } from "./lazy-views";
 import { usePlatform } from "./platform";
 import { useServers } from "./servers";
 import { useSettings } from "./settings";
 import { useSetup } from "./setup";
-import { useUpdates } from "./updates";
 
 /**
  * The signed-in account, its usage and the update state, at the bottom of the

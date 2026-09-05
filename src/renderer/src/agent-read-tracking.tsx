@@ -1,4 +1,4 @@
-import type { AgentAutoReadEntry } from "./conversation-read-state";
+import type { AgentAutoReadEntry } from "./features/conversation/conversation-read-state";
 import { createSimpleContext } from "./simple-context";
 
 /**

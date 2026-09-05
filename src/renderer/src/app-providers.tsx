@@ -8,13 +8,17 @@ import { AnsweredPromptsProvider } from "./answered-prompts";
 import { AppBootstrap } from "./app-bootstrap";
 import { AuthProvider } from "./auth";
 import { BrowserTabsProvider } from "./browser-tabs";
-import { createServerConversationState, createStableConversationState } from "./components/conversation-controller";
-import { ConversationControllerProvider } from "./components/conversation-controller-context";
-import { ConversationProvider } from "./conversation";
 import { DirectMessagesProvider } from "./direct-messages";
 import { DynamicIslandProvider } from "./dynamic-island";
 import { DynamicIslandBridge } from "./dynamic-island-bridge";
+import { ConversationProvider } from "./features/conversation/conversation-context";
+import {
+  createServerConversationState,
+  createStableConversationState,
+} from "./features/conversation/conversation-controller";
+import { ConversationControllerProvider } from "./features/conversation/conversation-controller-context";
 import { SidebarProvider } from "./features/sidebar/sidebar-context";
+import { UpdatesProvider } from "./features/updates/updates-context";
 import { LayoutProvider } from "./layout";
 import { NavigationProvider } from "./navigation";
 import { PlatformProvider } from "./platform";
@@ -31,7 +35,6 @@ import { SetupProvider } from "./setup";
 import { notifyTeamTyping } from "./team-typing";
 import { TurnsProvider } from "./turns";
 import { UiErrorsProvider } from "./ui-errors";
-import { UpdatesProvider } from "./updates";
 
 /**
  * How the renderer is mounted, as opposed to anything it later loads. Both

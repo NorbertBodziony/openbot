@@ -19,7 +19,7 @@ import { createEffect, createMemo, createSignal, createStore, For, onCleanup, Sh
 import { desktopAnalytics } from "../analytics";
 import type { GeneralSettingsValue } from "../app-settings";
 import { normalizeAvatarFile } from "../avatar-image";
-import { presentUpdateStatus } from "../update-status";
+import { presentUpdateStatus } from "../features/updates/update-status";
 import { ComputerUseMacSetup } from "./ComputerUseMacSetup";
 import { ProviderPicker, type ProviderPickerOption } from "./ProviderPicker";
 import { SettingsDialogShell } from "./SettingsDialogShell";

@@ -16,8 +16,8 @@ import { isSkillCategory, SKILL_CATEGORIES } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, createStore, For, onCleanup, Show, snapshot } from "solid-js";
 import { desktopAnalytics } from "../analytics";
 import { normalizeAvatarFile } from "../avatar-image";
+import { routineScheduleSummary } from "../features/conversation/routine-schedule-ui";
 import { AgentAvatar } from "./AgentAvatar";
-import { routineScheduleSummary } from "./conversation/routine-schedule-ui";
 import { createAsyncPanel } from "./createAsyncPanel";
 import {
   ArrowLeft,

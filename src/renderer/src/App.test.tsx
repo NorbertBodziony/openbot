@@ -20,7 +20,7 @@ import {
   testConversationPage,
   testServer,
 } from "./app-test-harness";
-import { useConversation } from "./conversation";
+import { useConversation } from "./features/conversation/conversation-context";
 import { SIDEBAR_PINS_STORAGE_KEY } from "./features/sidebar/sidebar-pins";
 import { SIDEBAR_COLLAPSED_STORAGE_KEY } from "./features/sidebar/sidebar-sections";
 import { useLayout } from "./layout";

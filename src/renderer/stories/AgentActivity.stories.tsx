@@ -1,6 +1,6 @@
 import { createSignal, onSettled } from "solid-js";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
-import { AgentActivityIndicator, ThinkingDisclosure } from "../src/components/conversation/AgentActivity";
+import { AgentActivityIndicator, ThinkingDisclosure } from "../src/features/conversation/AgentActivity";
 import { STORY_AGENTS } from "./fixtures";
 
 const indicatorMeta = {

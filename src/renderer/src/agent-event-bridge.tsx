@@ -11,10 +11,15 @@ import { withoutAgent } from "./app-message-projection";
 import { useAuth } from "./auth";
 import { useBrowserTabs } from "./browser-tabs";
 import { playCompletionSoundForAgentEvent } from "./completion-sound";
-import { useConversation } from "./conversation";
-import { agentConversationKey, agentMessageKey, deleteAgentMessageBodies, promptRequestKey } from "./conversation-keys";
-import { latestIncomingConversationMessage } from "./conversation-read-state";
 import { reconcileQueuesWithRuntimeWork } from "./dynamic-island-coordinator";
+import { useConversation } from "./features/conversation/conversation-context";
+import {
+  agentConversationKey,
+  agentMessageKey,
+  deleteAgentMessageBodies,
+  promptRequestKey,
+} from "./features/conversation/conversation-keys";
+import { latestIncomingConversationMessage } from "./features/conversation/conversation-read-state";
 import { useSidebar } from "./features/sidebar/sidebar-context";
 import { usePlatform } from "./platform";
 import { useProviders } from "./providers";

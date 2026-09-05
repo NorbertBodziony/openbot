@@ -7,7 +7,7 @@ import type {
   UpdateStatus,
 } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
-import { presentUpdateStatus } from "../update-status";
+import { presentUpdateStatus } from "../features/updates/update-status";
 import { AccountUpdateIsland } from "./AccountUpdateIsland";
 import { TypingDots } from "./TypingDots";
 import {

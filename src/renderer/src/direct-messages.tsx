@@ -8,7 +8,7 @@ import type {
 } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, flush, onSettled } from "solid-js";
 import { desktopAnalytics } from "./analytics";
-import { preserveKnownDirectUnread } from "./conversation-read-state";
+import { preserveKnownDirectUnread } from "./features/conversation/conversation-read-state";
 import { usePlatform } from "./platform";
 import { usePresence } from "./presence";
 import { createScopeGuard } from "./scope-lifetime";

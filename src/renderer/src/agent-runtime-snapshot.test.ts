@@ -5,8 +5,8 @@ import {
   reconcileAttentionApprovals,
   reconcileAttentionPrompts,
 } from "./agent-runtime-snapshot";
-import { promptRequestKey } from "./conversation-keys";
 import type { AgentMessage } from "./data";
+import { promptRequestKey } from "./features/conversation/conversation-keys";
 
 const prompt = (
   agentId: string,

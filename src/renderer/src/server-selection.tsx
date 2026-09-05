@@ -1,8 +1,8 @@
 import type { AgentProviderId, AgentSummary, ServerSummary } from "@openbot/contracts/ipc";
 import { useAgents } from "./agents";
 import { desktopAnalytics } from "./analytics";
-import { useConversationController } from "./components/conversation-controller-context";
 import { useDirectMessages } from "./direct-messages";
+import { useConversationController } from "./features/conversation/conversation-controller-context";
 import { useRemoteDesktop } from "./remote-desktop";
 import { useServerSwitch } from "./server-switch";
 import { useServers } from "./servers";

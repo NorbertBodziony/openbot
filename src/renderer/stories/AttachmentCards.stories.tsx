@@ -1,6 +1,6 @@
 import { expect, fn, userEvent, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
-import { AttachmentCards } from "../src/components/conversation/AttachmentCards";
+import { AttachmentCards } from "../src/features/conversation/AttachmentCards";
 import { STORY_ATTACHMENTS } from "./fixtures";
 
 const compactFile = {

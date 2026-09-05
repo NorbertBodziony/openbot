@@ -1,7 +1,7 @@
 import type { AgentApproval, AgentEvent, AgentRuntimeSnapshot } from "@openbot/contracts/ipc";
 import { cleanAgentMessageText } from "./agent-message-text";
-import { promptRequestKey } from "./conversation-keys";
 import type { AgentMessage } from "./data";
+import { promptRequestKey } from "./features/conversation/conversation-keys";
 
 type PromptEvent = Extract<AgentEvent, { type: "prompt" }>;
 type BrowserTakeoverEvent = Extract<AgentEvent, { type: "browser-takeover-requested" }>;

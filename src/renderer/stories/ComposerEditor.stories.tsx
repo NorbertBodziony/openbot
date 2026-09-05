@@ -4,7 +4,7 @@ import type { DraftAttachment, InstalledSkill } from "@openbot/contracts/ipc";
 import { createSignal } from "solid-js";
 import { expect, fn, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
-import { ComposerEditor } from "../src/components/ComposerEditor";
+import { ComposerEditor } from "../src/features/conversation/ComposerEditor";
 import { STORY_AGENTS } from "./fixtures";
 
 const args: Parameters<typeof ComposerEditor>[0] = {

@@ -2,9 +2,9 @@ import { createEffect, createSignal, flush, getOwner, isDisposed, onSettled } fr
 import { useAgents } from "./agents";
 import { useAuth } from "./auth";
 import { useBrowserTabs } from "./browser-tabs";
-import { useConversation } from "./conversation";
-import { agentConversationKey } from "./conversation-keys";
 import { useDirectMessages } from "./direct-messages";
+import { useConversation } from "./features/conversation/conversation-context";
+import { agentConversationKey } from "./features/conversation/conversation-keys";
 import { useSidebar } from "./features/sidebar/sidebar-context";
 import { useNavigation } from "./navigation";
 import { usePresence } from "./presence";

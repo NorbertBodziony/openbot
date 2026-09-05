@@ -18,7 +18,7 @@ export const AccountLogin = lazy(() =>
   import("./components/AccountLogin").then((module) => ({ default: module.AccountLogin })),
 );
 export const DirectConversation = lazy(() =>
-  import("./components/DirectConversation").then((module) => ({ default: module.DirectConversation })),
+  import("./features/conversation/DirectConversation").then((module) => ({ default: module.DirectConversation })),
 );
 export const GlobalSearch = lazy(() =>
   import("./components/GlobalSearch").then((module) => ({ default: module.GlobalSearch })),

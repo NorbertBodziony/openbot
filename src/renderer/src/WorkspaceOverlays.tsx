@@ -2,6 +2,7 @@ import type { CentralAuthUser } from "@openbot/contracts/ipc";
 import { createMemo, Loading, Show } from "solid-js";
 import { useAgents } from "./agents";
 import { useAuth } from "./auth";
+import { useUpdates } from "./features/updates/updates-context";
 import {
   GlobalSearch,
   InitialSetup,
@@ -20,7 +21,6 @@ import { useServerSettings } from "./server-settings";
 import { useServers } from "./servers";
 import { useSettings } from "./settings";
 import { useSetup } from "./setup";
-import { useUpdates } from "./updates";
 
 interface AccountProps {
   account: () => CentralAuthUser;

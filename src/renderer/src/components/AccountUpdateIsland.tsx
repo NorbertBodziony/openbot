@@ -1,7 +1,7 @@
 import type { UpdateStatus } from "@openbot/contracts/ipc";
 import { isUpdateActivePhase, isUpdateBusyPhase } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
-import { rendererDuration } from "./conversation/activity-timing";
+import { rendererDuration } from "../features/conversation/activity-timing";
 import { Button, Download, RefreshCw, Spinner } from "./ui";
 
 // `--panel-close-dur` is a calc() on the island itself, so it cannot be read off

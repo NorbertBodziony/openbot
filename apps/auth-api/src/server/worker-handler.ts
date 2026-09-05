@@ -1,4 +1,4 @@
-import { routeRequest as routeHostedSiteRequest } from "../../../site-router/src/index";
+import { routeRequest as routeHostedSiteRequest } from "../../../site-router/src";
 import { type AuthRetentionResult, pruneExpiredAuthData } from "./auth-data-retention";
 import { HostedSiteService } from "./hosted-site-service";
 import { enforceMarketplaceIngress, MarketplaceRateLimitError } from "./marketplace-request-policy";
