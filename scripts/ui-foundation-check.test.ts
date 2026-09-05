@@ -46,11 +46,12 @@ describe("ui foundation check", () => {
         "components/branches/NativeSelect.tsx: use a component from components/ui instead of a native control",
         "components/branches/NativeTextarea.tsx: use a component from components/ui instead of a native control",
         "components/branches/ColourBackgroundRgb.tsx: a colour literal in an inline style is not allowed; use a palette token",
-        "components/branches/ColourBorderHsl.tsx: a colour literal in an inline style is not allowed; use a palette token",
+        "components/branches/ColourBorderTopHsl.tsx: a colour literal in an inline style is not allowed; use a palette token",
         "components/branches/ColourFillNamed.tsx: a colour literal in an inline style is not allowed; use a palette token",
         "components/branches/ColourStrokeHex.tsx: a colour literal in an inline style is not allowed; use a palette token",
         "components/branches/InlineFontSize.tsx: font-size, radius and transition in an inline style must use tokens",
         "components/branches/InlineTransition.tsx: font-size, radius and transition in an inline style must use tokens",
+        "components/branches/InlineTransitionDuration.tsx: font-size, radius and transition in an inline style must use tokens",
         budget("hand-rolled composite ARIA roles", 9),
         // A hex, a named colour and an hsl() in styles/legacy.css, an rgb() in preview/preview.css -
         // one per value form the pattern names.
@@ -63,7 +64,7 @@ describe("ui foundation check", () => {
         budget("colour literals outside the palette", 4),
         budget("untokenised font-size", 1),
         budget("untokenised border-radius", 1),
-        budget("untokenised transition durations", 1),
+        budget("untokenised transition durations", 2),
       ].sort(),
     );
   });

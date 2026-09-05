@@ -11,3 +11,7 @@
 .legacy-badge {
   background: hsl(0 100% 50%);
 }
+
+.legacy-fade {
+  transition-duration: 300ms;
+}
