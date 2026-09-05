@@ -150,8 +150,11 @@ them is a preference:
 - **`HttpError` has one definition**, in `http-error.ts`. The catch classifies by `instanceof`, so a
   second copy silently turns every 400 into a 500 and no round-trip test sees it.
 
-The last statement of every route module is `return "unmatched"`. There is no `noImplicitReturns`
-here, so a module that falls out of its end returns `undefined` and reads as a silent 404.
+The last statement of every route module is `return "unmatched"`, and what enforces that is the
+declared `Promise<RouteOutcome>` rather than the convention: falling out of the end is TS2366,
+"function lacks ending return statement". There is no `noImplicitReturns` here, so the annotation is
+the whole guard - a module that drops it gets `undefined` inferred, and `undefined` reads as a silent
+404. `tsc` covers this, so it does not want a test.
 
 Three things are deliberately not unified, and each says so in its own file header: the `FromHost`
 decoders and their `FromMain` twins in `src/preload/index.ts` (different trust boundaries), the HTTPS
