@@ -1,0 +1,22 @@
+/* One unit of each migration budget. The last declaration is matched by a second,
+   separate pattern - the list of named colours - which the hex above does not exercise. */
+.legacy {
+  color: #ff0000;
+  font-size: 14px;
+  border-radius: 6px;
+  transition: opacity 200ms ease;
+  border-color: red;
+}
+
+.legacy-badge {
+  background: hsl(0 100% 50%);
+}
+
+.legacy-fade {
+  transition-duration: 300ms;
+}
+
+.legacy-scrim {
+  background: rgba(0, 0, 0, 0.5);
+  border-color: hsla(0, 100%, 50%, 0.5);
+}

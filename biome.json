@@ -31,6 +31,7 @@
       "!apps/mobile/src/uniwind-types.d.ts",
       "!**/routeTree.gen.ts",
       "!tools/biome/anti-slop",
+      "!tools/ui-foundation/fixtures",
       "!coverage",
       "!.openbot-build",
       "!.worktrees",

@@ -224,6 +224,14 @@ how common its head pattern is, so a rule keyed on `const $name = $value` costs 
 the linter put together — that is what `no-shape-in-symbol-names` cost to enforce a naming
 preference that review already covers.
 
+`bun run check:ui` is held to the same contract by `tools/ui-foundation/fixtures` and
+`scripts/ui-foundation-check.test.ts`. Two of its checks had gone blind before this existed. The
+`renderer` tree breaks every check once, beside the correct neighbour each must leave alone;
+`renderer-clean` breaks none of them, and carries the negative half for the checks that report
+once per file rather than once per occurrence — in the first tree the violation accounts for the
+failure whether or not the check has also started rejecting the correct code beside it. Adding a
+check means adding to both.
+
 ## Pull requests
 
 - **Never open a PR unless you were asked to.**

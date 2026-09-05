@@ -1,0 +1,11 @@
+/* The neighbour each budget must leave alone: a token is not a literal, and the two
+   values the ratchet exempts by hand are a zero radius and a disabled transition. The
+   token naming a colour is the boundary case - the named-colour pattern must not see a
+   word that a hyphen joins to its neighbours, or every token in the palette counts. */
+.tokenised {
+  color: var(--openbot-text);
+  border-color: var(--openbot-red-500);
+  font-size: var(--openbot-text-sm);
+  border-radius: 0;
+  transition: none;
+}
