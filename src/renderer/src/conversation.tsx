@@ -61,7 +61,7 @@ import { useTurns } from "./turns";
  * function:
  *
  * - **Reads are serialized per conversation.** `conversationReadOperations`
- *   chains every `markConversationRead` for a agent behind the previous one, so
+ *   chains every `markConversationRead` for an agent behind the previous one, so
  *   two boundaries can never race to become the stored one.
  * - **An optimistic read is owned by `autoReadAgentMessages`.** Whoever wrote the
  *   optimistic state is the only one allowed to roll it back, which is why the

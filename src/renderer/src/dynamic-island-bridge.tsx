@@ -103,7 +103,7 @@ export function DynamicIslandBridge() {
         return;
       }
       // The action opens a message or a failure inside this workspace, so it has
-      // to wait for the workspace. Acting on a half-loaded scope reads a agent list
+      // to wait for the workspace. Acting on a half-loaded scope reads an agent list
       // and a conversation window that are still empty.
       if (!ready) return;
       setPendingIslandAction(null);

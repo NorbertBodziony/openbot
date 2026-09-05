@@ -167,14 +167,21 @@ export class AgentStore {
       legacy.examplesInitialized = true;
       this.#state = legacy;
       this.#database.replaceAgents(LEGACY_AGENTS_IMPORT_COMMAND_ID, legacy.agents, "agents.legacy-imported");
+      // Bound, then retired in the same breath. Migration v14 deactivates every provider session on this
+      // upgrade because the tool parameters were renamed, and a resumed transcript still remembers calls
+      // written against the old ones -- but a session imported out of `bots.json` arrives *after* the
+      // migrations ran, so it would be the one active session on the machine that v14 never saw. The row is
+      // kept rather than dropped: it is what a later handoff and the thread's own history read.
       for (const { agent, externalSessionId } of sessions) {
+        const threadId = stableThreadId(agent.id);
         this.#database.bindProviderSession({
-          threadId: stableThreadId(agent.id),
+          threadId,
           provider: agent.provider,
           externalSessionId,
           model: agent.model,
           effort: agent.reasoningEffort,
         });
+        this.#database.deactivateProviderSessions(threadId);
       }
     }
     await this.#reconcileLegacyDirectories();

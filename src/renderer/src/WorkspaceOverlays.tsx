@@ -82,7 +82,7 @@ function PermissionsReview(props: AccountProps) {
 }
 
 /**
- * Skills and marketplace agents, which install into a Agent's workspace on this
+ * Skills and marketplace agents, which install into an Agent's workspace on this
  * machine, so the picker is empty for a remote server.
  */
 function SkillsMarketplace() {

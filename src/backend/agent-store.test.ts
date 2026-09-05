@@ -236,7 +236,12 @@ describe("AgentStore", () => {
       avatarHue: null,
     });
     expect(restored.list()[0]?.threadId).toBe("openbot-thread-chief");
-    expect(restored.activeProviderSession("chief")?.externalSessionId).toBe("native-codex-thread");
+    // Imported and kept, but not resumable: the tool parameters were renamed in the same upgrade, and this
+    // session arrives after the migration that retires every other one for exactly that reason.
+    expect(restored.activeProviderSession("chief")).toBeNull();
+    expect(restored.database.listProviderSessions("openbot-thread-chief")).toMatchObject([
+      { externalSessionId: "native-codex-thread", state: "inactive" },
+    ]);
     await expect(readFile(statePath, "utf8")).resolves.toContain('"version": 1');
     await expect(readFile(join(userData, "legacy-backup-v1", "bots.json"), "utf8")).resolves.toContain('"version": 1');
   });

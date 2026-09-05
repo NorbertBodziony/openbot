@@ -1063,7 +1063,7 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("heading", { name: "Chief" })).toBeInTheDocument();
   });
 
-  it("confirms and persistently deletes a agent from its context menu", async () => {
+  it("confirms and persistently deletes an agent from its context menu", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     const sales = screen.getByRole("button", { name: /Sales Outbound/ });

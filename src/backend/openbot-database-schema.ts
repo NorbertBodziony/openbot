@@ -645,11 +645,27 @@ interface AgentIdRename {
   readonly workspacePath: string | null;
 }
 
-interface TextColumnStatement {
-  readonly table: string;
+interface TextColumnTable {
+  readonly name: string;
   readonly columns: readonly string[];
-  readonly substitute: ReturnType<DatabaseSync["prepare"]>;
 }
+
+interface Substitution {
+  readonly from: string;
+  readonly to: string;
+}
+
+/**
+ * How many replacements share one pass over the data.
+ *
+ * A pass is a full scan of every text column of every table: the search is `%needle%`, which no index
+ * answers. One pass per renamed agent is therefore one scan of the user's entire history per agent, and a
+ * host may hold a hundred of them. Nesting a batch of replacements into a single expression makes that one
+ * scan for the whole batch instead. The bound is what keeps the expression inside SQLite's nesting depth
+ * limit -- measured at between 500 and 999 nested `replace` calls on this build, so sixteen leaves the
+ * margin an unfamiliar SQLite has to have.
+ */
+const SUBSTITUTION_BATCH = 16;
 
 // Every persisted `bot-<uuid>` becomes `agent-<uuid>`, in id columns, in derived thread ids, in
 // orchestration command and aggregate ids, and inside stored JSON and message text - a historical message
@@ -664,11 +680,25 @@ function rewriteGeneratedAgentIds(db: DatabaseSync): void {
   const renames = readAgentIdRenames(db);
   if (renames.length === 0) return;
 
-  const statements = textColumnStatements(db);
-  for (const [index, rename] of renames.entries()) maskAvatarSeed(statements, rename, index);
-  for (const root of legacyWorkspaceRoots(renames)) substitute(statements, root.from, root.to);
-  for (const rename of renames) substitute(statements, rename.oldId, rename.newId);
-  for (const [index, rename] of renames.entries()) unmaskAvatarSeed(statements, rename, index);
+  const tables = textColumnTables(db);
+  const masks = renames.map((rename, index) => ({ from: seedLiteral(rename.oldId), to: seedSentinel(index) }));
+  // Ordered, and the order is the whole design: seeds out of reach, then the workspace roots, then the ids
+  // whose substitution rewrites the leaf those roots left behind, then the seeds back. Within one phase the
+  // pairs do not interact -- `readAgentIdRenames` leaves no id a substring of another and a sentinel is
+  // unique to its rename -- which is what makes batching them into one pass identical to running them one
+  // at a time.
+  substituteAll(db, tables, masks);
+  substituteAll(db, tables, legacyWorkspaceRoots(renames));
+  substituteAll(
+    db,
+    tables,
+    renames.map((rename) => ({ from: rename.oldId, to: rename.newId })),
+  );
+  substituteAll(
+    db,
+    tables,
+    masks.map((mask) => ({ from: mask.to, to: mask.from })),
+  );
 }
 
 /**
@@ -687,14 +717,6 @@ function rewriteGeneratedAgentIds(db: DatabaseSync): void {
  * a `json_valid` CHECK that a raw control character would fail mid-migration, and the escape is both valid
  * JSON and something no serializer emits for an identifier, so nothing stored can collide with it.
  */
-function maskAvatarSeed(statements: readonly TextColumnStatement[], rename: AgentIdRename, index: number): void {
-  substitute(statements, seedLiteral(rename.oldId), seedSentinel(index));
-}
-
-function unmaskAvatarSeed(statements: readonly TextColumnStatement[], rename: AgentIdRename, index: number): void {
-  substitute(statements, seedSentinel(index), seedLiteral(rename.oldId));
-}
-
 function seedLiteral(seed: string): string {
   return `"avatarSeed":"${seed}"`;
 }
@@ -803,15 +825,9 @@ function isPreservedText(table: string, column: string): boolean {
   return table === "projection_agent_memories" && (column === "text" || column === "normalized_text");
 }
 
-/**
- * One statement per table, rewriting every TEXT column of a row together.
- *
- * Together is the point. A per-column statement lets the conflict resolution below act on one column of a
- * row and not another, leaving a memory whose `text` and `normalized_text` say different things -- and
- * dedupe reads the normalized column, so the divergence outlives the migration.
- */
-function textColumnStatements(db: DatabaseSync): readonly TextColumnStatement[] {
-  const statements: TextColumnStatement[] = [];
+/** Every table this migration rewrites, with the TEXT columns of each. */
+function textColumnTables(db: DatabaseSync): readonly TextColumnTable[] {
+  const tables: TextColumnTable[] = [];
   for (const table of db
     .prepare(
       `SELECT name FROM sqlite_master
@@ -826,14 +842,44 @@ function textColumnStatements(db: DatabaseSync): readonly TextColumnStatement[] 
       if (isPreservedText(table.name, column.name)) continue;
       columns.push(column.name);
     }
-    if (columns.length === 0) continue;
-    const assignments = columns
-      .map((column) => `${quoteSqlIdentifier(column)} = replace(${quoteSqlIdentifier(column)}, ?, ?)`)
-      .join(", ");
-    const matches = columns.map((column) => `${quoteSqlIdentifier(column)} LIKE ? ESCAPE '\\'`).join(" OR ");
-    statements.push({
-      table: table.name,
-      columns,
+    if (columns.length > 0) tables.push({ name: table.name, columns });
+  }
+  return tables;
+}
+
+/**
+ * One phase of the rewrite, in as few passes over the data as the depth limit allows.
+ *
+ * One statement per table, rewriting every TEXT column of a row together. Together is the point: a
+ * per-column statement lets the conflict resolution below act on one column of a row and not another,
+ * leaving a memory whose `text` and `normalized_text` say different things -- and dedupe reads the
+ * normalized column, so the divergence outlives the migration.
+ */
+function substituteAll(
+  db: DatabaseSync,
+  tables: readonly TextColumnTable[],
+  substitutions: readonly Substitution[],
+): void {
+  for (let offset = 0; offset < substitutions.length; offset += SUBSTITUTION_BATCH) {
+    const batch = substitutions.slice(offset, offset + SUBSTITUTION_BATCH);
+    for (const table of tables) {
+      const parameters: string[] = [];
+      const assignments: string[] = [];
+      for (const column of table.columns) {
+        let expression = quoteSqlIdentifier(column);
+        for (const { from, to } of batch) {
+          expression = `replace(${expression}, ?, ?)`;
+          parameters.push(from, to);
+        }
+        assignments.push(`${quoteSqlIdentifier(column)} = ${expression}`);
+      }
+      const matches: string[] = [];
+      for (const column of table.columns) {
+        for (const { from } of batch) {
+          matches.push(`${quoteSqlIdentifier(column)} LIKE ? ESCAPE '\\'`);
+          parameters.push(likePattern(from));
+        }
+      }
       // `OR REPLACE`, because a whole-database substitution can make two rows equal. Two memories of one
       // agent quoting `bot-<uuid>` and `agent-<uuid>` collapse to the same `normalized_text` under
       // `UNIQUE(agent_id, normalized_text)`, and two deletions queued under the two workspace roots collapse
@@ -847,19 +893,15 @@ function textColumnStatements(db: DatabaseSync): readonly TextColumnStatement[] 
       // target id is already taken. That leaves every identifier this rewrites one-to-one, so the only rows
       // it can collapse are the free-text ones. Foreign keys are off for this migration, so a replace here
       // would not cascade -- `runMigration` runs `PRAGMA foreign_key_check` over the result.
-      substitute: db.prepare(`UPDATE OR REPLACE ${quoteSqlIdentifier(table.name)} SET ${assignments} WHERE ${matches}`),
-    });
+      db.prepare(
+        `UPDATE OR REPLACE ${quoteSqlIdentifier(table.name)} SET ${assignments.join(", ")} WHERE ${matches.join(" OR ")}`,
+      ).run(...parameters);
+    }
   }
-  return statements;
 }
 
-function substitute(statements: readonly TextColumnStatement[], search: string, replacement: string): void {
-  const pattern = `%${search.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_")}%`;
-  for (const statement of statements) {
-    const parameters = statement.columns.flatMap(() => [search, replacement]);
-    for (const _ of statement.columns) parameters.push(pattern);
-    statement.substitute.run(...parameters);
-  }
+function likePattern(search: string): string {
+  return `%${search.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_")}%`;
 }
 
 function quoteSqlIdentifier(identifier: string): string {

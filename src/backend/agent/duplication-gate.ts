@@ -172,7 +172,7 @@ export class DuplicationGate {
   }
 
   /**
-   * Hands a agent deletion the commit-lock release it must run, so deleting a duplicate the user
+   * Hands an agent deletion the commit-lock release it must run, so deleting a duplicate the user
    * rejected does not leave the next duplication waiting on a lock nobody holds. Returns whether
    * the agent was pending, which is what decides if `agents-changed` still needs emitting.
    */

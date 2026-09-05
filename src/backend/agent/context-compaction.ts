@@ -29,7 +29,7 @@ export interface ContextCompactionOptions {
  * A compaction is a real provider turn, so it arrives on the same notification stream as the
  * agent's own work and has to be told apart from it: `claimTurn` swallows the `turn/started` that
  * belongs to the compaction, and `isCompactionTurn` recognizes its completion. The budget is keyed
- * by *external* provider thread id, `compactingAgents` by agent id, because a agent only ever compacts one
+ * by *external* provider thread id, `compactingAgents` by agent id, because an agent only ever compacts one
  * thread at a time and the drain guard asks the question by agent.
  */
 export class ContextCompaction {

@@ -147,7 +147,7 @@ export function ConnectedScreen() {
               <View className="items-center gap-1.5">
                 <Typography.Heading type="h4">No agents on this server</Typography.Heading>
                 <Typography.Paragraph align="center" className="text-text-secondary">
-                  Add a agent to start working from your phone.
+                  Add an agent to start working from your phone.
                 </Typography.Paragraph>
               </View>
               <Button size="md" variant="secondary" onPress={() => router.push("/add-agent")}>

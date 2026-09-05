@@ -22,7 +22,7 @@ import { useTurns } from "./turns";
  *
  * Everything here is a projection of the active Agent, so the whole component
  * reads `activeAgent()` and hands `Conversation` the slice for that id. It stays
- * mounted across a Agent change on purpose - `Conversation` owns the scroll and
+ * mounted across an Agent change on purpose - `Conversation` owns the scroll and
  * composer state that survives one - which is why the id is read per prop
  * rather than captured once.
  */

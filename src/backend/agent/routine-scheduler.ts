@@ -52,7 +52,7 @@ export interface RoutineHooks {
   emitQueue(agentId: string): void;
   scheduleDrain(agentId: string): void;
   interrupt(agentId: string, turnId: string): Promise<void>;
-  /** The in-flight drain for a agent, so a deletion can wait for a run that is still starting. */
+  /** The in-flight drain for an agent, so a deletion can wait for a run that is still starting. */
   awaitDrain(agentId: string): Promise<void> | undefined;
   syncMailboxMessages(snapshot: ConversationSnapshot): void;
   listAgents(): AgentSummary[];

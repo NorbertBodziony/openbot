@@ -533,7 +533,7 @@ describe("hosted site conversation events", () => {
 });
 
 describe("memory event validation", () => {
-  it("accepts only a memory event with a agent id", () => {
+  it("accepts only a memory event with an agent id", () => {
     expect(isAgentEvent({ type: "memories-changed", agentId: "chief" })).toBe(true);
     expect(isAgentEvent({ type: "memories-changed", agentId: "" })).toBe(false);
     expect(isAgentEvent({ type: "memories-changed" })).toBe(false);

@@ -33,7 +33,7 @@ export interface DrainSchedulerOptions {
  * The queue drain: takes the next queued delivery per agent and starts a
  * provider turn for it.
  *
- * Every controller that can hold a agent back owns one `#mayDrain` clause
+ * Every controller that can hold an agent back owns one `#mayDrain` clause
  * (duplication, compaction, routines); this class only composes them, and
  * `#drainAgent` repeats the guard because a drain scheduled a microtask ago
  * may have been muted since. Owns the draining/scheduled/task maps. Takes
