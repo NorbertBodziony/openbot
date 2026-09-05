@@ -37,7 +37,7 @@ export async function routeBrowser(
       await browser.open(
         stringField(body, "url", false, INPUT_LIMITS.browserUrl),
         nullableString(body, "ownerThreadId"),
-        nullableString(body, "ownerBotId"),
+        nullableString(body, "ownerAgentId"),
         focus,
       ),
     );

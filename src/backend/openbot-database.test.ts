@@ -5,7 +5,7 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { BotSummary, ConversationMessage, ConversationSnapshot } from "@openbot/contracts/ipc";
+import type { AgentSummary, ConversationMessage, ConversationSnapshot } from "@openbot/contracts/ipc";
 import {
   hostedSiteConversationEventItemType,
   hostedSiteConversationEventText,
@@ -69,6 +69,9 @@ describe("OpenBotDatabase", () => {
       { version: 9 },
       { version: 10 },
       { version: 11 },
+      { version: 12 },
+      { version: 13 },
+      { version: 14 },
     ]);
     database.close();
   });
@@ -104,7 +107,7 @@ describe("OpenBotDatabase", () => {
   it("keeps a terminal hosted-site outcome pending until its marker command is durable", async () => {
     const database = await createDatabase();
     const pending = {
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-chief",
       turnId: "turn-1",
       operationId: "operation-1",
@@ -129,11 +132,11 @@ describe("OpenBotDatabase", () => {
           "SELECT aggregate_type, aggregate_id FROM orchestration_events WHERE event_type = 'hosted-site.terminal-pending'",
         )
         .get(),
-    ).toEqual({ aggregate_type: "hosted-site-terminal", aggregate_id: pending.botId });
+    ).toEqual({ aggregate_type: "hosted-site-terminal", aggregate_id: pending.agentId });
 
     database.dispatch(pending.markerCommandId, [], () => ({ recorded: true }));
     expect(database.pendingHostedSiteTerminalEvents()).toEqual([]);
-    database.deletePendingHostedSiteTerminalEvent(pending.botId, pending.operationId, pending.status);
+    database.deletePendingHostedSiteTerminalEvent(pending.agentId, pending.operationId, pending.status);
     expect(
       database.connection
         .prepare("SELECT COUNT(*) AS count FROM orchestration_events WHERE event_type = 'hosted-site.terminal-pending'")
@@ -151,10 +154,10 @@ describe("OpenBotDatabase", () => {
 
   it("stores only active hosted-site operations for restart reconciliation", async () => {
     const database = await createDatabase();
-    const bot = testBot();
-    database.replaceAgents("agents-running-sites", [bot], "agents.imported");
-    if (!bot.threadId) throw new Error("The test bot needs a thread.");
-    const threadId = bot.threadId;
+    const agent = testAgent();
+    database.replaceAgents("agents-running-sites", [agent], "agents.imported");
+    if (!agent.threadId) throw new Error("The test agent needs a thread.");
+    const threadId = agent.threadId;
     const details = {
       siteId: "site-1",
       title: "Launch page",
@@ -163,7 +166,7 @@ describe("OpenBotDatabase", () => {
     };
     const recordActive = (operationId: string, createdAt: string) => {
       database.recordActiveHostedSiteConversationEvent({
-        botId: bot.id,
+        agentId: agent.id,
         threadId,
         turnId: `turn-${operationId}`,
         createdAt,
@@ -172,13 +175,13 @@ describe("OpenBotDatabase", () => {
     };
 
     recordActive("operation-complete", "2026-09-01T12:00:00.000Z");
-    database.deleteActiveHostedSiteConversationEvent(bot.id, "operation-complete");
+    database.deleteActiveHostedSiteConversationEvent(agent.id, "operation-complete");
     recordActive("operation-running", "2026-09-01T12:00:02.000Z");
 
     expect(database.activeHostedSiteConversationEvents()).toEqual([
       expect.objectContaining({
-        botId: bot.id,
-        threadId: bot.threadId,
+        agentId: agent.id,
+        threadId: agent.threadId,
         turnId: "turn-operation-running",
         event: expect.objectContaining({ operationId: "operation-running", status: "running" }),
       }),
@@ -215,12 +218,12 @@ describe("OpenBotDatabase", () => {
     roots.push(root);
     const database = new OpenBotDatabase(root);
     await database.initialize();
-    const bot = testBot();
-    if (!bot.threadId) throw new Error("The test bot has no thread.");
-    const threadId = bot.threadId;
-    database.replaceAgents("agents-import", [bot], "agents.imported");
+    const agent = testAgent();
+    if (!agent.threadId) throw new Error("The test agent has no thread.");
+    const threadId = agent.threadId;
+    database.replaceAgents("agents-import", [agent], "agents.imported");
     const snapshot: ConversationSnapshot = {
-      botId: bot.id,
+      agentId: agent.id,
       threadId,
       activeTurnId: null,
       revision: 0,
@@ -246,10 +249,10 @@ describe("OpenBotDatabase", () => {
       turnId: "turn-1",
       status: "completed",
     });
-    database.connection.prepare("DELETE FROM projection_thread_messages WHERE thread_id = ?").run(bot.threadId);
-    expect(database.readConversation(bot.id, bot.threadId).messages).toEqual([]);
-    if (!bot.threadId) throw new Error("The test bot has no thread.");
-    expect(database.rebuildThreadProjection(bot.threadId).messages).toMatchObject([
+    database.connection.prepare("DELETE FROM projection_thread_messages WHERE thread_id = ?").run(agent.threadId);
+    expect(database.readConversation(agent.id, agent.threadId).messages).toEqual([]);
+    if (!agent.threadId) throw new Error("The test agent has no thread.");
+    expect(database.rebuildThreadProjection(agent.threadId).messages).toMatchObject([
       { text: "Return 42", status: "completed" },
       { text: "42", status: "completed" },
     ]);
@@ -257,7 +260,7 @@ describe("OpenBotDatabase", () => {
 
     const restored = new OpenBotDatabase(root);
     await restored.initialize();
-    expect(restored.readConversation(bot.id, bot.threadId)).toMatchObject({
+    expect(restored.readConversation(agent.id, agent.threadId)).toMatchObject({
       revision: saved.revision,
       messages: [
         { text: "Return 42", status: "completed" },
@@ -269,13 +272,13 @@ describe("OpenBotDatabase", () => {
 
   it("appends one conversation marker and replays it without another full snapshot", async () => {
     const database = await createDatabase();
-    const bot = testBot();
-    database.replaceAgents("agents-append-marker", [bot], "agents.imported");
-    if (!bot.threadId) throw new Error("The test bot has no thread.");
+    const agent = testAgent();
+    database.replaceAgents("agents-append-marker", [agent], "agents.imported");
+    if (!agent.threadId) throw new Error("The test agent has no thread.");
     const saved = database.persistConversation(
       {
-        botId: bot.id,
-        threadId: bot.threadId,
+        agentId: agent.id,
+        threadId: agent.threadId,
         activeTurnId: "turn-1",
         revision: 0,
         messages: [
@@ -301,8 +304,8 @@ describe("OpenBotDatabase", () => {
     };
 
     const revision = database.appendConversationMessage({
-      botId: bot.id,
-      threadId: bot.threadId,
+      agentId: agent.id,
+      threadId: agent.threadId,
       activeTurnId: "turn-1",
       message: marker,
       eventType: "routine.run-running",
@@ -310,7 +313,7 @@ describe("OpenBotDatabase", () => {
     });
 
     expect(revision).toBeGreaterThan(saved.revision);
-    expect(database.readConversation(bot.id, bot.threadId)).toMatchObject({
+    expect(database.readConversation(agent.id, agent.threadId)).toMatchObject({
       revision,
       messages: [{ id: "user-before-marker" }, { id: marker.id, itemType: marker.itemType }],
     });
@@ -322,8 +325,8 @@ describe("OpenBotDatabase", () => {
     expect(eventPayload).toMatchObject({ appendedMessage: { id: marker.id } });
     expect(eventPayload).not.toHaveProperty("snapshot");
 
-    database.connection.prepare("DELETE FROM projection_thread_messages WHERE thread_id = ?").run(bot.threadId);
-    expect(database.rebuildThreadProjection(bot.threadId)).toMatchObject({
+    database.connection.prepare("DELETE FROM projection_thread_messages WHERE thread_id = ?").run(agent.threadId);
+    expect(database.rebuildThreadProjection(agent.threadId)).toMatchObject({
       revision,
       messages: [{ id: "user-before-marker" }, { id: marker.id, itemType: marker.itemType }],
     });
@@ -332,12 +335,12 @@ describe("OpenBotDatabase", () => {
 
   it("reads bounded runtime metadata without loading a full conversation", async () => {
     const database = await createDatabase();
-    const bot = testBot();
-    database.replaceAgents("agents-runtime", [bot], "agents.imported");
+    const agent = testAgent();
+    database.replaceAgents("agents-runtime", [agent], "agents.imported");
     database.persistConversation(
       {
-        botId: bot.id,
-        threadId: bot.threadId,
+        agentId: agent.id,
+        threadId: agent.threadId,
         activeTurnId: "turn-active",
         revision: 0,
         messages: [
@@ -385,7 +388,7 @@ describe("OpenBotDatabase", () => {
       { turnId: "turn-active" },
     );
 
-    expect(database.readConversationRuntime(bot.id, bot.threadId)).toEqual({
+    expect(database.readConversationRuntime(agent.id, agent.threadId)).toEqual({
       activeTurnId: "turn-active",
       latestMessage: expect.objectContaining({ id: "assistant-latest", text: "Latest answer" }),
     });
@@ -394,8 +397,8 @@ describe("OpenBotDatabase", () => {
 
   it("pages and searches a 1,000-message conversation without gaps", async () => {
     const database = await createDatabase();
-    const bot = testBot();
-    database.replaceAgents("agents-large-history", [bot], "agents.imported");
+    const agent = testAgent();
+    database.replaceAgents("agents-large-history", [agent], "agents.imported");
     const messages = Array.from({ length: 1_000 }, (_, index) => ({
       id: `message-${index.toString().padStart(5, "0")}`,
       author: index % 2 === 0 ? ("user" as const) : ("assistant" as const),
@@ -404,11 +407,11 @@ describe("OpenBotDatabase", () => {
       status: "completed" as const,
     }));
     database.persistConversation(
-      { botId: bot.id, threadId: bot.threadId, activeTurnId: null, revision: 0, messages },
+      { agentId: agent.id, threadId: agent.threadId, activeTurnId: null, revision: 0, messages },
       "conversation.large-history",
     );
 
-    const latest = database.readConversationPage(bot.id, bot.threadId, { type: "latest" }, 50);
+    const latest = database.readConversationPage(agent.id, agent.threadId, { type: "latest" }, 50);
     expect(latest.messages).toHaveLength(50);
     expect(latest.messages[0]?.id).toBe("message-00950");
     expect(latest.messages.at(-1)?.id).toBe("message-00999");
@@ -418,8 +421,8 @@ describe("OpenBotDatabase", () => {
     let page = latest;
     while (page.pageInfo.olderCursor) {
       page = database.readConversationPage(
-        bot.id,
-        bot.threadId,
+        agent.id,
+        agent.threadId,
         { type: "before", cursor: page.pageInfo.olderCursor },
         50,
       );
@@ -431,16 +434,18 @@ describe("OpenBotDatabase", () => {
     expect(seen.size).toBe(1_000);
 
     const around = database.readConversationPage(
-      bot.id,
-      bot.threadId,
+      agent.id,
+      agent.threadId,
       { type: "around", messageId: "message-00500" },
       50,
     );
     expect(around.messages).toHaveLength(50);
     expect(around.messages.some((message) => message.id === "message-00500")).toBe(true);
-    expect(database.readConversationPage(bot.id, bot.threadId, { type: "latest" }, 1_000).messages).toHaveLength(100);
+    expect(database.readConversationPage(agent.id, agent.threadId, { type: "latest" }, 1_000).messages).toHaveLength(
+      100,
+    );
 
-    const search = database.searchConversationMessages("pagination needle", bot.id, undefined, 100);
+    const search = database.searchConversationMessages("pagination needle", agent.id, undefined, 100);
     expect(search.total).toBe(1);
     expect(search.results[0]?.message.id).toBe("message-00234");
     database.close();
@@ -448,8 +453,8 @@ describe("OpenBotDatabase", () => {
 
   it("fills legacy pages after excluding action markers", async () => {
     const database = await createDatabase();
-    const bot = testBot();
-    database.replaceAgents("agents-routine-history", [bot], "agents.imported");
+    const agent = testAgent();
+    database.replaceAgents("agents-routine-history", [agent], "agents.imported");
     const routineEvent = (id: string, createdAt: string) => ({
       id,
       author: "system" as const,
@@ -484,8 +489,8 @@ describe("OpenBotDatabase", () => {
     });
     database.persistConversation(
       {
-        botId: bot.id,
-        threadId: bot.threadId,
+        agentId: agent.id,
+        threadId: agent.threadId,
         activeTurnId: null,
         revision: 0,
         messages: [
@@ -513,7 +518,7 @@ describe("OpenBotDatabase", () => {
       "conversation.routine-history",
     );
 
-    const latest = database.readConversationPage(bot.id, bot.threadId, { type: "latest" }, 1, {
+    const latest = database.readConversationPage(agent.id, agent.threadId, { type: "latest" }, 1, {
       excludeRoutineEvents: true,
       excludeRoutineRunEvents: true,
       excludeHostedSiteEvents: true,
@@ -523,24 +528,24 @@ describe("OpenBotDatabase", () => {
     if (!latest.pageInfo.olderCursor) throw new Error("The older page cursor is missing.");
 
     const older = database.readConversationPage(
-      bot.id,
-      bot.threadId,
+      agent.id,
+      agent.threadId,
       { type: "before", cursor: latest.pageInfo.olderCursor },
       1,
       { excludeRoutineEvents: true, excludeRoutineRunEvents: true, excludeHostedSiteEvents: true },
     );
     expect(older.messages.map((message) => message.id)).toEqual(["reply-old"]);
     expect(older.pageInfo.hasOlder).toBe(false);
-    expect(database.searchConversationMessages("Morning brief", bot.id).total).toBe(0);
-    expect(database.searchConversationMessages("Launch page", bot.id).total).toBe(0);
+    expect(database.searchConversationMessages("Morning brief", agent.id).total).toBe(0);
+    expect(database.searchConversationMessages("Launch page", agent.id).total).toBe(0);
     database.close();
   });
 
   it("keeps one full conversation snapshot and a small idempotency receipt", async () => {
     const database = await createDatabase();
-    const bot = testBot();
-    database.replaceAgents("agents-import", [bot], "agents.imported");
-    const snapshot = conversationSnapshot(bot, "x".repeat(40_000));
+    const agent = testAgent();
+    database.replaceAgents("agents-import", [agent], "agents.imported");
+    const snapshot = conversationSnapshot(agent, "x".repeat(40_000));
 
     const first = database.persistConversation(snapshot, "response.delta-flushed", {}, "stable-conversation");
     expect(database.persistConversation(snapshot, "response.delta-flushed", {}, "stable-conversation")).toEqual(first);
@@ -548,7 +553,7 @@ describe("OpenBotDatabase", () => {
       database.persistConversation(snapshot, "response.delta-flushed");
     }
 
-    expect(snapshotEventCount(database, bot.threadId)).toBe(1);
+    expect(snapshotEventCount(database, agent.threadId)).toBe(1);
     expect(
       database.connection
         .prepare(
@@ -574,13 +579,13 @@ describe("OpenBotDatabase", () => {
       deliveries: [],
       drafts: [],
       generatedAttachments: [],
-      pausedBotIds: [],
+      pausedAgentIds: [],
       idempotency: {},
       reactions: [],
     };
     database.replaceMailboxState("mailbox-baseline", mailboxState, "mailbox.baseline");
     const snapshot: ConversationSnapshot = {
-      botId: "missing-agent",
+      agentId: "missing-agent",
       threadId: "missing-thread",
       activeTurnId: null,
       revision: 0,
@@ -618,9 +623,9 @@ describe("OpenBotDatabase", () => {
 
   it("removes messages omitted from the latest full conversation snapshot", async () => {
     const database = await createDatabase();
-    const bot = testBot();
-    database.replaceAgents("agents-import", [bot], "agents.imported");
-    const snapshot = conversationSnapshot(bot, "Canonical reply");
+    const agent = testAgent();
+    database.replaceAgents("agents-import", [agent], "agents.imported");
+    const snapshot = conversationSnapshot(agent, "Canonical reply");
     snapshot.messages.push({
       ...snapshot.messages[0],
       id: "provisional-reply",
@@ -630,7 +635,7 @@ describe("OpenBotDatabase", () => {
     snapshot.messages = snapshot.messages.filter((message) => message.id !== "provisional-reply");
     database.persistConversation(snapshot, "provider-history.backfilled");
 
-    expect(database.readConversation(bot.id, bot.threadId).messages.map((message) => message.id)).toEqual([
+    expect(database.readConversation(agent.id, agent.threadId).messages.map((message) => message.id)).toEqual([
       "assistant-1",
     ]);
     database.close();
@@ -638,17 +643,17 @@ describe("OpenBotDatabase", () => {
 
   it("rebuilds provider turn links, summaries, and attachment projections from compact history", async () => {
     const database = await createDatabase();
-    const bot = testBot();
-    database.replaceAgents("agents-import", [bot], "agents.imported");
-    if (!bot.threadId) throw new Error("The test bot has no thread.");
+    const agent = testAgent();
+    database.replaceAgents("agents-import", [agent], "agents.imported");
+    if (!agent.threadId) throw new Error("The test agent has no thread.");
     const session = database.bindProviderSession({
-      threadId: bot.threadId,
+      threadId: agent.threadId,
       provider: "codex",
       externalSessionId: "provider-thread-1",
-      model: bot.model,
-      effort: bot.reasoningEffort,
+      model: agent.model,
+      effort: agent.reasoningEffort,
     });
-    const running = conversationSnapshot(bot, "Working");
+    const running = conversationSnapshot(agent, "Working");
     running.activeTurnId = "turn-1";
     running.messages[0] = {
       ...running.messages[0],
@@ -671,10 +676,10 @@ describe("OpenBotDatabase", () => {
     completed.activeTurnId = null;
     completed.messages[0].status = "completed";
     database.persistConversation(completed, "turn.completed", { turnId: "turn-1", status: "completed" });
-    database.saveThreadSummary(bot.threadId, completed.messages[0].id, "Saved context", 3);
+    database.saveThreadSummary(agent.threadId, completed.messages[0].id, "Saved context", 3);
 
-    expect(snapshotEventCount(database, bot.threadId)).toBe(1);
-    database.rebuildThreadProjection(bot.threadId);
+    expect(snapshotEventCount(database, agent.threadId)).toBe(1);
+    database.rebuildThreadProjection(agent.threadId);
 
     expect(
       database.connection.prepare("SELECT provider_session_id FROM projection_turns WHERE turn_id = 'turn-1'").get(),
@@ -682,14 +687,14 @@ describe("OpenBotDatabase", () => {
     expect(
       database.connection
         .prepare("SELECT name FROM projection_attachments WHERE attachment_id = ?")
-        .get(`${bot.threadId}:assistant-1:attachment-1`),
+        .get(`${agent.threadId}:assistant-1:attachment-1`),
     ).toMatchObject({ name: "report.csv" });
     expect(
       database.connection
         .prepare("SELECT payload_json FROM projection_thread_activities WHERE activity_type = 'turn.completed'")
         .get(),
     ).toEqual({ payload_json: '{"turnId":"turn-1","status":"completed"}' });
-    expect(database.latestThreadSummary(bot.threadId)).toMatchObject({ text: "Saved context" });
+    expect(database.latestThreadSummary(agent.threadId)).toMatchObject({ text: "Saved context" });
     database.close();
   });
 
@@ -700,7 +705,7 @@ describe("OpenBotDatabase", () => {
       deliveries: [],
       drafts: [],
       generatedAttachments: [],
-      pausedBotIds: [],
+      pausedAgentIds: [],
       idempotency: {},
       reactions: [],
     };
@@ -732,15 +737,15 @@ describe("OpenBotDatabase", () => {
     roots.push(root);
     const database = new OpenBotDatabase(root);
     await database.initialize();
-    const bot = testBot();
-    database.replaceAgents("agents-import", [bot], "agents.imported");
-    const snapshot = conversationSnapshot(bot, "x".repeat(40_000));
+    const agent = testAgent();
+    database.replaceAgents("agents-import", [agent], "agents.imported");
+    const snapshot = conversationSnapshot(agent, "x".repeat(40_000));
     database.persistConversation(snapshot, "conversation.snapshot-updated");
     database.close();
 
     const legacy = new DatabaseSync(database.path);
     legacy.exec("PRAGMA journal_mode = WAL");
-    legacy.prepare("DELETE FROM schema_migrations WHERE version IN (8, 9, 10, 11)").run();
+    legacy.prepare("DELETE FROM schema_migrations WHERE version IN (8, 9, 10, 11, 12, 13, 14)").run();
     legacy
       .prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, ?)")
       .run("2026-08-20T10:00:00.000Z");
@@ -759,7 +764,7 @@ describe("OpenBotDatabase", () => {
       const result = insertEvent.run(
         randomUUID(),
         commandId,
-        bot.threadId,
+        agent.threadId,
         "2026-08-20T10:00:00.000Z",
         JSON.stringify({ detail: {}, snapshot }),
       );
@@ -780,8 +785,8 @@ describe("OpenBotDatabase", () => {
     await migrated.initialize();
     const sizeAfter = (await stat(database.path)).size;
     expect(sizeAfter).toBeLessThan(sizeBefore / 2);
-    expect(snapshotEventCount(migrated, bot.threadId)).toBe(1);
-    expect(migrated.readConversation(bot.id, bot.threadId).messages[0]?.text).toHaveLength(40_000);
+    expect(snapshotEventCount(migrated, agent.threadId)).toBe(1);
+    expect(migrated.readConversation(agent.id, agent.threadId).messages[0]?.text).toHaveLength(40_000);
     expect(migrated.connection.prepare("PRAGMA integrity_check").get()).toMatchObject({ integrity_check: "ok" });
     expect(migrated.connection.prepare("SELECT 1 AS applied FROM schema_migrations WHERE version = 8").get()).toEqual({
       applied: 1,
@@ -799,7 +804,7 @@ describe("OpenBotDatabase", () => {
 
     const reopened = new OpenBotDatabase(root);
     await reopened.initialize();
-    expect(snapshotEventCount(reopened, bot.threadId)).toBe(1);
+    expect(snapshotEventCount(reopened, agent.threadId)).toBe(1);
     reopened.close();
   }, 20_000);
 
@@ -816,7 +821,7 @@ describe("OpenBotDatabase", () => {
       DROP TABLE projection_routine_triggers;
       DROP TABLE projection_agent_routines;
       DROP TABLE projection_agent_memories;
-      DELETE FROM schema_migrations WHERE version IN (8, 9, 10, 11);
+      DELETE FROM schema_migrations WHERE version IN (8, 9, 10, 11, 12, 13, 14);
       INSERT OR IGNORE INTO schema_migrations(version, applied_at)
         VALUES (4, '2026-08-20T10:00:00.000Z');
     `);
@@ -845,6 +850,9 @@ describe("OpenBotDatabase", () => {
       { version: 9 },
       { version: 10 },
       { version: 11 },
+      { version: 12 },
+      { version: 13 },
+      { version: 14 },
     ]);
     migrated.close();
   });
@@ -865,16 +873,16 @@ describe("OpenBotDatabase", () => {
     expect(
       migrated.connection
         .prepare(
-          "SELECT actor_kind, actor_bot_id FROM projection_reactions WHERE agent_id = 'chief' AND message_id = 'message-1'",
+          "SELECT actor_kind, actor_agent_id FROM projection_reactions WHERE agent_id = 'chief' AND message_id = 'message-1'",
         )
         .get(),
-    ).toEqual({ actor_kind: "user", actor_bot_id: "" });
+    ).toEqual({ actor_kind: "user", actor_agent_id: "" });
     expect(() =>
       migrated.connection
         .prepare(
           `INSERT INTO projection_reactions (
-             agent_id, message_id, emoji, actor_kind, actor_bot_id, updated_at, last_event_sequence
-           ) VALUES ('chief', 'message-1', '🎉', 'bot', 'chief', '2026-08-20T10:01:00.000Z', 2)`,
+             agent_id, message_id, emoji, actor_kind, actor_agent_id, updated_at, last_event_sequence
+           ) VALUES ('chief', 'message-1', '🎉', 'agent', 'chief', '2026-08-20T10:01:00.000Z', 2)`,
         )
         .run(),
     ).not.toThrow();
@@ -912,6 +920,9 @@ describe("OpenBotDatabase", () => {
       { version: 9 },
       { version: 10 },
       { version: 11 },
+      { version: 12 },
+      { version: 13 },
+      { version: 14 },
     ]);
     retried.close();
   });
@@ -921,11 +932,11 @@ describe("OpenBotDatabase", () => {
     roots.push(root);
     const database = new OpenBotDatabase(root);
     await database.initialize();
-    const bot = testBot();
-    if (!bot.threadId) throw new Error("The test bot has no thread.");
-    database.replaceAgents("agents-import", [bot], "agents.imported");
+    const agent = testAgent();
+    if (!agent.threadId) throw new Error("The test agent has no thread.");
+    database.replaceAgents("agents-import", [agent], "agents.imported");
     database.bindProviderSession({
-      threadId: bot.threadId,
+      threadId: agent.threadId,
       provider: "codex",
       externalSessionId: "legacy-tool-session",
       model: "gpt-5.6-luna",
@@ -934,13 +945,13 @@ describe("OpenBotDatabase", () => {
     database.close();
 
     const legacy = new DatabaseSync(database.path);
-    legacy.prepare("DELETE FROM schema_migrations WHERE version IN (10, 11)").run();
+    legacy.prepare("DELETE FROM schema_migrations WHERE version >= 10").run();
     legacy.close();
 
     const migrated = new OpenBotDatabase(root);
     await migrated.initialize();
-    expect(migrated.activeProviderSession(bot.threadId, "codex")).toBeNull();
-    expect(migrated.listProviderSessions(bot.threadId)).toEqual([
+    expect(migrated.activeProviderSession(agent.threadId, "codex")).toBeNull();
+    expect(migrated.listProviderSessions(agent.threadId)).toEqual([
       expect.objectContaining({ externalSessionId: "legacy-tool-session", state: "inactive" }),
     ]);
     migrated.close();
@@ -951,11 +962,11 @@ describe("OpenBotDatabase", () => {
     roots.push(root);
     const database = new OpenBotDatabase(root);
     await database.initialize();
-    const bot = testBot();
-    if (!bot.threadId) throw new Error("The test bot has no thread.");
-    database.replaceAgents("agents-import", [bot], "agents.imported");
+    const agent = testAgent();
+    if (!agent.threadId) throw new Error("The test agent has no thread.");
+    database.replaceAgents("agents-import", [agent], "agents.imported");
     database.bindProviderSession({
-      threadId: bot.threadId,
+      threadId: agent.threadId,
       provider: "codex",
       externalSessionId: "session-without-response-attachments",
       model: "gpt-5.6-luna",
@@ -964,13 +975,13 @@ describe("OpenBotDatabase", () => {
     database.close();
 
     const legacy = new DatabaseSync(database.path);
-    legacy.prepare("DELETE FROM schema_migrations WHERE version = 11").run();
+    legacy.prepare("DELETE FROM schema_migrations WHERE version >= 11").run();
     legacy.close();
 
     const migrated = new OpenBotDatabase(root);
     await migrated.initialize();
-    expect(migrated.activeProviderSession(bot.threadId, "codex")).toBeNull();
-    expect(migrated.listProviderSessions(bot.threadId)).toEqual([
+    expect(migrated.activeProviderSession(agent.threadId, "codex")).toBeNull();
+    expect(migrated.listProviderSessions(agent.threadId)).toEqual([
       expect.objectContaining({
         externalSessionId: "session-without-response-attachments",
         state: "inactive",
@@ -984,11 +995,11 @@ describe("OpenBotDatabase", () => {
     roots.push(root);
     const database = new OpenBotDatabase(root);
     await database.initialize();
-    const bot = testBot();
-    if (!bot.threadId) throw new Error("The test bot has no thread.");
-    database.replaceAgents("agents-import", [bot], "agents.imported");
+    const agent = testAgent();
+    if (!agent.threadId) throw new Error("The test agent has no thread.");
+    database.replaceAgents("agents-import", [agent], "agents.imported");
     database.bindProviderSession({
-      threadId: bot.threadId,
+      threadId: agent.threadId,
       provider: "codex",
       externalSessionId: "session-before-failed-refresh",
       model: "gpt-5.6-luna",
@@ -998,7 +1009,7 @@ describe("OpenBotDatabase", () => {
 
     const legacy = new DatabaseSync(database.path);
     legacy.exec(`
-      DELETE FROM schema_migrations WHERE version = 11;
+      DELETE FROM schema_migrations WHERE version >= 11;
       CREATE TRIGGER reject_session_refresh
       BEFORE UPDATE OF state ON projection_provider_sessions
       BEGIN
@@ -1014,18 +1025,282 @@ describe("OpenBotDatabase", () => {
     expect(
       rolledBack
         .prepare("SELECT external_session_id, state FROM projection_provider_sessions WHERE thread_id = ?")
-        .get(bot.threadId),
+        .get(agent.threadId),
     ).toEqual({ external_session_id: "session-before-failed-refresh", state: "active" });
     rolledBack.exec("DROP TRIGGER reject_session_refresh");
     rolledBack.close();
 
     const retried = new OpenBotDatabase(root);
     await retried.initialize();
-    expect(retried.activeProviderSession(bot.threadId, "codex")).toBeNull();
+    expect(retried.activeProviderSession(agent.threadId, "codex")).toBeNull();
     expect(retried.connection.prepare("SELECT 1 AS applied FROM schema_migrations WHERE version = 11").get()).toEqual({
       applied: 1,
     });
     retried.close();
+  });
+
+  it("keeps an agent's reaction attributed to that agent across the actor column rename", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-db-reactions-v12-"));
+    roots.push(root);
+    const database = new OpenBotDatabase(root);
+    await database.initialize();
+    database.close();
+
+    const legacy = new DatabaseSync(database.path);
+    downgradeToV11(legacy);
+    legacy.exec(`
+      INSERT INTO projection_reactions (
+        agent_id, message_id, emoji, actor_kind, actor_bot_id, updated_at, last_event_sequence
+      ) VALUES
+        ('chief', 'message-1', '👍', 'bot', 'helper', '2026-08-20T10:00:00.000Z', 1),
+        ('chief', 'message-1', '🎉', 'user', '', '2026-08-20T10:00:01.000Z', 2);
+    `);
+    legacy.close();
+
+    const migrated = new OpenBotDatabase(root);
+    await migrated.initialize();
+    expect(
+      migrated.connection
+        .prepare("SELECT emoji, actor_kind, actor_agent_id FROM projection_reactions ORDER BY last_event_sequence")
+        .all(),
+    ).toEqual([
+      { emoji: "👍", actor_kind: "agent", actor_agent_id: "helper" },
+      { emoji: "🎉", actor_kind: "user", actor_agent_id: "" },
+    ]);
+    migrated.close();
+  });
+
+  it("rolls back a failed reaction actor rename and succeeds on retry", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-db-reactions-rollback-"));
+    roots.push(root);
+    const database = new OpenBotDatabase(root);
+    await database.initialize();
+    database.close();
+
+    const legacy = new DatabaseSync(database.path);
+    downgradeToV11(legacy);
+    legacy.exec(`
+      INSERT INTO projection_reactions (
+        agent_id, message_id, emoji, actor_kind, actor_bot_id, updated_at, last_event_sequence
+      ) VALUES ('chief', 'message-1', '\u{1F44D}', 'bot', 'helper', '2026-08-20T10:00:00.000Z', 1);
+    `);
+    // This migration rebuilds the reaction table and rewrites the actor kind inside the copy, and it runs
+    // with foreign keys on so a real violation surfaces rather than hiding. The blocker is a child row
+    // pointing at the reaction under its pre-rename actor kind, so the rebuild orphans it and the
+    // migration throws after it has already written the new table.
+    legacy.exec(`
+      CREATE TABLE blocker (
+        agent_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        actor_kind TEXT NOT NULL,
+        actor_bot_id TEXT NOT NULL,
+        FOREIGN KEY(agent_id, message_id, actor_kind, actor_bot_id)
+          REFERENCES projection_reactions(agent_id, message_id, actor_kind, actor_bot_id)
+      );
+      INSERT INTO blocker VALUES ('chief', 'message-1', 'bot', 'helper');
+    `);
+    legacy.close();
+
+    const failed = new OpenBotDatabase(root);
+    await expect(failed.initialize()).rejects.toThrow("migration to version 12 failed");
+
+    const rolledBack = new DatabaseSync(database.path);
+    expect(rolledBack.prepare("SELECT 1 FROM schema_migrations WHERE version = 12").get()).toBeUndefined();
+    expect(rolledBack.prepare("SELECT actor_kind, actor_bot_id FROM projection_reactions").all()).toEqual([
+      { actor_kind: "bot", actor_bot_id: "helper" },
+    ]);
+    rolledBack.exec("DROP TABLE blocker");
+    rolledBack.close();
+
+    const retried = new OpenBotDatabase(root);
+    await retried.initialize();
+    expect(retried.connection.prepare("SELECT actor_kind, actor_agent_id FROM projection_reactions").all()).toEqual([
+      { actor_kind: "agent", actor_agent_id: "helper" },
+    ]);
+    retried.close();
+  });
+
+  it("rewrites agent ids without losing a thread, its messages, or its hosted-site history", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-db-ids-v13-"));
+    roots.push(root);
+    const database = new OpenBotDatabase(root);
+    await database.initialize();
+    database.close();
+
+    const legacyId = "bot-2f1c9a44-1d2e-4a7b-9c30-5e6f7a8b9c0d";
+    const agentId = "agent-2f1c9a44-1d2e-4a7b-9c30-5e6f7a8b9c0d";
+    const legacyWorkspace = `/Users/dev/OpenBot/Agents/${legacyId}`;
+    const workspace = `/Users/dev/OpenBot/Agents/${agentId}`;
+    const legacy = new DatabaseSync(database.path);
+    downgradeToV11(legacy);
+    seedLegacyAgent(legacy, legacyId, legacyWorkspace);
+    legacy.close();
+
+    const migrated = new OpenBotDatabase(root);
+    await migrated.initialize();
+
+    expect(migrated.connection.prepare("SELECT agent_id, thread_id FROM projection_agents").get()).toEqual({
+      agent_id: agentId,
+      thread_id: `openbot-thread-${agentId}`,
+    });
+    expect(
+      migrated.connection
+        .prepare("SELECT json_extract(agent_json, '$.workspacePath') AS path FROM projection_agents")
+        .get(),
+    ).toEqual({ path: workspace });
+    expect(migrated.connection.prepare("SELECT thread_id, message_id FROM projection_thread_messages").get()).toEqual({
+      thread_id: `openbot-thread-${agentId}`,
+      message_id: "message-1",
+    });
+    // A message that quoted the old workspace path points at where that workspace lives now.
+    expect(
+      migrated.connection
+        .prepare("SELECT json_extract(message_json, '$.text') AS text FROM projection_thread_messages")
+        .get(),
+    ).toEqual({ text: `Wrote ${workspace}/index.html` });
+    // `aggregate_id` carries no foreign key, so a row missed here would be silently lost history, and the
+    // marker command id is compared against a string rebuilt from the agent id, so both have to move.
+    expect(
+      migrated.connection
+        .prepare(
+          "SELECT aggregate_id, command_id FROM orchestration_events WHERE event_type = 'hosted-site.terminal-pending'",
+        )
+        .get(),
+    ).toEqual({
+      aggregate_id: agentId,
+      command_id: `hosted-site-terminal-pending:${agentId}:operation-1:succeeded`,
+    });
+    expect(migrated.pendingHostedSiteTerminalEvents()).toEqual([
+      expect.objectContaining({
+        agentId,
+        markerCommandId: `hosted-site-event:${agentId}:operation-1:succeeded`,
+      }),
+    ]);
+    // The seed is the input to the function that draws the face, not an identifier. Rewriting it with the
+    // id gives every pre-rename agent a different face on upgrade, in the projection and in the events a
+    // replay would rebuild that projection from.
+    expect(
+      migrated.connection
+        .prepare("SELECT json_extract(agent_json, '$.avatarSeed') AS seed FROM projection_agents")
+        .get(),
+    ).toEqual({ seed: legacyId });
+    expect(
+      migrated.connection
+        .prepare(
+          "SELECT json_extract(payload_json, '$.agents[0].avatarSeed') AS seed, json_extract(payload_json, '$.agents[0].id') AS id FROM orchestration_events WHERE event_type = 'agents.replaced'",
+        )
+        .get(),
+    ).toEqual({ seed: legacyId, id: agentId });
+    // A memory is the only free text this database indexes, under `UNIQUE(agent_id, normalized_text)`. These
+    // two say the same sentence in the two spellings, so rewriting one would duplicate the other: aborting
+    // locks the user out of a migration that has no backup, and collapsing the pair discards a record with
+    // its own origin and timestamps. Both survive with the sentence as written, both still the agent's own.
+    expect(
+      migrated.connection.prepare("SELECT agent_id, text FROM projection_agent_memories ORDER BY text").all(),
+    ).toEqual([
+      { agent_id: agentId, text: `remember ${agentId} deploys` },
+      { agent_id: agentId, text: `remember ${legacyId} deploys` },
+    ]);
+    expect(migrated.connection.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    // v13 moves the id values and leaves the key names, because rewriting a key by text substitution would
+    // also edit a message quoting it. So the released spellings arrive at the reader, and the reader has to
+    // answer with the message rather than with "Invalid conversation message." -- which is the whole page,
+    // not one message, for anyone whose agents ever wrote to each other.
+    const page = migrated.readConversationPage(agentId, `openbot-thread-${agentId}`);
+    expect(page.messages).toEqual([
+      expect.objectContaining({
+        id: "message-1",
+        senderAgentId: agentId,
+        exchange: expect.objectContaining({
+          senderAgentId: agentId,
+          recipientAgentIds: ["helper"],
+          deliveries: [expect.objectContaining({ recipientAgentId: "helper" })],
+        }),
+        reactions: [{ emoji: "\u{1F44D}", actor: { kind: "agent", agentId } }],
+      }),
+    ]);
+    migrated.close();
+  });
+
+  it("rolls back a failed agent id rewrite and succeeds on retry", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-db-ids-rollback-"));
+    roots.push(root);
+    const database = new OpenBotDatabase(root);
+    await database.initialize();
+    database.close();
+
+    const legacyId = "bot-6d3e8b17-9c04-4f21-8a55-1b2c3d4e5f60";
+    const legacy = new DatabaseSync(database.path);
+    downgradeToV11(legacy);
+    seedLegacyAgent(legacy, legacyId, `/Users/dev/OpenBot/Bots/${legacyId}`);
+    // This migration rewrites every text column in the database with foreign keys switched off, which is
+    // the widest blast radius of any migration here and the one that runs on a file with no backup. The
+    // blocker makes it throw partway, once the substitution has already written rows.
+    legacy.exec("CREATE TABLE blocker (value TEXT CHECK(value NOT LIKE 'agent-%'))");
+    legacy.prepare("INSERT INTO blocker (value) VALUES (?)").run(legacyId);
+    legacy.close();
+
+    const failed = new OpenBotDatabase(root);
+    await expect(failed.initialize()).rejects.toThrow("migration to version 13 failed");
+
+    const rolledBack = new DatabaseSync(database.path);
+    expect(rolledBack.prepare("SELECT 1 FROM schema_migrations WHERE version = 13").get()).toBeUndefined();
+    expect(rolledBack.prepare("SELECT agent_id FROM projection_agents").all()).toEqual([{ agent_id: legacyId }]);
+    expect(rolledBack.prepare("SELECT thread_id FROM projection_thread_messages").all()).toEqual([
+      { thread_id: `openbot-thread-${legacyId}` },
+    ]);
+    rolledBack.exec("DROP TABLE blocker");
+    rolledBack.close();
+
+    const retried = new OpenBotDatabase(root);
+    await retried.initialize();
+    expect(retried.connection.prepare("SELECT agent_id FROM projection_agents").all()).toEqual([
+      { agent_id: `agent-${legacyId.slice("bot-".length)}` },
+    ]);
+    expect(retried.connection.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    retried.close();
+  });
+
+  it("leaves an agent id the application did not mint alone", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-db-ids-custom-"));
+    roots.push(root);
+    const database = new OpenBotDatabase(root);
+    await database.initialize();
+    database.close();
+
+    // `bot-` is not proof of a generated id, and neither is a UUID after it. `bot-research` is a name a
+    // user or an imported `bots.json` chose; `bot-<uuid>` is one `getOrCreate` will accept from any caller.
+    // Either can be sitting beside the `agent-` spelling this migration would rename it to, and renaming
+    // one onto the other is a primary-key collision the substitution resolves by dropping a row -- so an
+    // agent nobody touched disappears on upgrade.
+    const legacy = new DatabaseSync(database.path);
+    downgradeToV11(legacy);
+    seedLegacyAgent(legacy, "bot-research", "/Users/dev/OpenBot/Agents/bot-research");
+    seedLegacyAgent(legacy, "agent-research", "/Users/dev/OpenBot/Agents/agent-research");
+    seedLegacyAgent(legacy, "bot-8c41d0f2-6b5a-4e93-8d17-2a0b3c4d5e6f", "/Users/dev/OpenBot/Agents/pair-legacy");
+    seedLegacyAgent(legacy, "agent-8c41d0f2-6b5a-4e93-8d17-2a0b3c4d5e6f", "/Users/dev/OpenBot/Agents/pair");
+    // And the rename travels as a text substitution, so an id that *contains* a generated one is caught by
+    // it: rewriting `bot-<uuid>` inside `bot-<uuid>-copy` renames a second agent nobody asked about, onto
+    // an id its neighbour already holds -- which the row-level conflict resolution settles by deleting one
+    // of them. Three agents in, three agents out.
+    seedLegacyAgent(legacy, "bot-1f0a2b3c-4d5e-4f60-8a91-b2c3d4e5f607", "/Users/dev/OpenBot/Agents/prefix");
+    seedLegacyAgent(legacy, "bot-1f0a2b3c-4d5e-4f60-8a91-b2c3d4e5f607-copy", "/Users/dev/OpenBot/Agents/copy");
+    seedLegacyAgent(legacy, "agent-1f0a2b3c-4d5e-4f60-8a91-b2c3d4e5f607-copy", "/Users/dev/OpenBot/Agents/twin");
+    legacy.close();
+
+    const migrated = new OpenBotDatabase(root);
+    await migrated.initialize();
+
+    expect(migrated.connection.prepare("SELECT agent_id FROM projection_agents ORDER BY agent_id").all()).toEqual([
+      { agent_id: "agent-1f0a2b3c-4d5e-4f60-8a91-b2c3d4e5f607-copy" },
+      { agent_id: "agent-8c41d0f2-6b5a-4e93-8d17-2a0b3c4d5e6f" },
+      { agent_id: "agent-research" },
+      { agent_id: "bot-1f0a2b3c-4d5e-4f60-8a91-b2c3d4e5f607" },
+      { agent_id: "bot-1f0a2b3c-4d5e-4f60-8a91-b2c3d4e5f607-copy" },
+      { agent_id: "bot-8c41d0f2-6b5a-4e93-8d17-2a0b3c4d5e6f" },
+      { agent_id: "bot-research" },
+    ]);
+    migrated.close();
   });
 
   it("rejects a database created by a newer application", async () => {
@@ -1036,7 +1311,7 @@ describe("OpenBotDatabase", () => {
     database.close();
 
     const newer = new DatabaseSync(database.path);
-    newer.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (12, ?)").run("2026-08-20T10:00:00.000Z");
+    newer.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (15, ?)").run("2026-08-20T10:00:00.000Z");
     newer.close();
 
     const downgradedApp = new OpenBotDatabase(root);
@@ -1063,10 +1338,10 @@ describe("OpenBotDatabase", () => {
     roots.push(root);
     const database = new OpenBotDatabase(root);
     await database.initialize();
-    const bot = testBot();
-    if (!bot.threadId) throw new Error("The test bot has no thread.");
-    const threadId = bot.threadId;
-    database.replaceAgents("agents-import", [bot], "agents.imported");
+    const agent = testAgent();
+    if (!agent.threadId) throw new Error("The test agent has no thread.");
+    const threadId = agent.threadId;
+    database.replaceAgents("agents-import", [agent], "agents.imported");
     database.bindProviderSession({
       threadId,
       provider: "codex",
@@ -1105,7 +1380,7 @@ describe("OpenBotDatabase", () => {
       ALTER TABLE projection_provider_sessions_v6 RENAME TO projection_provider_sessions;
       CREATE INDEX provider_sessions_thread
         ON projection_provider_sessions(thread_id, provider, state);
-      DELETE FROM schema_migrations WHERE version IN (8, 9, 10, 11);
+      DELETE FROM schema_migrations WHERE version IN (8, 9, 10, 11, 12, 13, 14);
       INSERT OR IGNORE INTO schema_migrations(version, applied_at)
         VALUES (6, '2026-08-20T10:00:00.000Z');
       PRAGMA foreign_keys = ON;
@@ -1133,9 +1408,9 @@ describe("OpenBotDatabase", () => {
 
   it("erases an agent's history without leaving a receipt whose events are gone", async () => {
     const database = await createDatabase();
-    const bot = testBot();
+    const agent = testAgent();
     const createdAt = "2026-08-18T10:00:01.000Z";
-    database.replaceAgents("agents:seed", [bot], "agents.replaced");
+    database.replaceAgents("agents:seed", [agent], "agents.replaced");
     database.dispatch(
       "agent-memory:seed",
       [{ aggregateType: "agent-memory", aggregateId: "memory-1", eventType: "agent-memory.created", payload: {} }],
@@ -1145,7 +1420,7 @@ describe("OpenBotDatabase", () => {
              (memory_id, agent_id, text, normalized_text, origin, source_turn_id,
               created_at, updated_at, last_event_sequence)
            VALUES ('memory-1', ?, 'remembers', 'remembers', 'manual', NULL, ?, ?, ?)`,
-        ).run(bot.id, createdAt, createdAt, sequences[0] ?? 0);
+        ).run(agent.id, createdAt, createdAt, sequences[0] ?? 0);
         return null;
       },
     );
@@ -1158,23 +1433,23 @@ describe("OpenBotDatabase", () => {
              (routine_id, agent_id, name, instruction, active, timezone,
               created_at, updated_at, last_event_sequence)
            VALUES ('routine-1', ?, 'Standup', 'Report status', 1, 'UTC', ?, ?, ?)`,
-        ).run(bot.id, createdAt, createdAt, sequences[0] ?? 0);
+        ).run(agent.id, createdAt, createdAt, sequences[0] ?? 0);
         return null;
       },
     );
     database.recordPendingHostedSiteTerminalEvent({
-      botId: bot.id,
+      agentId: agent.id,
       threadId: "openbot-thread-chief",
       turnId: "turn-1",
       operationId: "operation-1",
       action: "publish",
       status: "succeeded",
       details: { siteId: "site-1", title: "Site", hostname: null, url: null },
-      markerCommandId: `hosted-site-event:${bot.id}:operation-1:succeeded`,
+      markerCommandId: `hosted-site-event:${agent.id}:operation-1:succeeded`,
       createdAt,
     });
 
-    database.hardDeleteAgent("agents:delete", bot.id, bot.threadId, []);
+    database.hardDeleteAgent("agents:delete", agent.id, agent.threadId, []);
 
     expect(database.listAgents()).toEqual([]);
     expect(database.connection.prepare("SELECT COUNT(*) AS count FROM projection_agent_memories").get()).toMatchObject({
@@ -1200,6 +1475,118 @@ describe("OpenBotDatabase", () => {
   });
 });
 
+// Rebuilds the pre-v12 `projection_reactions` shape so v12, v13 and v14 run again over a fixture that
+// looks the way a shipped release left it, rather than over a database that already carries their result.
+function downgradeToV11(database: DatabaseSync): void {
+  database.exec(`
+    CREATE TABLE projection_reactions_v11 (
+      agent_id TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      emoji TEXT NOT NULL,
+      actor_kind TEXT NOT NULL CHECK(actor_kind IN ('user', 'bot')),
+      actor_bot_id TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_event_sequence INTEGER NOT NULL,
+      PRIMARY KEY(agent_id, message_id, actor_kind, actor_bot_id)
+    );
+    DROP TABLE projection_reactions;
+    ALTER TABLE projection_reactions_v11 RENAME TO projection_reactions;
+    DELETE FROM schema_migrations WHERE version >= 12;
+  `);
+}
+
+// One agent whose id, thread, message text and hosted-site history all still spell the id `bot-<uuid>`.
+function seedLegacyAgent(database: DatabaseSync, legacyId: string, workspacePath: string): void {
+  const threadId = `openbot-thread-${legacyId}`;
+  const agentJson = JSON.stringify({ id: legacyId, name: "Chief", threadId, workspacePath, avatarSeed: legacyId });
+  const rosterJson = JSON.stringify({
+    agents: [{ id: legacyId, name: "Chief", threadId, workspacePath, avatarSeed: legacyId }],
+  });
+  // The shape a released build persisted: the exchange between two agents and the reaction one of them
+  // left spell the product agent `bot` in their keys and in the actor discriminant. v13 rewrites the id
+  // values inside them and leaves the keys, so this is what a page read meets after the upgrade.
+  const messageJson = JSON.stringify({
+    id: "message-1",
+    author: "agent",
+    status: "completed",
+    text: `Wrote ${workspacePath}/index.html`,
+    createdAt: "2026-09-01T12:00:00.000Z",
+    senderBotId: legacyId,
+    exchange: {
+      direction: "incoming",
+      messageId: "exchange-1",
+      senderBotId: legacyId,
+      recipientBotIds: ["helper"],
+      replyToMessageId: null,
+      deliveries: [{ id: "delivery-1", recipientBotId: "helper", status: "completed", position: null, error: null }],
+    },
+    reactions: [{ emoji: "\u{1F44D}", actor: { kind: "bot", botId: legacyId } }],
+  });
+  const pendingJson = JSON.stringify({
+    agentId: legacyId,
+    threadId,
+    turnId: "turn-1",
+    operationId: "operation-1",
+    action: "publish",
+    status: "succeeded",
+    details: {
+      siteId: "site-1",
+      title: "Launch page",
+      hostname: "launch-page-23456789ab.openbot.site",
+      url: "https://launch-page-23456789ab.openbot.site",
+    },
+    markerCommandId: `hosted-site-event:${legacyId}:operation-1:succeeded`,
+    createdAt: "2026-09-01T12:00:00.000Z",
+  });
+
+  // Two memories of one agent that quote the id in each spelling. Rewriting the first makes it equal to the
+  // second under `UNIQUE(agent_id, normalized_text)`, which is a duplicated sentence, not a reason to lock
+  // the user out of their database.
+  const memories = [`remember ${legacyId} deploys`, `remember ${legacyId.replace(/^bot-/u, "agent-")} deploys`];
+
+  const insert = database.prepare(
+    `INSERT INTO projection_threads (thread_id, agent_id, title, active_turn_id, created_at, updated_at, last_event_sequence)
+     VALUES (?, ?, 'Chief', NULL, '2026-09-01T12:00:00.000Z', '2026-09-01T12:00:00.000Z', 1)`,
+  );
+  insert.run(threadId, legacyId);
+  database
+    .prepare(
+      `INSERT INTO projection_agents (agent_id, thread_id, model, updated_at, sort_order, agent_json, last_event_sequence)
+       VALUES (?, ?, 'gpt-5.6-luna', '2026-09-01T12:00:00.000Z', 0, ?, 1)`,
+    )
+    .run(legacyId, threadId, agentJson);
+  for (const [index, memory] of memories.entries()) {
+    database
+      .prepare(
+        `INSERT OR IGNORE INTO projection_agent_memories
+           (memory_id, agent_id, text, normalized_text, origin, source_turn_id, created_at, updated_at, last_event_sequence)
+         VALUES (?, ?, ?, ?, 'manual', NULL, '2026-09-01T12:00:00.000Z', '2026-09-01T12:00:00.000Z', 1)`,
+      )
+      .run(`memory-${legacyId}-${index}`, legacyId, memory, memory);
+  }
+  database
+    .prepare(
+      `INSERT INTO projection_thread_messages
+         (thread_id, message_id, turn_id, author, status, item_type, created_at, ordinal, message_json, last_event_sequence)
+       VALUES (?, 'message-1', NULL, 'agent', 'completed', NULL, '2026-09-01T12:00:00.000Z', 0, ?, 1)`,
+    )
+    .run(threadId, messageJson);
+  database
+    .prepare(
+      `INSERT INTO orchestration_events
+         (event_id, command_id, aggregate_type, aggregate_id, event_type, occurred_at, payload_json)
+       VALUES (?, ?, 'hosted-site-terminal', ?, 'hosted-site.terminal-pending', '2026-09-01T12:00:00.000Z', ?)`,
+    )
+    .run(`event-${legacyId}`, `hosted-site-terminal-pending:${legacyId}:operation-1:succeeded`, legacyId, pendingJson);
+  database
+    .prepare(
+      `INSERT INTO orchestration_events
+         (event_id, command_id, aggregate_type, aggregate_id, event_type, occurred_at, payload_json)
+       VALUES (?, ?, 'agent-roster', 'agent-roster', 'agents.replaced', '2026-09-01T12:00:00.000Z', ?)`,
+    )
+    .run(`roster-${legacyId}`, `agents-replaced:${legacyId}`, rosterJson);
+}
+
 function downgradeReactionsToV7(database: DatabaseSync): void {
   database.exec(`
     CREATE TABLE projection_reactions_v7 (
@@ -1215,7 +1602,7 @@ function downgradeReactionsToV7(database: DatabaseSync): void {
     );
     DROP TABLE projection_reactions;
     ALTER TABLE projection_reactions_v7 RENAME TO projection_reactions;
-    DELETE FROM schema_migrations WHERE version IN (8, 9, 10, 11);
+    DELETE FROM schema_migrations WHERE version IN (8, 9, 10, 11, 12, 13, 14);
     INSERT OR IGNORE INTO schema_migrations(version, applied_at)
       VALUES (7, '2026-08-20T10:00:00.000Z');
   `);
@@ -1229,7 +1616,7 @@ async function createDatabase(): Promise<OpenBotDatabase> {
   return database;
 }
 
-function testBot(): BotSummary {
+function testAgent(): AgentSummary {
   return {
     id: "chief",
     provider: "codex",
@@ -1256,7 +1643,7 @@ function eventCount(database: OpenBotDatabase): number {
 }
 
 function snapshotEventCount(database: OpenBotDatabase, threadId: string | null): number {
-  if (!threadId) throw new Error("The test bot has no thread.");
+  if (!threadId) throw new Error("The test agent has no thread.");
   const row = database.connection
     .prepare(
       `SELECT COUNT(*) AS count FROM orchestration_events
@@ -1268,10 +1655,10 @@ function snapshotEventCount(database: OpenBotDatabase, threadId: string | null):
   return row.count;
 }
 
-function conversationSnapshot(bot: BotSummary, text: string): ConversationSnapshot {
+function conversationSnapshot(agent: AgentSummary, text: string): ConversationSnapshot {
   return {
-    botId: bot.id,
-    threadId: bot.threadId,
+    agentId: agent.id,
+    threadId: agent.threadId,
     activeTurnId: null,
     revision: 0,
     messages: [

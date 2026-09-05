@@ -334,7 +334,7 @@ describe("SettingsModal", () => {
     await waitFor(() => expect(onUpdateAccountAvatar).toHaveBeenLastCalledWith(null));
   });
 
-  it("lists a bot-published site with only Open and Delete actions", async () => {
+  it("lists an agent-published site with only Open and Delete actions", async () => {
     const site = {
       id: "site-1",
       hostname: "interactive-budget-planner-students-23456789ab.openbot.site",

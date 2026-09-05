@@ -631,23 +631,28 @@ export class HostService extends EventEmitter<HostEvents> {
   }
 
   setTyping(input: SetTeamTypingInput): void {
-    this.#api.setLocalTyping(input.botId, input.typing);
+    this.#api.setLocalTyping(input.agentId, input.typing);
   }
 
-  readAgentConversation(botId: string): Promise<ConversationWithReadState> {
-    return this.#options.agents.readConversationFor(botId, this.#currentAgentReaderId());
+  readAgentConversation(agentId: string): Promise<ConversationWithReadState> {
+    return this.#options.agents.readConversationFor(agentId, this.#currentAgentReaderId());
   }
 
   readAgentConversationPage(
-    botId: string,
+    agentId: string,
     anchor: ConversationPageAnchor = { type: "latest" },
     limit = 50,
   ): Promise<ConversationPage> {
-    return this.#options.agents.readConversationPageFor(botId, this.#currentAgentReaderId(), anchor, limit);
+    return this.#options.agents.readConversationPageFor(agentId, this.#currentAgentReaderId(), anchor, limit);
   }
 
-  searchAgentConversationMessages(query: string, botId?: string, cursor?: string, limit = 100): ConversationSearchPage {
-    return this.#options.agents.searchConversationMessages(query, botId, cursor, limit);
+  searchAgentConversationMessages(
+    query: string,
+    agentId?: string,
+    cursor?: string,
+    limit = 100,
+  ): ConversationSearchPage {
+    return this.#options.agents.searchConversationMessages(query, agentId, cursor, limit);
   }
 
   listAgentConversationReads(): Record<string, ConversationReadState> {
@@ -655,7 +660,11 @@ export class HostService extends EventEmitter<HostEvents> {
   }
 
   markAgentConversationRead(input: MarkConversationReadInput): Promise<ConversationReadState> {
-    return this.#options.agents.markConversationRead(input.botId, this.#currentAgentReaderId(), input.throughMessageId);
+    return this.#options.agents.markConversationRead(
+      input.agentId,
+      this.#currentAgentReaderId(),
+      input.throughMessageId,
+    );
   }
 
   listDirectThreads(): DirectThreadSummary[] {

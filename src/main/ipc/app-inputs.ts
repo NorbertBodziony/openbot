@@ -153,7 +153,7 @@ export function parseSubmitSkill(input: unknown): SubmitSkillInput {
 export function parseInstallSkill(input: unknown): InstallSkillInput {
   if (!isObject(input)) throw new Error("Invalid skill installation.");
   return {
-    botId: requireString(input.botId, "botId"),
+    agentId: requireString(input.agentId, "agentId"),
     skillId: requireString(input.skillId, "skillId"),
     ...(input.replaceModified === true ? { replaceModified: true } : {}),
   };
@@ -162,7 +162,7 @@ export function parseInstallSkill(input: unknown): InstallSkillInput {
 export function parseUninstallSkill(input: unknown): UninstallSkillInput {
   if (!isObject(input)) throw new Error("Invalid skill removal.");
   return {
-    botId: requireString(input.botId, "botId"),
+    agentId: requireString(input.agentId, "agentId"),
     skillId: requireString(input.skillId, "skillId"),
     ...(input.removeModified === true ? { removeModified: true } : {}),
   };
@@ -199,16 +199,18 @@ export function parseDeleteHostedSite(input: unknown): string {
 export function parseSubmitMarketplaceAgent(input: unknown): SubmitMarketplaceAgentInput {
   if (!isObject(input)) throw new Error("Invalid agent submission.");
   return {
-    botId: requireString(input.botId, "botId"),
-    ...(input.agentId === undefined ? {} : { agentId: requireString(input.agentId, "agentId") }),
+    agentId: requireString(input.agentId, "agentId"),
+    ...(input.listingId === undefined ? {} : { listingId: requireString(input.listingId, "listingId") }),
   };
 }
 
 export function parseInstallMarketplaceAgent(input: unknown): InstallMarketplaceAgentInput {
   if (!isObject(input)) throw new Error("Invalid agent installation.");
   return {
-    agentId: requireString(input.agentId, "agentId"),
-    ...(input.botId === undefined ? {} : { botId: requireString(input.botId, "botId", INPUT_LIMITS.identifier) }),
+    listingId: requireString(input.listingId, "listingId"),
+    ...(input.agentId === undefined
+      ? {}
+      : { agentId: requireString(input.agentId, "agentId", INPUT_LIMITS.identifier) }),
     timezone: requireString(input.timezone, "timezone", 255),
     receiptId: requireString(input.receiptId, "receiptId", INPUT_LIMITS.identifier),
   };

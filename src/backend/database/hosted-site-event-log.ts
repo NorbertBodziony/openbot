@@ -10,7 +10,7 @@ import type { DatabaseCore } from "./database-core";
 import { databaseRows, requiredStringColumn } from "./database-rows";
 
 export interface PendingHostedSiteTerminalEvent {
-  botId: string;
+  agentId: string;
   threadId: string;
   turnId: string;
   operationId: string;
@@ -22,7 +22,7 @@ export interface PendingHostedSiteTerminalEvent {
 }
 
 export interface ActiveHostedSiteConversationEvent {
-  botId: string;
+  agentId: string;
   threadId: string;
   turnId: string;
   createdAt: string;
@@ -53,11 +53,11 @@ export class HostedSiteEventLog {
   recordPendingHostedSiteTerminalEvent(event: PendingHostedSiteTerminalEvent): void {
     validatePendingHostedSiteTerminalEvent(event);
     this.#core.dispatch(
-      `hosted-site-terminal-pending:${event.botId}:${event.operationId}:${event.status}`,
+      `hosted-site-terminal-pending:${event.agentId}:${event.operationId}:${event.status}`,
       [
         {
           aggregateType: "hosted-site-terminal",
-          aggregateId: event.botId,
+          aggregateId: event.agentId,
           eventType: "hosted-site.terminal-pending",
           occurredAt: event.createdAt,
           payload: event,
@@ -90,22 +90,22 @@ export class HostedSiteEventLog {
   }
 
   deletePendingHostedSiteTerminalEvent(
-    botId: string,
+    agentId: string,
     operationId: string,
     status: Exclude<HostedSiteConversationEventStatus, "running">,
   ): void {
-    const commandId = `hosted-site-terminal-pending:${botId}:${operationId}:${status}`;
+    const commandId = `hosted-site-terminal-pending:${agentId}:${operationId}:${status}`;
     this.#core.deleteEventsAndReceipt(commandId);
   }
 
   recordActiveHostedSiteConversationEvent(event: ActiveHostedSiteConversationEvent): void {
     validateActiveHostedSiteConversationEvent(event);
     this.#core.dispatch(
-      `hosted-site-active:${event.botId}:${event.event.operationId}`,
+      `hosted-site-active:${event.agentId}:${event.event.operationId}`,
       [
         {
           aggregateType: "hosted-site-operation",
-          aggregateId: event.botId,
+          aggregateId: event.agentId,
           eventType: "hosted-site.active",
           occurredAt: event.createdAt,
           payload: event,
@@ -115,8 +115,8 @@ export class HostedSiteEventLog {
     );
   }
 
-  deleteActiveHostedSiteConversationEvent(botId: string, operationId: string): void {
-    this.#core.deleteEventsAndReceipt(`hosted-site-active:${botId}:${operationId}`);
+  deleteActiveHostedSiteConversationEvent(agentId: string, operationId: string): void {
+    this.#core.deleteEventsAndReceipt(`hosted-site-active:${agentId}:${operationId}`);
   }
 
   activeHostedSiteConversationEvents(): ActiveHostedSiteConversationEvent[] {
@@ -150,10 +150,13 @@ function validateActiveHostedSiteConversationEvent(event: ActiveHostedSiteConver
 }
 
 function activeHostedSiteConversationEventValue(value: unknown): ActiveHostedSiteConversationEvent | null {
+  // Events written before the bot-to-agent rename spell the id `botId`; a rejected event is a publication
+  // that never reports back in the conversation, so both spellings are read. See `thread-replay.ts`.
+  const agentId = isDynamicRecord(value) ? (value.agentId ?? value.botId) : null;
   if (
     !isDynamicRecord(value) ||
-    !isString(value.botId) ||
-    !value.botId ||
+    !isString(agentId) ||
+    !agentId ||
     !isString(value.threadId) ||
     !value.threadId ||
     !isString(value.turnId) ||
@@ -182,7 +185,7 @@ function activeHostedSiteConversationEventValue(value: unknown): ActiveHostedSit
   });
   if (marker?.status !== "running") return null;
   return {
-    botId: value.botId,
+    agentId,
     threadId: value.threadId,
     turnId: value.turnId,
     createdAt: value.createdAt,
@@ -191,10 +194,12 @@ function activeHostedSiteConversationEventValue(value: unknown): ActiveHostedSit
 }
 
 function pendingHostedSiteTerminalEventValue(value: unknown): PendingHostedSiteTerminalEvent | null {
+  // Both spellings, for the same reason as the active event above.
+  const agentId = isDynamicRecord(value) ? (value.agentId ?? value.botId) : null;
   if (
     !isDynamicRecord(value) ||
-    !isString(value.botId) ||
-    !value.botId ||
+    !isString(agentId) ||
+    !agentId ||
     !isString(value.threadId) ||
     !value.threadId ||
     !isString(value.turnId) ||
@@ -221,9 +226,9 @@ function pendingHostedSiteTerminalEventValue(value: unknown): PendingHostedSiteT
     itemType: `hosted-site-event:${value.action}:${value.status}:${value.operationId}`,
   });
   if (!marker || marker.status === "running") return null;
-  if (value.markerCommandId !== `hosted-site-event:${value.botId}:${value.operationId}:${value.status}`) return null;
+  if (value.markerCommandId !== `hosted-site-event:${agentId}:${value.operationId}:${value.status}`) return null;
   return {
-    botId: value.botId,
+    agentId,
     threadId: value.threadId,
     turnId: value.turnId,
     operationId: marker.operationId,

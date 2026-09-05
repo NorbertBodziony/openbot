@@ -29,25 +29,25 @@ interface ConversationResources {
     {
       promise: Promise<void>;
       serverId: string;
-      botId: string | null;
+      agentId: string | null;
       url: string;
       existingTabIds: Set<string>;
     }
   >;
-  importTargetBots: Map<string, { botId: string; serverId: string }>;
+  importTargetAgents: Map<string, { agentId: string; serverId: string }>;
   seenMessageIds: Set<string>;
   typingIdleTimer: ReturnType<typeof setTimeout> | undefined;
-  typingBotId: string | null;
+  typingAgentId: string | null;
   voiceRecorder: Pick<MediaRecorder, "state" | "stop"> | undefined;
   voiceStream: { getTracks(): Array<Pick<MediaStreamTrack, "stop">> } | undefined;
   voiceRecordingTimer: ReturnType<typeof setTimeout> | undefined;
   voiceElapsedTimer: ReturnType<typeof setInterval> | undefined;
   voiceChunks: Blob[];
-  voiceBotId: string | undefined;
+  voiceAgentId: string | undefined;
   voiceServerId: string | undefined;
   voiceSubmitRequest:
     | {
-        botId: string;
+        agentId: string;
         serverId: string;
         draft: ComposerDraft;
         queuedEdit: { deliveryId: string; originalAttachmentIds: string[] } | undefined;
@@ -80,12 +80,12 @@ interface ConversationResources {
  * switch would throw away typing the user still expects to find, so this owner
  * sits above the keyed scope in `app-providers.tsx` and lives as long as the app.
  *
- * Every signal here is keyed by `serverId:botId` (`composerDraftKey`) or carries
+ * Every signal here is keyed by `serverId:agentId` (`composerDraftKey`) or carries
  * its server in the value, which is what makes the shared lifetime safe.
  */
 export function createStableConversationState(props: Pick<ConversationProps, "onTypingChange">) {
   const [drafts, setDrafts] = createSignal<Record<string, ComposerDraft>>({});
-  const [editingBotId, setEditingBotId] = createSignal<string | null>(null);
+  const [editingAgentId, setEditingAgentId] = createSignal<string | null>(null);
   const [editingServerId, setEditingServerId] = createSignal<string | null>(null);
   const [editingDeliveryId, setEditingDeliveryId] = createSignal<string | null>(null);
   const [editingDraftBackup, setEditingDraftBackup] = createSignal<ComposerDraft | null>(null);
@@ -103,16 +103,16 @@ export function createStableConversationState(props: Pick<ConversationProps, "on
   const resources: ConversationResources = {
     agentActivityPresentations: new Map(),
     browserOpenRequests: new Map(),
-    importTargetBots: new Map<string, { botId: string; serverId: string }>(),
+    importTargetAgents: new Map<string, { agentId: string; serverId: string }>(),
     seenMessageIds: new Set<string>(),
     typingIdleTimer: undefined,
-    typingBotId: null,
+    typingAgentId: null,
     voiceRecorder: undefined,
     voiceStream: undefined,
     voiceRecordingTimer: undefined,
     voiceElapsedTimer: undefined,
     voiceChunks: [],
-    voiceBotId: undefined,
+    voiceAgentId: undefined,
     voiceServerId: undefined,
     voiceSubmitRequest: undefined,
     voiceDisposed: false,
@@ -135,9 +135,9 @@ export function createStableConversationState(props: Pick<ConversationProps, "on
   function stopComposerTyping(): void {
     if (resources.typingIdleTimer) clearTimeout(resources.typingIdleTimer);
     resources.typingIdleTimer = undefined;
-    if (!resources.typingBotId) return;
-    props.onTypingChange(resources.typingBotId, false);
-    resources.typingBotId = null;
+    if (!resources.typingAgentId) return;
+    props.onTypingChange(resources.typingAgentId, false);
+    resources.typingAgentId = null;
   }
 
   onCleanup(() => {
@@ -153,8 +153,8 @@ export function createStableConversationState(props: Pick<ConversationProps, "on
     stopComposerTyping,
     drafts,
     setDrafts,
-    editingBotId,
-    setEditingBotId,
+    editingAgentId,
+    setEditingAgentId,
     editingServerId,
     setEditingServerId,
     editingDeliveryId,
@@ -189,7 +189,7 @@ export function createStableConversationState(props: Pick<ConversationProps, "on
  * These describe the workspace the user is looking at - which right panel is
  * open, what the browser address bar says, which message has its reaction picker
  * out, what the in-chat search found. `rightPanels` is the reason the split
- * exists: it is keyed by bot id alone, and bot ids repeat across servers, so a
+ * exists: it is keyed by agent id alone, and agent ids repeat across servers, so a
  * shared owner would carry "the computer panel is open for chief" from one
  * server to the next and open the wrong panel on arrival.
  *

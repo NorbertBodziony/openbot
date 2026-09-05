@@ -27,7 +27,7 @@ export function registerSkillIpcHandlers({ skills, getMainWindow }: SkillIpcDepe
     return result.canceled || !result.filePaths[0] ? null : skills.stage(result.filePaths[0]);
   });
   handleTrusted(IPC_CHANNELS.skillsSubmit, parseSubmitSkill, (submission) => skills.submit(submission));
-  handleTrusted(IPC_CHANNELS.skillsListInstalled, stringPayload("botId"), (botId) => skills.listInstalled(botId));
+  handleTrusted(IPC_CHANNELS.skillsListInstalled, stringPayload("agentId"), (agentId) => skills.listInstalled(agentId));
   handleTrusted(IPC_CHANNELS.skillsInstall, parseInstallSkill, (installation) => skills.install(installation));
   handleTrusted(IPC_CHANNELS.skillsUninstall, parseUninstallSkill, (removal) => skills.uninstall(removal));
 }

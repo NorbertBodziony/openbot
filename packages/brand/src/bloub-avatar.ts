@@ -6,7 +6,7 @@ import {
   SHAPES,
   type ShapeId,
 } from "@norbert_bodziony/bloub";
-import type { BotAvatarHue } from "@openbot/contracts/ipc";
+import type { AvatarHue } from "@openbot/contracts/ipc";
 
 export type SupportedAvatarSilhouetteId = Exclude<ShapeId, "goutte">;
 
@@ -22,7 +22,7 @@ const SUPPORTED_AVATAR_SILHOUETTES = SHAPES.map((option) => option.id).filter(
   (silhouette): silhouette is SupportedAvatarSilhouetteId => silhouette !== UNSUPPORTED_AVATAR_SILHOUETTE,
 );
 
-const HUE_COLORS: Readonly<Record<BotAvatarHue, ColorId>> = {
+const HUE_COLORS: Readonly<Record<AvatarHue, ColorId>> = {
   0: "rouge",
   30: "orange",
   55: "ambre",
@@ -36,7 +36,7 @@ const HUE_COLORS: Readonly<Record<BotAvatarHue, ColorId>> = {
 };
 
 export const AVATAR_HUE_OPTIONS: ReadonlyArray<{
-  hue: BotAvatarHue;
+  hue: AvatarHue;
   label: string;
 }> = [
   { hue: 0, label: "Red" },
@@ -51,7 +51,7 @@ export const AVATAR_HUE_OPTIONS: ReadonlyArray<{
   { hue: 320, label: "Magenta" },
 ];
 
-export function bloubAvatarProfile(seed: string, hue: BotAvatarHue | null): BloubAvatarProfile {
+export function bloubAvatarProfile(seed: string, hue: AvatarHue | null): BloubAvatarProfile {
   const storedSilhouette = requiredItem(SHAPES, stableIndex(`${seed}:shape`, SHAPES.length)).id;
   const silhouette =
     storedSilhouette === UNSUPPORTED_AVATAR_SILHOUETTE
@@ -72,15 +72,15 @@ export function bloubAvatarProfile(seed: string, hue: BotAvatarHue | null): Blou
   };
 }
 
-export function avatarHueSwatch(hue: BotAvatarHue): string {
+export function avatarHueSwatch(hue: AvatarHue): string {
   return colorHex(HUE_COLORS[hue]);
 }
 
-export function avatarHeadColor(seed: string, hue: BotAvatarHue | null): string {
+export function avatarHeadColor(seed: string, hue: AvatarHue | null): string {
   return colorHex(bloubAvatarProfile(seed, hue).color);
 }
 
-export function avatarCandidateSeeds(botId: string, currentSeed: string, batch: number): string[] {
+export function avatarCandidateSeeds(agentId: string, currentSeed: string, batch: number): string[] {
   const candidates = [currentSeed];
   const firstProfile = bloubAvatarProfile(currentSeed, null);
   const unseenSilhouetteIds = new Set<SupportedAvatarSilhouetteId>(SUPPORTED_AVATAR_SILHOUETTES);
@@ -89,7 +89,7 @@ export function avatarCandidateSeeds(botId: string, currentSeed: string, batch: 
   let index = 1;
 
   while (unseenSilhouetteIds.size > 0) {
-    const candidate = `${botId}:avatar:${batch}:${index}`;
+    const candidate = `${agentId}:avatar:${batch}:${index}`;
     index += 1;
     if (candidates.includes(candidate)) continue;
     const profile = bloubAvatarProfile(candidate, null);
@@ -99,7 +99,7 @@ export function avatarCandidateSeeds(botId: string, currentSeed: string, batch: 
   }
 
   while (candidates.length < 12) {
-    const candidate = `${botId}:avatar:${batch}:${index}`;
+    const candidate = `${agentId}:avatar:${batch}:${index}`;
     index += 1;
     if (candidates.includes(candidate)) continue;
     const profile = bloubAvatarProfile(candidate, null);

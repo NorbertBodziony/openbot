@@ -53,7 +53,7 @@ OpenBot supports macOS 13 or newer on Apple Silicon and Windows 10 or newer on x
 ### Agent setup
 
 OpenBot can download a supported provider runtime when you select `Download` in onboarding,
-Settings, Bot setup, or the model picker. A compatible system CLI remains the first choice.
+Settings, agent setup, or the model picker. A compatible system CLI remains the first choice.
 
 You can also install a CLI yourself.
 
@@ -187,7 +187,7 @@ The normal `check` command is offline and uses a fake App Server. Manual smoke s
 signed-in subscription and must not run in CI.
 
 Local agents run with the providers' unrestricted execution modes. Each agent starts in its own
-persistent `~/OpenBot/Bots/<agent>` workspace and also receives `~/OpenBot/Shared`; routine command
+persistent `~/OpenBot/Agents/<agent-id>` workspace and also receives `~/OpenBot/Shared`; routine command
 and filesystem work in both locations runs without OpenBot adding another permission boundary.
 Because these modes are intentionally unrestricted, they also permit host access outside those
 directories when the provider and operating system allow it.
@@ -222,7 +222,9 @@ rules for new modules.
 
 ## Local data and network boundaries
 
-- `~/OpenBot/Bots/<bot-id>` — one working directory per agent.
+- `~/OpenBot/Agents/<agent-id>` — one working directory per agent. A profile written before the
+  bot-to-agent rename holds them under `~/OpenBot/Bots`; the app moves them on first launch, and a
+  workspace whose move could not run stays readable where it is.
 - `~/OpenBot/Shared` — files intentionally shared between agents.
 - `~/OpenBot/Shared/Transfers` — managed message snapshots and generated files. Each transfer has
   an `.openbot-transfer.json` manifest with ownership, recipients, size, and SHA-256 metadata.

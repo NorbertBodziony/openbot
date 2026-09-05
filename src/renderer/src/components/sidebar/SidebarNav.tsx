@@ -1,6 +1,6 @@
 /**
  * The scrolling list itself. This element is the one `measureSidebarDragSlots` queries, so its ref
- * is the rail the whole drag pipeline runs on: `setBotListElement` hands it to the engine and to
+ * is the rail the whole drag pipeline runs on: `setAgentListElement` hands it to the engine and to
  * the scroll fades in that order.
  */
 
@@ -15,7 +15,7 @@ export function SidebarNav() {
   const {
     draggingKind,
     dropSidebarNativeDrag,
-    filteredBots,
+    filteredAgents,
     filteredPeople,
     handleListDragLeave,
     layoutMutable,
@@ -24,26 +24,26 @@ export function SidebarNav() {
     reorderAnnouncement,
     resolvedPinnedItems,
     scrollFades,
-    setBotListElement,
+    setAgentListElement,
     startCreateSection,
     updateSidebarNativeDrag,
   } = useSidebarScope();
   return (
     <nav
-      ref={setBotListElement}
+      ref={setAgentListElement}
       aria-label="Chat list"
-      class={["bot-list", scrollFades.classes()]}
+      class={["agent-list", scrollFades.classes()]}
       data-sidebar-dragging={draggingKind()}
       onDragOver={updateSidebarNativeDrag}
       onDragLeave={handleListDragLeave}
       onDrop={dropSidebarNativeDrag}
       onScroll={scrollFades.measure}
     >
-      <div class="bot-list-content">
+      <div class="agent-list-content">
         <Show
           when={
             resolvedPinnedItems().length > 0 ||
-            filteredBots().length > 0 ||
+            filteredAgents().length > 0 ||
             (props.showPeople !== false && filteredPeople().length > 0) ||
             pending.sectionEditor?.target.kind === "create"
           }
@@ -60,9 +60,9 @@ export function SidebarNav() {
         <ContextMenu.Root modal={false}>
           <ContextMenu.Trigger class="sidebar-list-context-trigger" aria-label="Sidebar free area" />
           <ContextMenu.Portal>
-            <ContextMenu.Content class="bot-context-menu" aria-label="Sidebar actions">
+            <ContextMenu.Content class="agent-context-menu" aria-label="Sidebar actions">
               <ContextMenu.Item onSelect={() => startCreateSection()}>
-                <FolderPlus class="bot-context-icon size-4" aria-hidden="true" />
+                <FolderPlus class="agent-context-icon size-4" aria-hidden="true" />
                 <span>New section</span>
               </ContextMenu.Item>
             </ContextMenu.Content>

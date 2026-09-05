@@ -1,4 +1,4 @@
-import type { BotStore } from "../bot-store";
+import type { AgentStore } from "../agent-store";
 import { decodeRecordResponse, getRecord } from "../protocol";
 import { finiteNumberOrNull } from "./account-usage";
 import type { ProviderPort } from "./provider-runtime";
@@ -16,10 +16,10 @@ const CONTEXT_COMPACTION_THRESHOLD = 0.8;
 const CONTEXT_COMPACTION_TIMEOUT_MS = 120_000;
 
 export interface ContextCompactionOptions {
-  store: BotStore;
+  store: AgentStore;
   providers: ProviderPort;
-  emitError(code: string, error: unknown, botId?: string): void;
-  scheduleDrain(botId: string): void;
+  emitError(code: string, error: unknown, agentId?: string): void;
+  scheduleDrain(agentId: string): void;
 }
 
 /**
@@ -29,16 +29,16 @@ export interface ContextCompactionOptions {
  * A compaction is a real provider turn, so it arrives on the same notification stream as the
  * agent's own work and has to be told apart from it: `claimTurn` swallows the `turn/started` that
  * belongs to the compaction, and `isCompactionTurn` recognizes its completion. The budget is keyed
- * by *external* provider thread id, `compactingBots` by bot id, because a bot only ever compacts one
- * thread at a time and the drain guard asks the question by bot.
+ * by *external* provider thread id, `compactingAgents` by agent id, because an agent only ever compacts one
+ * thread at a time and the drain guard asks the question by agent.
  */
 export class ContextCompaction {
-  readonly #store: BotStore;
+  readonly #store: AgentStore;
   readonly #providers: ProviderPort;
-  readonly #emitError: (code: string, error: unknown, botId?: string) => void;
-  readonly #scheduleDrain: (botId: string) => void;
+  readonly #emitError: (code: string, error: unknown, agentId?: string) => void;
+  readonly #scheduleDrain: (agentId: string) => void;
   readonly #budgets = new Map<string, ThreadContextBudget>();
-  readonly #compactingBots = new Set<string>();
+  readonly #compactingAgents = new Set<string>();
   readonly #timers = new Map<string, NodeJS.Timeout>();
 
   constructor(options: ContextCompactionOptions) {
@@ -48,9 +48,9 @@ export class ContextCompaction {
     this.#scheduleDrain = options.scheduleDrain;
   }
 
-  /** One clause of the drain guard the queue engine composes. False means "hold this bot's queue". */
-  mayDrain(botId: string): boolean {
-    return !this.#compactingBots.has(botId);
+  /** One clause of the drain guard the queue engine composes. False means "hold this agent's queue". */
+  mayDrain(agentId: string): boolean {
+    return !this.#compactingAgents.has(agentId);
   }
 
   updateBudget(threadId: string, params: unknown): void {
@@ -87,22 +87,22 @@ export class ContextCompaction {
     budget.pending = true;
   }
 
-  reserve(botId: string, threadId: string): boolean {
+  reserve(agentId: string, threadId: string): boolean {
     const budget = this.#budgets.get(threadId);
-    if (!budget?.pending || budget.phase !== "idle" || this.#compactingBots.has(botId)) {
+    if (!budget?.pending || budget.phase !== "idle" || this.#compactingAgents.has(agentId)) {
       return false;
     }
     budget.phase = "requested";
-    this.#compactingBots.add(botId);
+    this.#compactingAgents.add(agentId);
     return true;
   }
 
-  async request(botId: string, threadId: string): Promise<void> {
+  async request(agentId: string, threadId: string): Promise<void> {
     const budget = this.#budgets.get(threadId);
-    const bot = this.#store.list().find((candidate) => candidate.id === botId);
-    const client = bot ? this.#providers.clientForBot(bot) : null;
+    const agent = this.#store.list().find((candidate) => candidate.id === agentId);
+    const client = agent ? this.#providers.clientForAgent(agent) : null;
     if (budget?.phase !== "requested" || !client || !this.#providers.isReady()) {
-      this.#release(botId, threadId);
+      this.#release(agentId, threadId);
       return;
     }
 
@@ -111,10 +111,10 @@ export class ContextCompaction {
       this.#emitError(
         "context_compaction_timeout",
         "Codex context compaction timed out; queued work will continue.",
-        botId,
+        agentId,
       );
-      this.#release(botId, threadId);
-      this.#scheduleDrain(botId);
+      this.#release(agentId, threadId);
+      this.#scheduleDrain(agentId);
     }, CONTEXT_COMPACTION_TIMEOUT_MS);
     timer.unref?.();
     this.#timers.set(threadId, timer);
@@ -123,9 +123,9 @@ export class ContextCompaction {
       await client.request("thread/compact/start", { threadId }, decodeRecordResponse);
     } catch (error) {
       budget.lastCompactedTokens = budget.usedTokens;
-      this.#emitError("context_compaction_failed", error, botId);
-      this.#release(botId, threadId);
-      this.#scheduleDrain(botId);
+      this.#emitError("context_compaction_failed", error, agentId);
+      this.#release(agentId, threadId);
+      this.#scheduleDrain(agentId);
     }
   }
 
@@ -133,9 +133,9 @@ export class ContextCompaction {
    * Takes ownership of a `turn/started` that belongs to a compaction we asked for. True means the
    * router must stop: this turn is not the agent's, so it gets no active turn and no event.
    */
-  claimTurn(botId: string, threadId: string, turnId: string): boolean {
+  claimTurn(agentId: string, threadId: string, turnId: string): boolean {
     const budget = this.#budgets.get(threadId);
-    if (budget?.phase !== "requested" || !this.#compactingBots.has(botId)) return false;
+    if (budget?.phase !== "requested" || !this.#compactingAgents.has(agentId)) return false;
     budget.phase = "running";
     budget.compactionTurnId = turnId;
     return true;
@@ -152,34 +152,34 @@ export class ContextCompaction {
     budget.lastCompactedTokens = budget.usedTokens;
   }
 
-  finish(botId: string, threadId: string, status: string): void {
+  finish(agentId: string, threadId: string, status: string): void {
     const budget = this.#budgets.get(threadId);
     if (budget && status !== "completed") {
       budget.lastCompactedTokens = budget.usedTokens;
-      this.#emitError("context_compaction_failed", `Codex context compaction ended with status ${status}.`, botId);
+      this.#emitError("context_compaction_failed", `Codex context compaction ended with status ${status}.`, agentId);
     }
-    this.#release(botId, threadId);
-    this.#scheduleDrain(botId);
+    this.#release(agentId, threadId);
+    this.#scheduleDrain(agentId);
   }
 
-  /** Drops a retired provider thread's budget. The bot keeps compacting until `forgetBot`. */
+  /** Drops a retired provider thread's budget. The agent keeps compacting until `forgetAgent`. */
   forgetThread(threadId: string): void {
     this.#budgets.delete(threadId);
     this.#clearTimer(threadId);
   }
 
-  forgetBot(botId: string): void {
-    this.#compactingBots.delete(botId);
+  forgetAgent(agentId: string): void {
+    this.#compactingAgents.delete(agentId);
   }
 
   dispose(): void {
     for (const timer of this.#timers.values()) clearTimeout(timer);
     this.#timers.clear();
-    this.#compactingBots.clear();
+    this.#compactingAgents.clear();
     this.#budgets.clear();
   }
 
-  #release(botId: string, threadId: string): void {
+  #release(agentId: string, threadId: string): void {
     this.#clearTimer(threadId);
     const budget = this.#budgets.get(threadId);
     if (budget) {
@@ -187,7 +187,7 @@ export class ContextCompaction {
       budget.phase = "idle";
       budget.compactionTurnId = null;
     }
-    this.#compactingBots.delete(botId);
+    this.#compactingAgents.delete(agentId);
   }
 
   #clearTimer(threadId: string): void {

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentProvider } from "./agent-client";
 import { AgentService } from "./agent-service";
 import {
-  CREATE_BOT_INPUT,
+  CREATE_AGENT_INPUT,
   createFakeClaude,
   createFakeGrok,
   FakeAgentClient,
@@ -63,9 +63,9 @@ describe.sequential("AgentService: queue", () => {
       ],
     });
     await expect(
-      service.createBot({
-        ...CREATE_BOT_INPUT,
-        name: "Claude Planning Bot",
+      service.createAgent({
+        ...CREATE_AGENT_INPUT,
+        name: "Claude Planning Agent",
         avatarSeed: "setup:claude-planning",
       }),
     ).resolves.toMatchObject({
@@ -77,7 +77,7 @@ describe.sequential("AgentService: queue", () => {
       auth: { kind: "chatgpt", email: "codex@example.com" },
       cliVersion: "0.144.1",
     });
-    await expect(service.createBot(CREATE_BOT_INPUT)).resolves.toMatchObject({
+    await expect(service.createAgent(CREATE_AGENT_INPUT)).resolves.toMatchObject({
       model: "gpt-5.6-luna",
       reasoningEffort: "medium",
     });
@@ -195,17 +195,17 @@ describe.sequential("AgentService: queue", () => {
     );
   });
 
-  it("removes a new Bot and its workspace when the first message cannot enter the queue", async () => {
+  it("removes a new Agent and its workspace when the first message cannot enter the queue", async () => {
     const { store, mailbox } = stores(root);
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
     vi.spyOn(mailbox, "enqueue").mockRejectedValueOnce(new Error("Queue write failed."));
 
-    await expect(service.createBot(CREATE_BOT_INPUT)).rejects.toThrow("Queue write failed.");
+    await expect(service.createAgent(CREATE_AGENT_INPUT)).rejects.toThrow("Queue write failed.");
 
-    expect(service.listBots()).toEqual([]);
+    expect(service.listAgents()).toEqual([]);
     expect(store.database.listAgents()).toEqual([]);
-    await expect(readdir(join(root, "home", "OpenBot", "Bots"))).resolves.toEqual([]);
+    await expect(readdir(join(root, "home", "OpenBot", "Agents"))).resolves.toEqual([]);
   });
 
   it("keeps the agent model and thread when a lazy provider cannot start", async () => {
@@ -215,10 +215,10 @@ describe.sequential("AgentService: queue", () => {
     await store.getOrCreate("chief");
     const threadId = await store.ensureThreadId("chief");
 
-    await expect(service.updateBot({ botId: "chief", provider: "claude", model: "claude-sonnet-5" })).rejects.toThrow(
-      "included Claude runtime",
-    );
-    expect(service.listBots().find((bot) => bot.id === "chief")).toMatchObject({
+    await expect(
+      service.updateAgent({ agentId: "chief", provider: "claude", model: "claude-sonnet-5" }),
+    ).rejects.toThrow("included Claude runtime");
+    expect(service.listAgents().find((agent) => agent.id === "chief")).toMatchObject({
       model: "gpt-5.6-luna",
       threadId,
     });
@@ -232,8 +232,8 @@ describe.sequential("AgentService: queue", () => {
     await store.getOrCreate("chief");
 
     await expect(
-      service.updateBot({
-        botId: "chief",
+      service.updateAgent({
+        agentId: "chief",
         provider: "claude",
         model: "claude-sonnet-5",
         reasoningEffort: "high",
@@ -259,13 +259,13 @@ describe.sequential("AgentService: queue", () => {
     });
     await service.initialize();
 
-    await service.sendMessage({ botId: "chief", text: "First request" });
+    await service.sendMessage({ agentId: "chief", text: "First request" });
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "completed");
-    const publicThreadId = service.listBots().find((bot) => bot.id === "chief")?.threadId;
+    const publicThreadId = service.listAgents().find((agent) => agent.id === "chief")?.threadId;
 
-    await service.updateBot({ botId: "chief", provider: "grok", model: "grok-4.5" });
-    expect(service.listBots().find((bot) => bot.id === "chief")?.threadId).toBe(publicThreadId);
-    await service.sendMessage({ botId: "chief", text: "Second request" });
+    await service.updateAgent({ agentId: "chief", provider: "grok", model: "grok-4.5" });
+    expect(service.listAgents().find((agent) => agent.id === "chief")?.threadId).toBe(publicThreadId);
+    await service.sendMessage({ agentId: "chief", text: "Second request" });
     await waitFor(() => service?.listQueue("chief").deliveries[1]?.status === "completed");
 
     const grokInput = clients.get("grok")?.requests.find((request) => request.method === "turn/start")?.params;
@@ -273,14 +273,14 @@ describe.sequential("AgentService: queue", () => {
     expect(firstInputText(grokInput)).toContain("Second request");
     const firstGrokSessionId = store.activeProviderSession("chief")?.externalSessionId;
 
-    await service.updateBot({ botId: "chief", provider: "claude", model: "claude-sonnet-5" });
-    await service.sendMessage({ botId: "chief", text: "Third request" });
+    await service.updateAgent({ agentId: "chief", provider: "claude", model: "claude-sonnet-5" });
+    await service.sendMessage({ agentId: "chief", text: "Third request" });
     await waitFor(() => service?.listQueue("chief").deliveries[2]?.status === "completed");
     const claudeInput = clients.get("claude")?.requests.find((request) => request.method === "turn/start")?.params;
     expect(firstInputText(claudeInput)).toContain("GROK_DONE");
 
-    await service.updateBot({ botId: "chief", provider: "grok", model: "grok-4.5" });
-    await service.sendMessage({ botId: "chief", text: "Fourth request" });
+    await service.updateAgent({ agentId: "chief", provider: "grok", model: "grok-4.5" });
+    await service.sendMessage({ agentId: "chief", text: "Fourth request" });
     await waitFor(() => service?.listQueue("chief").deliveries[3]?.status === "completed");
     const grokTurns = clients.get("grok")?.requests.filter((request) => request.method === "turn/start") ?? [];
     expect(firstInputText(grokTurns[1]?.params)).toContain("CLAUDE_DONE");
@@ -318,9 +318,9 @@ describe.sequential("AgentService: queue", () => {
     const warning = vi.spyOn(process.stderr, "write");
     await service.initialize();
     await store.getOrCreate("chief");
-    await service.updateBot({ botId: "chief", provider: "grok", model: "grok-4.5" });
+    await service.updateAgent({ agentId: "chief", provider: "grok", model: "grok-4.5" });
 
-    await service.sendMessage({ botId: "chief", text: "Recover this request" });
+    await service.sendMessage({ agentId: "chief", text: "Recover this request" });
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "completed");
 
     expect(grokClient?.requests.filter((request) => request.method === "thread/start")).toHaveLength(1);
@@ -356,16 +356,16 @@ describe.sequential("AgentService: queue", () => {
     const warning = vi.spyOn(process.stderr, "write");
     await service.initialize();
     await store.getOrCreate("chief");
-    await service.updateBot({ botId: "chief", provider: "grok", model: "grok-4.5" });
-    await service.sendMessage({ botId: "chief", text: "First Grok request" });
+    await service.updateAgent({ agentId: "chief", provider: "grok", model: "grok-4.5" });
+    await service.sendMessage({ agentId: "chief", text: "First Grok request" });
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "completed");
-    const publicThreadId = service.listBots().find((bot) => bot.id === "chief")?.threadId;
+    const publicThreadId = service.listAgents().find((agent) => agent.id === "chief")?.threadId;
     const originalSessionId = store.activeProviderSession("chief")?.externalSessionId;
     if (!publicThreadId || !originalSessionId) throw new Error("The first Grok session was not created.");
 
     rejectResume = true;
-    await service.updateBot({ botId: "chief", description: "Force the provider session to reload." });
-    await service.sendMessage({ botId: "chief", text: "Continue after recovery" });
+    await service.updateAgent({ agentId: "chief", description: "Force the provider session to reload." });
+    await service.sendMessage({ agentId: "chief", text: "Continue after recovery" });
     await waitFor(() => service?.listQueue("chief").deliveries[1]?.status === "completed");
 
     const sessions = store.database.listProviderSessions(publicThreadId);
@@ -398,12 +398,12 @@ describe.sequential("AgentService: queue", () => {
       return client;
     });
     await service.initialize();
-    await service.sendMessage({ botId: "chief", text: "Create a long result" });
+    await service.sendMessage({ agentId: "chief", text: "Create a long result" });
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "completed");
-    const publicThreadId = service.listBots().find((bot) => bot.id === "chief")?.threadId;
+    const publicThreadId = service.listAgents().find((agent) => agent.id === "chief")?.threadId;
 
-    await service.updateBot({ botId: "chief", provider: "claude", model: "claude-sonnet-5" });
-    await service.sendMessage({ botId: "chief", text: "Continue from the result" });
+    await service.updateAgent({ agentId: "chief", provider: "claude", model: "claude-sonnet-5" });
+    await service.sendMessage({ agentId: "chief", text: "Continue from the result" });
     await waitFor(() => service?.listQueue("chief").deliveries[1]?.status === "completed");
 
     const claudeTurn = clients.get("claude")?.requests.find((request) => request.method === "turn/start")?.params;
@@ -420,14 +420,14 @@ describe.sequential("AgentService: queue", () => {
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
     await store.getOrCreate("chief");
-    await service.updateBot({
-      botId: "chief",
+    await service.updateAgent({
+      agentId: "chief",
       title: "Research & writing",
       description: "Researches topics and turns findings into clear writing.",
     });
 
     await service.sendMessage({
-      botId: "chief",
+      agentId: "chief",
       text: "Focus on research and writing.",
     });
     await waitFor(async () => (await protocolMessages(logPath)).some((message) => message.method === "thread/start"));
@@ -452,8 +452,8 @@ describe.sequential("AgentService: queue", () => {
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
 
-    await service.sendMessage({ botId: "chief", text: "Start immediately" });
-    await service.sendMessage({ botId: "chief", text: "Wait behind the first message" });
+    await service.sendMessage({ agentId: "chief", text: "Start immediately" });
+    await service.sendMessage({ agentId: "chief", text: "Wait behind the first message" });
 
     await waitFor(() => {
       const deliveries = service?.listQueue("chief").deliveries ?? [];
@@ -476,10 +476,10 @@ describe.sequential("AgentService: queue", () => {
     service.on("event", (event) => events.push(event));
     await service.initialize();
 
-    await service.sendMessage({ botId: "chief", text: "Question 1" });
-    await service.sendMessage({ botId: "chief", text: "Question 2" });
-    await service.sendMessage({ botId: "chief", text: "Question 3" });
-    await service.sendMessage({ botId: "chief", text: "Question 4" });
+    await service.sendMessage({ agentId: "chief", text: "Question 1" });
+    await service.sendMessage({ agentId: "chief", text: "Question 2" });
+    await service.sendMessage({ agentId: "chief", text: "Question 3" });
+    await service.sendMessage({ agentId: "chief", text: "Question 4" });
 
     await waitFor(() => {
       const deliveries = service?.listQueue("chief").deliveries ?? [];
@@ -528,11 +528,11 @@ describe.sequential("AgentService: queue", () => {
     service.on("event", (event) => events.push(event));
     await service.initialize();
 
-    await service.sendMessage({ botId: "chief", text: "Start" });
+    await service.sendMessage({ agentId: "chief", text: "Start" });
     await waitFor(() => events.some((event) => event.type === "turn-started"));
     const active = events.find((event) => event.type === "turn-started");
     if (active?.type !== "turn-started") throw new Error("Turn did not start.");
-    await service.sendMessage({ botId: "chief", text: "Run after the first task" });
+    await service.sendMessage({ agentId: "chief", text: "Run after the first task" });
 
     const queue = service.listQueue("chief");
     expect(queue.deliveries.map((item) => item.status)).toEqual(["running", "queued"]);
@@ -547,7 +547,7 @@ describe.sequential("AgentService: queue", () => {
     expect(service.listQueue("chief").deliveries[1]?.status).toBe("running");
 
     const conversationSignatures = events
-      .filter((event) => event.type === "conversation" && event.snapshot.botId === "chief")
+      .filter((event) => event.type === "conversation" && event.snapshot.agentId === "chief")
       .map((event) =>
         event.type === "conversation"
           ? JSON.stringify({
@@ -574,16 +574,16 @@ describe.sequential("AgentService: queue", () => {
     service.on("event", (event) => events.push(event));
     await service.initialize();
 
-    await service.sendMessage({ botId: "chief", text: "Start this turn" });
+    await service.sendMessage({ agentId: "chief", text: "Start this turn" });
     await waitFor(() => events.some((event) => event.type === "turn-started"));
     const active = events.find((event) => event.type === "turn-started");
     if (active?.type !== "turn-started") throw new Error("Turn did not start.");
-    await service.sendMessage({ botId: "chief", text: "Add this to the active turn" });
+    await service.sendMessage({ agentId: "chief", text: "Add this to the active turn" });
     const queued = service.listQueue("chief").deliveries.find((delivery) => delivery.status === "queued");
     if (!queued) throw new Error("Queued delivery was not created.");
 
     await service.steerQueuedMessage({
-      botId: "chief",
+      agentId: "chief",
       deliveryId: queued.id,
       expectedTurnId: active.turnId,
     });
@@ -630,7 +630,7 @@ describe.sequential("AgentService: queue", () => {
     const events: AgentEvent[] = [];
     service.on("event", (event) => events.push(event));
     await service.initialize();
-    await service.sendMessage({ botId: "chief", text: "Create a mountain observatory." });
+    await service.sendMessage({ agentId: "chief", text: "Create a mountain observatory." });
     await waitFor(() => events.some((event) => event.type === "turn-started"));
 
     const started = events.find((event) => event.type === "turn-started");
@@ -712,7 +712,7 @@ describe.sequential("AgentService: queue", () => {
     const events: AgentEvent[] = [];
     service.on("event", (event) => events.push(event));
     await service.initialize();
-    await service.sendMessage({ botId: "chief", text: "Make this image vivid." });
+    await service.sendMessage({ agentId: "chief", text: "Make this image vivid." });
     await waitFor(() => events.some((event) => event.type === "turn-started"));
     const started = events.find((event) => event.type === "turn-started");
     const client = clients.get("codex");
@@ -768,7 +768,7 @@ describe.sequential("AgentService: queue", () => {
     const events: AgentEvent[] = [];
     service.on("event", (event) => events.push(event));
     await service.initialize();
-    await service.sendMessage({ botId: "chief", text: "Generate two atmospheric studies." });
+    await service.sendMessage({ agentId: "chief", text: "Generate two atmospheric studies." });
     await waitFor(() => events.some((event) => event.type === "turn-started"));
     const started = events.find((event) => event.type === "turn-started");
     const client = clients.get("codex");
@@ -838,7 +838,7 @@ describe.sequential("AgentService: queue", () => {
     const events: AgentEvent[] = [];
     service.on("event", (event) => events.push(event));
     await service.initialize();
-    await service.sendMessage({ botId: "chief", text: "Generate a cinematic still." });
+    await service.sendMessage({ agentId: "chief", text: "Generate a cinematic still." });
     await waitFor(() => events.some((event) => event.type === "turn-started"));
     const started = events.find((event) => event.type === "turn-started");
     const client = clients.get("codex");
@@ -904,7 +904,7 @@ describe.sequential("AgentService: queue", () => {
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
 
-    await service.sendMessage({ botId: "chief", text: "Stop during startup" });
+    await service.sendMessage({ agentId: "chief", text: "Stop during startup" });
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "starting");
     await service.stop();
 
@@ -924,7 +924,7 @@ describe.sequential("AgentService: queue", () => {
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
     await Promise.all([store.getOrCreate("sales-outbound"), store.getOrCreate("inbox-manager")]);
-    await service.sendMessage({ botId: "chief", text: "Coordinate the team" });
+    await service.sendMessage({ agentId: "chief", text: "Coordinate the team" });
 
     await waitFor(async () => {
       const messages = await protocolMessages(logPath);
@@ -936,7 +936,7 @@ describe.sequential("AgentService: queue", () => {
     const sales = service.listQueue("sales-outbound").deliveries[0];
     const inbox = service.listQueue("inbox-manager").deliveries[0];
     expect(sales.messageId).toBe(inbox.messageId);
-    expect(sales.sender).toEqual({ kind: "bot", botId: "chief" });
+    expect(sales.sender).toEqual({ kind: "agent", agentId: "chief" });
     expect(sales.text).toBe("Please prepare your reports.");
     expect(sales.attachments.map((item) => item.name)).toEqual(["generated-note.txt", "generated-image.png"]);
     const managedNote = await mailbox.resolveAttachment(sales.attachments[0]?.id ?? "");
@@ -962,7 +962,7 @@ describe.sequential("AgentService: queue", () => {
     expect((await service.readConversation("sales-outbound")).messages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          senderBotId: "chief",
+          senderAgentId: "chief",
           exchange: expect.objectContaining({ direction: "incoming" }),
         }),
       ]),
@@ -1001,7 +1001,7 @@ describe.sequential("AgentService: queue", () => {
       {
         tool: "update_profile",
         arguments: {
-          botId: "design",
+          agentId: "design",
           name: "Design Studio",
           title: "Product design",
           description: "Owns product interface and visual design.",
@@ -1012,7 +1012,7 @@ describe.sequential("AgentService: queue", () => {
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
     await store.getOrCreate("design", "Designer", "Design");
-    await service.sendMessage({ botId: "chief", text: "Update the design teammate." });
+    await service.sendMessage({ agentId: "chief", text: "Update the design teammate." });
 
     await waitFor(async () => {
       const messages = await protocolMessages(logPath);

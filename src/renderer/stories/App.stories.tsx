@@ -4,7 +4,7 @@ import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { App } from "../src/App";
 import type { MockOpenBotOptions } from "../src/preview/mock-openbot";
 import { OpenBotPlayground } from "../src/preview/OpenBotPlayground";
-import { STORY_AGENT_STATUS, STORY_APP_INFO, STORY_BOT_SUMMARIES, STORY_SERVERS } from "./fixtures";
+import { STORY_AGENT_STATUS, STORY_AGENT_SUMMARIES, STORY_APP_INFO, STORY_SERVERS } from "./fixtures";
 
 const meta = {
   title: "App",
@@ -92,7 +92,7 @@ export const CommandSearch: Story = {
     await expect(page.findByRole("option", { name: /launch milestones/i })).resolves.toBeInTheDocument();
 
     await userEvent.clear(input);
-    await userEvent.click(page.getByRole("tab", { name: "Bots" }));
+    await userEvent.click(page.getByRole("tab", { name: "Agents" }));
     await userEvent.type(input, "research");
     await expect(page.findByRole("option", { name: /Research/ })).resolves.toBeInTheDocument();
 
@@ -240,7 +240,7 @@ export const EmptyWorkspace: Story = {
   render: () => (
     <OpenBotPlayground
       options={{
-        bots: [],
+        agents: [],
         servers: STORY_SERVERS.filter((server) => server.kind === "local"),
         presence: { serverId: "local", updatedAt: "2026-08-24T12:00:00.000Z", members: [] },
         directThreads: [],
@@ -256,11 +256,11 @@ export const EmptyWorkspace: Story = {
     await expect(canvas.queryByRole("button", { name: "OpenBot team server" })).not.toBeInTheDocument();
     await expect(canvas.getAllByRole("listitem")).toHaveLength(6);
 
-    const createButton = canvas.getByRole("button", { name: "Create Bot" });
+    const createButton = canvas.getByRole("button", { name: "Create agent" });
     await expect(createButton).toBeDisabled();
     const nameInput = canvas.getByRole("textbox", { name: "Name" });
-    const purposeInput = canvas.getByRole("textbox", { name: "What should this Bot help with?" });
-    await expect(nameInput).toHaveValue("New Bot");
+    const purposeInput = canvas.getByRole("textbox", { name: "What should this agent help with?" });
+    await expect(nameInput).toHaveValue("New agent");
     await expect(purposeInput).toHaveValue("");
   },
 };
@@ -355,8 +355,8 @@ export const Onboarding: Story = {
 
     await userEvent.click(canvas.getByRole("button", { name: "Next" }));
     await userEvent.click(canvas.getByRole("button", { name: "Next" }));
-    await expect(canvas.findByRole("heading", { name: "Give each bot a job" })).resolves.toBeInTheDocument();
-    await expect(canvas.getByRole("region", { name: "Example bot jobs" })).toBeInTheDocument();
+    await expect(canvas.findByRole("heading", { name: "Give each agent a job" })).resolves.toBeInTheDocument();
+    await expect(canvas.getByRole("region", { name: "Example agent jobs" })).toBeInTheDocument();
 
     await userEvent.click(canvas.getByRole("button", { name: "Open OpenBot" }));
     await expect(canvas.findByRole("heading", { name: "Chief" })).resolves.toBeInTheDocument();
@@ -376,7 +376,7 @@ export const AgentStarting: Story = {
           phase: "starting",
           message: "Starting local agent CLIs…",
         },
-        bots: STORY_BOT_SUMMARIES.slice(0, 1),
+        agents: STORY_AGENT_SUMMARIES.slice(0, 1),
       }}
     />
   ),

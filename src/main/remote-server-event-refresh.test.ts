@@ -16,7 +16,7 @@ function deferred<T>() {
 
 function conversationPage(revision: number) {
   return {
-    botId: "research",
+    agentId: "research",
     threadId: null,
     activeTurnId: null,
     revision,
@@ -26,12 +26,12 @@ function conversationPage(revision: number) {
   };
 }
 
-function invalidated(botId: string, revision: number): AgentEvent {
-  return { type: "conversation-invalidated", botId, revision };
+function invalidated(agentId: string, revision: number): AgentEvent {
+  return { type: "conversation-invalidated", agentId, revision };
 }
 
-function queueInvalidated(botId: string): AgentEvent {
-  return { type: "queue-invalidated", botId };
+function queueInvalidated(agentId: string): AgentEvent {
+  return { type: "queue-invalidated", agentId };
 }
 
 /**
@@ -146,7 +146,7 @@ describe("RemoteEventRefresh", () => {
 
   it("answers a burst of queue invalidations with one fetch and retries when one is waiting", async () => {
     const { refresh, paths, replies, emitted, nextRequest, nextEmit } = harness();
-    const snapshot = { botId: "research", deliveries: [] };
+    const snapshot = { agentId: "research", deliveries: [] };
 
     // The queue carries no revision, so "changed again" is the only thing a second event can say --
     // which makes coalescing and retrying the same question here, unlike a conversation page.
@@ -176,6 +176,6 @@ describe("RemoteEventRefresh", () => {
     replies[1]?.resolve([]);
     await shown;
 
-    expect(emitted.map((entry) => entry.event)).toEqual([{ type: "bots-changed", bots: [] }]);
+    expect(emitted.map((entry) => entry.event)).toEqual([{ type: "agents-changed", agents: [] }]);
   });
 });

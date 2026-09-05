@@ -56,8 +56,8 @@ export class ConversationWriter {
       ],
       (db, sequences) => {
         const sequence = sequences[0] ?? snapshot.revision;
-        const agent = this.#roster.listAgents().find((candidate) => candidate.id === snapshot.botId);
-        if (!agent) throw new Error(`Unknown agent for conversation: ${snapshot.botId}`);
+        const agent = this.#roster.listAgents().find((candidate) => candidate.id === snapshot.agentId);
+        if (!agent) throw new Error(`Unknown agent for conversation: ${snapshot.agentId}`);
         this.#roster.ensureThreadProjection(db, agent, sequence);
         db.prepare(
           `UPDATE projection_threads
@@ -172,7 +172,7 @@ export class ConversationWriter {
   }
 
   appendConversationMessage(input: {
-    botId: string;
+    agentId: string;
     threadId: string;
     activeTurnId: string | null;
     message: ConversationMessage;
@@ -197,9 +197,9 @@ export class ConversationWriter {
       ],
       (db, sequences) => {
         const sequence = sequences[0] ?? 0;
-        const agent = this.#roster.listAgents().find((candidate) => candidate.id === input.botId);
+        const agent = this.#roster.listAgents().find((candidate) => candidate.id === input.agentId);
         if (!agent || agent.threadId !== input.threadId) {
-          throw new Error(`Unknown agent thread for conversation append: ${input.botId}`);
+          throw new Error(`Unknown agent thread for conversation append: ${input.agentId}`);
         }
         this.#roster.ensureThreadProjection(db, agent, sequence);
         const ordinalRow = databaseRow(

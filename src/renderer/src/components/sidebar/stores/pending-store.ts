@@ -58,7 +58,7 @@ export function createSidebarPendingStore(deps: {
 
   const deleteTarget = createMemo(() => {
     const deletion = pending.deletion;
-    return deletion?.kind === "agent" ? props.bots.find((bot) => bot.id === deletion.id) : undefined;
+    return deletion?.kind === "agent" ? props.agents.find((agent) => agent.id === deletion.id) : undefined;
   });
   const sectionDeleteTarget = createMemo(() => {
     const deletion = pending.deletion;
@@ -103,7 +103,7 @@ export function createSidebarPendingStore(deps: {
     if (deletion?.kind !== "agent" || deletion.deleting) return;
     beginDelete();
     try {
-      await props.onDeleteBot(deletion.id);
+      await props.onDeleteAgent(deletion.id);
       closeDelete();
     } catch (error) {
       failDelete(error);

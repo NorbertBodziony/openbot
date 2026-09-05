@@ -13,7 +13,7 @@ import {
   type ConversationPageAnchor,
   type ConversationSnapshot,
   type ConversationWithReadState,
-  type CreateBotInput,
+  type CreateAgentInput,
   HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX,
   isAgentModel,
   isAvatarHue,
@@ -24,7 +24,7 @@ import {
   ROUTINE_EVENT_ITEM_TYPE_PREFIX,
   ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX,
   type TeamMemberSummary,
-  type UpdateBotInput,
+  type UpdateAgentInput,
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { isTeamCurrentCapability, supportsTeamSemanticTags } from "@openbot/contracts/team-protocol/current";
@@ -294,9 +294,9 @@ export function browserTakeoverDecision(value: unknown): RespondToBrowserTakeove
   throw new HttpError(400, "browser takeover decision is invalid.");
 }
 
-export function botUpdate(value: DynamicRecord, botId: string): UpdateBotInput {
+export function agentUpdate(value: DynamicRecord, agentId: string): UpdateAgentInput {
   if (value.role !== undefined) throw new HttpError(400, "role is invalid.");
-  const result: UpdateBotInput = { botId };
+  const result: UpdateAgentInput = { agentId };
   const textFields = {
     name: INPUT_LIMITS.agentName,
     title: INPUT_LIMITS.agentTitle,
@@ -347,7 +347,7 @@ export function botUpdate(value: DynamicRecord, botId: string): UpdateBotInput {
   return result;
 }
 
-export function botCreate(value: DynamicRecord): CreateBotInput {
+export function agentCreate(value: DynamicRecord): CreateAgentInput {
   const avatarHue = value.avatarHue;
   if (!isAvatarSeed(value.avatarSeed)) throw new HttpError(400, "avatarSeed is invalid.");
   if (avatarHue !== null && !isAvatarHue(avatarHue)) throw new HttpError(400, "avatarHue is invalid.");

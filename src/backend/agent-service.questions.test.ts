@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AgentProvider } from "./agent-client";
 import { AgentService } from "./agent-service";
 import {
-  CREATE_BOT_INPUT,
+  CREATE_AGENT_INPUT,
   createFakeClaude,
   FakeAgentClient,
   fakeBrowser,
@@ -38,7 +38,7 @@ describe.sequential("AgentService: questions", () => {
     const events: AgentEvent[] = [];
     service.on("event", (event) => events.push(event));
     await service.initialize();
-    await service.sendMessage({ botId: "chief", text: "Ask only one question" });
+    await service.sendMessage({ agentId: "chief", text: "Ask only one question" });
     await waitFor(() => events.some((event) => event.type === "turn-started"));
 
     const client = clients.get("codex");
@@ -62,7 +62,7 @@ describe.sequential("AgentService: questions", () => {
     });
     await waitFor(() => events.some((event) => event.type === "prompt"));
     await service.respondToPrompt({ requestId: "question-only-call", answers: { scope: ["Small"] } });
-    const previewBeforeCompletion = service.listBots().find((bot) => bot.id === "chief")?.preview;
+    const previewBeforeCompletion = service.listAgents().find((agent) => agent.id === "chief")?.preview;
 
     client.emit(
       "notification",
@@ -70,7 +70,7 @@ describe.sequential("AgentService: questions", () => {
     );
     await waitFor(() => events.some((event) => event.type === "turn-completed"));
 
-    const previewAfterCompletion = service.listBots().find((bot) => bot.id === "chief")?.preview;
+    const previewAfterCompletion = service.listAgents().find((agent) => agent.id === "chief")?.preview;
     expect(previewAfterCompletion).toBe(previewBeforeCompletion);
     expect(previewAfterCompletion).not.toContain("Which scope should we use?");
   });
@@ -87,22 +87,22 @@ describe.sequential("AgentService: questions", () => {
     const events: AgentEvent[] = [];
     service.on("event", (event) => events.push(event));
     await service.initialize();
-    await service.sendMessage({ botId: "chief", text: "Ask from Codex" });
+    await service.sendMessage({ agentId: "chief", text: "Ask from Codex" });
     await service.setPreferredProvider("claude");
-    const claudeBot = await service.createBot({
-      ...CREATE_BOT_INPUT,
-      name: "Claude Prompt Bot",
+    const claudeAgent = await service.createAgent({
+      ...CREATE_AGENT_INPUT,
+      name: "Claude Prompt Agent",
       avatarSeed: "setup:claude-prompt",
     });
-    await service.sendMessage({ botId: claudeBot.id, text: "Ask from Claude" });
+    await service.sendMessage({ agentId: claudeAgent.id, text: "Ask from Claude" });
     await waitFor(() => events.filter((event) => event.type === "turn-started").length === 2);
 
     const codexClient = clients.get("codex");
     const claudeClient = clients.get("claude");
     const codexThreadId = store.activeProviderSession("chief")?.externalSessionId;
-    const claudeThreadId = store.activeProviderSession(claudeBot.id)?.externalSessionId;
-    const codexTurn = events.find((event) => event.type === "turn-started" && event.botId === "chief");
-    const claudeTurn = events.find((event) => event.type === "turn-started" && event.botId === claudeBot.id);
+    const claudeThreadId = store.activeProviderSession(claudeAgent.id)?.externalSessionId;
+    const codexTurn = events.find((event) => event.type === "turn-started" && event.agentId === "chief");
+    const claudeTurn = events.find((event) => event.type === "turn-started" && event.agentId === claudeAgent.id);
     if (
       !codexClient ||
       !claudeClient ||
@@ -148,7 +148,7 @@ describe.sequential("AgentService: questions", () => {
       )?.questionPrompt?.resolution,
     ).toEqual({ status: "expired" });
     expect(
-      (await service.readConversation(claudeBot.id)).messages.find(
+      (await service.readConversation(claudeAgent.id)).messages.find(
         (message) => message.questionPrompt?.requestId === "claude-provider-prompt",
       )?.questionPrompt?.resolution,
     ).toBeNull();

@@ -30,7 +30,7 @@ interface RoutineDraft {
 }
 
 interface AgentRoutinesSettingsProps {
-  botId: string;
+  agentId: string;
   onCountChange: (count: number) => void;
   onBack?: () => void;
   onClose?: () => void;
@@ -59,7 +59,7 @@ export function AgentRoutinesSettings(props: AgentRoutinesSettingsProps) {
 
   async function loadRoutines(): Promise<void> {
     try {
-      const next = await window.openbot.agent.listRoutines(props.botId);
+      const next = await window.openbot.agent.listRoutines(props.agentId);
       setRoutines(next);
       setRoutinesLoaded(true);
       props.onCountChange(next.length);
@@ -77,7 +77,7 @@ export function AgentRoutinesSettings(props: AgentRoutinesSettingsProps) {
     try {
       setRuns(
         await window.openbot.agent.listRoutineRuns({
-          botId: props.botId,
+          agentId: props.agentId,
           routineId,
           limit: 10,
         }),
@@ -89,7 +89,7 @@ export function AgentRoutinesSettings(props: AgentRoutinesSettingsProps) {
 
   onSettled(() => {
     const unsubscribe = window.openbot.agent.onEvent((event) => {
-      if (event.type !== "routines-changed" || event.botId !== props.botId) return;
+      if (event.type !== "routines-changed" || event.agentId !== props.agentId) return;
       void loadRoutines();
       const routineId = draft()?.id;
       if (routineId) void loadRuns(routineId);
@@ -98,7 +98,7 @@ export function AgentRoutinesSettings(props: AgentRoutinesSettingsProps) {
   });
 
   createEffect(
-    () => props.botId,
+    () => props.agentId,
     () => {
       closeEditor();
       setLoading(true);
@@ -251,7 +251,7 @@ export function AgentRoutinesSettings(props: AgentRoutinesSettingsProps) {
     try {
       const saved = current.id
         ? await window.openbot.agent.updateRoutine({
-            botId: props.botId,
+            agentId: props.agentId,
             routineId: current.id,
             name: current.name.trim(),
             instruction: current.instruction.trim(),
@@ -259,7 +259,7 @@ export function AgentRoutinesSettings(props: AgentRoutinesSettingsProps) {
             schedule: current.schedule,
           })
         : await window.openbot.agent.createRoutine({
-            botId: props.botId,
+            agentId: props.agentId,
             name: current.name.trim(),
             instruction: current.instruction.trim(),
             active: current.active,
@@ -293,7 +293,7 @@ export function AgentRoutinesSettings(props: AgentRoutinesSettingsProps) {
     const analytics = desktopAnalytics.scope();
     try {
       await window.openbot.agent.deleteRoutine({
-        botId: props.botId,
+        agentId: props.agentId,
         routineId: current.id,
       });
       setRoutines((items) => {
@@ -318,7 +318,7 @@ export function AgentRoutinesSettings(props: AgentRoutinesSettingsProps) {
     const analytics = desktopAnalytics.scope();
     try {
       await window.openbot.agent.testRoutine({
-        botId: props.botId,
+        agentId: props.agentId,
         routineId: current.id,
       });
       trackRoutineAction(analytics, "test", current.schedule, startedAt, "succeeded");

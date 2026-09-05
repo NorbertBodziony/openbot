@@ -1,4 +1,4 @@
-import type { UpdateBotInput } from "@openbot/contracts/ipc";
+import type { UpdateAgentInput } from "@openbot/contracts/ipc";
 import { createContext, createEffect, onCleanup, onSettled, untrack, useContext } from "solid-js";
 import { agentConversationKey, composerDraftKey } from "../../conversation-keys";
 import { createScopeGuard } from "../../scope-lifetime";
@@ -28,8 +28,8 @@ export function createConversationViewScope(props: ConversationProps) {
   const {
     drafts,
     setDrafts,
-    editingBotId,
-    setEditingBotId,
+    editingAgentId,
+    setEditingAgentId,
     editingServerId,
     setEditingServerId,
     editingDeliveryId,
@@ -158,7 +158,7 @@ export function createConversationViewScope(props: ConversationProps) {
     setDrafts,
     conversationErrors,
     setConversationErrors,
-    editingBotId,
+    editingAgentId,
     editingServerId,
     editingDeliveryId,
     seenMessageIds: resources.seenMessageIds,
@@ -231,7 +231,7 @@ export function createConversationViewScope(props: ConversationProps) {
     respondToBrowserTakeover,
     activeBrowserControl,
     actingBrowserControl,
-    browserControlBot,
+    browserControlAgent,
     browserControlForTab,
     browserControllerForTab,
     openBrowserAddress,
@@ -343,8 +343,8 @@ export function createConversationViewScope(props: ConversationProps) {
     agentReady,
     drafts,
     setDrafts,
-    editingBotId,
-    setEditingBotId,
+    editingAgentId,
+    setEditingAgentId,
     editingServerId,
     setEditingServerId,
     editingDeliveryId,
@@ -370,16 +370,16 @@ export function createConversationViewScope(props: ConversationProps) {
       set idleTimer(timer: ReturnType<typeof setTimeout> | undefined) {
         resources.typingIdleTimer = timer;
       },
-      get botId() {
-        return resources.typingBotId;
+      get agentId() {
+        return resources.typingAgentId;
       },
-      set botId(id: string | null) {
-        resources.typingBotId = id;
+      set agentId(id: string | null) {
+        resources.typingAgentId = id;
       },
     },
     voice: {
-      get botId() {
-        return resources.voiceBotId;
+      get agentId() {
+        return resources.voiceAgentId;
       },
       get serverId() {
         return resources.voiceServerId;
@@ -389,7 +389,7 @@ export function createConversationViewScope(props: ConversationProps) {
       },
       set submitRequest(request:
         | {
-            botId: string;
+            agentId: string;
             serverId: string;
             draft: ComposerDraft;
             queuedEdit: { deliveryId: string; originalAttachmentIds: string[] } | undefined;
@@ -451,7 +451,7 @@ export function createConversationViewScope(props: ConversationProps) {
     setSettingsReasoning,
     setComposerError,
     viewIsMounted,
-    saveBotPatch,
+    saveAgentPatch,
   });
   const { updateRuntimeSettings, selectModel, selectAndConfirmModel, selectAndConfirmReasoning } = settings;
   onCleanup(() => {
@@ -480,15 +480,18 @@ export function createConversationViewScope(props: ConversationProps) {
   let lastChatSearchQuery = "";
   let stickToLatest = true;
   let lastConversationIdentity: string | undefined;
-  let lastPanelBotId: string | undefined;
+  let lastPanelAgentId: string | undefined;
   let lastHandledSettingsRequestNonce: number | undefined;
   let lastHandledMessageFocusNonce: number | undefined;
   let lastRuntimeSettingsSignature: string | undefined;
-  async function saveBotPatch(updates: Omit<UpdateBotInput, "botId">, targetBotId = props.bot?.id): Promise<boolean> {
-    const botId = targetBotId;
-    if (!botId) return false;
+  async function saveAgentPatch(
+    updates: Omit<UpdateAgentInput, "agentId">,
+    targetAgentId = props.agent?.id,
+  ): Promise<boolean> {
+    const agentId = targetAgentId;
+    if (!agentId) return false;
     try {
-      await props.onUpdateBot(botId, updates);
+      await props.onUpdateAgent(agentId, updates);
       return true;
     } catch {
       return false;
@@ -500,14 +503,14 @@ export function createConversationViewScope(props: ConversationProps) {
       if (event.type === "started") {
         const target = currentTarget();
         if (target?.serverId === event.serverId) {
-          resources.importTargetBots.set(event.requestId, target);
+          resources.importTargetAgents.set(event.requestId, target);
           clearConversationError(target);
         }
         setAttachmentBusy(true);
         setComposerError(null);
       } else if (event.type === "error") {
-        const target = resources.importTargetBots.get(event.requestId);
-        resources.importTargetBots.delete(event.requestId);
+        const target = resources.importTargetAgents.get(event.requestId);
+        resources.importTargetAgents.delete(event.requestId);
         setAttachmentBusy(false);
         if (target) {
           setConversationErrors((current) => ({
@@ -517,8 +520,8 @@ export function createConversationViewScope(props: ConversationProps) {
         }
       } else {
         setAttachmentBusy(false);
-        const target = resources.importTargetBots.get(event.requestId);
-        resources.importTargetBots.delete(event.requestId);
+        const target = resources.importTargetAgents.get(event.requestId);
+        resources.importTargetAgents.delete(event.requestId);
         if (target) {
           addAttachments(event.attachments, target);
         } else {
@@ -676,12 +679,12 @@ export function createConversationViewScope(props: ConversationProps) {
   createEffect(
     () => ({
       request: props.messageFocusRequest,
-      botId: props.bot?.id,
+      agentId: props.agent?.id,
       loaded: props.loaded,
       messageIds: props.messages.map((message) => message.id).join("\u0000"),
     }),
-    ({ request, botId, loaded }) => {
-      if (!request || request.botId !== botId || !loaded || request.nonce === lastHandledMessageFocusNonce) return;
+    ({ request, agentId, loaded }) => {
+      if (!request || request.agentId !== agentId || !loaded || request.nonce === lastHandledMessageFocusNonce) return;
       requestAnimationFrame(() => {
         const target = scrollElement?.querySelector<HTMLElement>(
           `[data-chat-search-message="${CSS.escape(request.messageId)}"]`,
@@ -725,7 +728,7 @@ export function createConversationViewScope(props: ConversationProps) {
     () => {
       const lastMessage = props.messages[props.messages.length - 1];
       return {
-        botId: props.bot?.id,
+        agentId: props.agent?.id,
         serverId: props.server?.id ?? "local",
         activeTurnId: props.activeTurnId,
         queueSignature: props.queue?.deliveries.map((delivery) => `${delivery.id}:${delivery.status}`).join("|"),
@@ -739,9 +742,9 @@ export function createConversationViewScope(props: ConversationProps) {
         unreadCount: props.unreadCount,
       };
     },
-    ({ botId, serverId, unreadCount }) => {
+    ({ agentId, serverId, unreadCount }) => {
       currentUnreadCount = unreadCount;
-      const conversationIdentity = `${serverId}:${botId ?? ""}`;
+      const conversationIdentity = `${serverId}:${agentId ?? ""}`;
       if (conversationIdentity !== lastConversationIdentity) {
         if (lastConversationIdentity !== undefined) closeChatSearch(false);
         lastConversationIdentity = conversationIdentity;
@@ -779,26 +782,26 @@ export function createConversationViewScope(props: ConversationProps) {
 
   createEffect(
     () => {
-      const bot = props.bot;
-      if (!bot) return null;
+      const agent = props.agent;
+      if (!agent) return null;
       return {
-        signature: [bot.id, bot.provider, bot.model, bot.reasoningEffort].join("\u0000"),
-        provider: bot.provider,
-        model: bot.model,
-        reasoningEffort: bot.reasoningEffort,
+        signature: [agent.id, agent.provider, agent.model, agent.reasoningEffort].join("\u0000"),
+        provider: agent.provider,
+        model: agent.model,
+        reasoningEffort: agent.reasoningEffort,
       };
     },
-    (bot) => {
-      if (!bot) return;
+    (agent) => {
+      if (!agent) return;
       const pendingSettings = resources.runtimeSettingsAttempts.get(
-        agentConversationKey(props.server?.id ?? "local", props.bot?.id ?? ""),
+        agentConversationKey(props.server?.id ?? "local", props.agent?.id ?? ""),
       );
       if (
         pendingSettings?.pending &&
         !runtimeSettingsEqual(pendingSettings.settings, {
-          provider: bot.provider,
-          model: bot.model,
-          reasoningEffort: bot.reasoningEffort,
+          provider: agent.provider,
+          model: agent.model,
+          reasoningEffort: agent.reasoningEffort,
         })
       ) {
         setSettingsProvider(pendingSettings.settings.provider);
@@ -806,47 +809,47 @@ export function createConversationViewScope(props: ConversationProps) {
         setSettingsReasoning(pendingSettings.settings.reasoningEffort);
         return;
       }
-      if (bot.signature === lastRuntimeSettingsSignature) return;
-      lastRuntimeSettingsSignature = bot.signature;
-      setSettingsProvider(bot.provider);
-      setSettingsModel(bot.model);
-      setSettingsReasoning(bot.reasoningEffort);
+      if (agent.signature === lastRuntimeSettingsSignature) return;
+      lastRuntimeSettingsSignature = agent.signature;
+      setSettingsProvider(agent.provider);
+      setSettingsModel(agent.model);
+      setSettingsReasoning(agent.reasoningEffort);
     },
   );
 
   createEffect(
     () => {
-      const botId = props.bot?.id;
-      return { botId, panel: botId ? rightPanels()[botId] : undefined };
+      const agentId = props.agent?.id;
+      return { agentId, panel: agentId ? rightPanels()[agentId] : undefined };
     },
-    ({ botId, panel }) => {
-      if (botId === lastPanelBotId) return;
-      const previousBotId = lastPanelBotId;
-      lastPanelBotId = botId;
+    ({ agentId, panel }) => {
+      if (agentId === lastPanelAgentId) return;
+      const previousAgentId = lastPanelAgentId;
+      lastPanelAgentId = agentId;
       clearRoutineSettingsRequest();
       resources.filePreviewRequestGeneration += 1;
       const preview = sidebarFilePreview();
-      if (preview && preview.ownerBotId !== botId) {
+      if (preview && preview.ownerAgentId !== agentId) {
         setSidebarFilePreview(null);
-        setRightPanels((current) => ({ ...current, [preview.ownerBotId]: "none" }));
+        setRightPanels((current) => ({ ...current, [preview.ownerAgentId]: "none" }));
       }
-      if (!previousBotId || !botId || (panel !== "settings" && panel !== "file-preview")) return;
-      setRightPanels((current) => ({ ...current, [botId]: "none" }));
+      if (!previousAgentId || !agentId || (panel !== "settings" && panel !== "file-preview")) return;
+      setRightPanels((current) => ({ ...current, [agentId]: "none" }));
     },
   );
 
   createEffect(
-    () => ({ request: props.settingsRequest, botId: props.bot?.id }),
-    ({ request, botId }) => {
-      if (!request || botId !== request.botId || request.nonce === lastHandledSettingsRequestNonce) return;
+    () => ({ request: props.settingsRequest, agentId: props.agent?.id }),
+    ({ request, agentId }) => {
+      if (!request || agentId !== request.agentId || request.nonce === lastHandledSettingsRequestNonce) return;
       lastHandledSettingsRequestNonce = request.nonce;
-      setActiveRightPanel("settings", botId);
+      setActiveRightPanel("settings", agentId);
     },
   );
 
   createEffect(
     () => ({
-      botId: props.bot?.id,
+      agentId: props.agent?.id,
       activeTab: activeBrowserTab(),
       addressEditing: browserAddressEditing(),
       screenOpen: screenOpen(),
@@ -865,7 +868,7 @@ export function createConversationViewScope(props: ConversationProps) {
 
   createEffect(
     () => ({
-      botId: props.bot?.id,
+      agentId: props.agent?.id,
       visible:
         browserSidebarOpen() &&
         !props.browserVisibilitySuspended &&
@@ -873,7 +876,7 @@ export function createConversationViewScope(props: ConversationProps) {
         !props.remoteDesktopVisible &&
         !mediaPreview(),
     }),
-    ({ botId, visible }) => {
+    ({ agentId, visible }) => {
       if (props.browserEnabled === false) return;
       const generation = ++browserVisibilityGeneration;
       if (browserVisibilityFrame !== undefined) cancelAnimationFrame(browserVisibilityFrame);
@@ -891,7 +894,7 @@ export function createConversationViewScope(props: ConversationProps) {
         browserVisibilityFrame = undefined;
         if (
           generation !== browserVisibilityGeneration ||
-          props.bot?.id !== botId ||
+          props.agent?.id !== agentId ||
           !browserSidebarOpen() ||
           !browserSurface
         ) {
@@ -900,7 +903,7 @@ export function createConversationViewScope(props: ConversationProps) {
         const syncBounds = () => {
           if (
             generation !== browserVisibilityGeneration ||
-            props.bot?.id !== botId ||
+            props.agent?.id !== agentId ||
             !browserSidebarOpen() ||
             !browserSurface
           ) {
@@ -936,7 +939,7 @@ export function createConversationViewScope(props: ConversationProps) {
   );
 
   createEffect(
-    () => ({ botId: props.bot?.id, open: browserPipOpen() }),
+    () => ({ agentId: props.agent?.id, open: browserPipOpen() }),
     ({ open }) => {
       if (props.browserEnabled === false) return;
       if (!open) {
@@ -1051,7 +1054,7 @@ export function createConversationViewScope(props: ConversationProps) {
     browserPipOpen,
     browserSidebarOpen,
     browserBoundsFrame,
-    browserControlBot,
+    browserControlAgent,
     browserControlForTab,
     browserControllerForTab,
     browserPanelWidth,
@@ -1105,7 +1108,7 @@ export function createConversationViewScope(props: ConversationProps) {
     lastConversationIdentity,
     lastHandledMessageFocusNonce,
     lastHandledSettingsRequestNonce,
-    lastPanelBotId,
+    lastPanelAgentId,
     lastRuntimeSettingsSignature,
     latestScrollFrame,
     latestScrollSettleFrame,
@@ -1146,7 +1149,7 @@ export function createConversationViewScope(props: ConversationProps) {
     resources,
     rightPanels,
     routineSettingsRequest,
-    saveBotPatch,
+    saveAgentPatch,
     updateRuntimeSettings,
     saveQueuedMessageEdit,
     scheduleUnreadDividerVisibilityUpdate,

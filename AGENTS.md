@@ -82,11 +82,17 @@ which of these your change touched.**
 
 ## Words we use
 
-- **agent** — three unrelated senses: the OpenBot product concept (table `projection_agents`, but the
-  code still says `BotStore`, `BotSummary`, `bot-${uuid}`, `~/OpenBot/Bots/<id>` — the rename is
-  incomplete, expect both); a *coding* agent working on this repository; a *marketplace* agent
-  (`ipc-marketplace-agents.ts`). **teammate** is prompt and marketing copy, never a type. Human team
-  members are `TeamMemberSummary`.
+- **agent** — three unrelated senses: the OpenBot product concept (`AgentStore`, `AgentSummary`,
+  `agent-${uuid}`, `~/OpenBot/Agents/<id>`, table `projection_agents`); a *coding* agent working on
+  this repository; a *marketplace* agent (`ipc-marketplace-agents.ts`). **teammate** is prompt and
+  marketing copy, never a type. Human team members are `TeamMemberSummary`.
+- **bot** — never the product concept in new code. Where it survives it is frozen, and each place can
+  say why: the Team API v1-v3 wire spells the agent `bot`/`botId`/`bots-changed` and always will
+  (`current-agent-keys.ts` is the only translator); `bots.json`, `mailbox.json` and
+  `legacy-import:bots:v1` are names a shipped release already wrote to disk; the `~/OpenBot/Bots`
+  path prefixes stay readable forever; `"first-bot"` is an avatar seed, not a word; and `BloubBot`
+  and lucide's `Bot` icon belong to their libraries. A `bot-<uuid>` id value is still valid — a
+  database restored from the user's own file copy never ran migration v13.
 - **server** — four senses: a remote team server you join (`ServerSummary`, `servers:*` IPC); your
   own Team API host (`HostStatus`, `host:*` IPC, `src/main/team-api-server.ts`); the cloud account
   API (`apps/auth-api`, `auth:*` IPC); an MCP server (`createSdkMcpServer`).

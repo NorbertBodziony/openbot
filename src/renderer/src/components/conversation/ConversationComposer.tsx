@@ -64,7 +64,7 @@ export function ConversationComposer() {
               <Loading>
                 <QueuePanel
                   deliveries={presentedQueueDeliveries()}
-                  bots={props.bots}
+                  agents={props.agents}
                   skills={installedSkills()}
                   editingDeliveryId={editingDeliveryId()}
                   canSteer={Boolean(props.activeTurnId)}
@@ -85,7 +85,7 @@ export function ConversationComposer() {
                 <p>
                   <RichMessageText
                     body={message().body || "Attachment"}
-                    bots={props.bots}
+                    agents={props.agents}
                     skills={installedSkills()}
                     attachments={message().attachments}
                     onSelectAgent={props.onSelectAgent}
@@ -155,8 +155,8 @@ export function ConversationComposer() {
           </Show>
           <div class="composer-input-label">
             <ComposerEditor
-              botId={props.bot?.id}
-              bots={props.bots}
+              agentId={props.agent?.id}
+              agents={props.agents}
               skills={installedSkills()}
               attachments={currentDraft().attachments}
               value={currentDraft().text}
@@ -166,9 +166,9 @@ export function ConversationComposer() {
                   ? "Complete agent CLI setup to start"
                   : replyTarget()
                     ? "Reply…"
-                    : `Message ${props.bot?.name ?? "agent"}`
+                    : `Message ${props.agent?.name ?? "agent"}`
               }
-              ariaLabel={`Message ${props.bot?.name ?? "agent"}`}
+              ariaLabel={`Message ${props.agent?.name ?? "agent"}`}
               focusRequest={composerFocusRequest()}
               onValueChange={(text) => {
                 updateCurrentDraft({ text });
@@ -268,7 +268,7 @@ export function ConversationComposer() {
                       voicePhase() === "requesting" ||
                       voicePhase() === "preparing" ||
                       voicePhase() === "transcribing" ||
-                      (voicePhase() === "idle" && (!props.bot || !agentReady()))
+                      (voicePhase() === "idle" && (!props.agent || !agentReady()))
                     }
                     onClick={() => void startVoiceRecording()}
                   >

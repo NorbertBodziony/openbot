@@ -35,18 +35,18 @@ export const LANDING_SCRIPT_MESSAGE_PREFIX = "landing-script:";
 export const LANDING_DIRECT_SCRIPT_MESSAGE_PREFIX = "landing-direct-script:";
 
 export interface LandingDemoScript {
-  botId: string;
+  agentId: string;
   prompt: string;
   thinkingSteps: [string, string];
   response: string;
   attachments: AttachmentSummary[];
   reaction: MessageReaction | null;
-  recipientBotIds: string[];
+  recipientAgentIds: string[];
 }
 
 export const LANDING_DEMO_SCRIPTS: Record<string, LandingDemoScript> = {
   chief: {
-    botId: "chief",
+    agentId: "chief",
     prompt:
       "Turn this into the final launch brief. Use @Research's evidence, @Builder's rollout notes, and attach the source files.",
     thinkingSteps: [
@@ -68,10 +68,10 @@ export const LANDING_DEMO_SCRIPTS: Record<string, LandingDemoScript> = {
     ].join("\n"),
     attachments: LANDING_PREVIEW_ATTACHMENTS,
     reaction: "✅",
-    recipientBotIds: ["launch"],
+    recipientAgentIds: ["launch"],
   },
   research: {
-    botId: "research",
+    agentId: "research",
     prompt: "Verify the claims in launch-brief.md against launch-metrics.csv. Flag anything that still needs a source.",
     thinkingSteps: [
       "Mapping each launch claim to the source files.",
@@ -90,10 +90,10 @@ export const LANDING_DEMO_SCRIPTS: Record<string, LandingDemoScript> = {
     ].join("\n"),
     attachments: [...LANDING_PREVIEW_ATTACHMENTS, LANDING_EVIDENCE_MAP],
     reaction: null,
-    recipientBotIds: ["chief"],
+    recipientAgentIds: ["chief"],
   },
   builder: {
-    botId: "builder",
+    agentId: "builder",
     prompt: "Turn @Research's findings into a release checklist with rollback steps.",
     thinkingSteps: [
       "Reading evidence-map.md and grouping the release gates.",
@@ -116,10 +116,10 @@ export const LANDING_DEMO_SCRIPTS: Record<string, LandingDemoScript> = {
     ].join("\n"),
     attachments: [LANDING_EVIDENCE_MAP, LANDING_ROLLOUT_CHECKLIST],
     reaction: null,
-    recipientBotIds: ["launch"],
+    recipientAgentIds: ["launch"],
   },
   launch: {
-    botId: "launch",
+    agentId: "launch",
     prompt: "Package the final release note and hand it back to @Chief.",
     thinkingSteps: [
       "Combining the verified claims with the rollout checklist.",
@@ -140,7 +140,7 @@ export const LANDING_DEMO_SCRIPTS: Record<string, LandingDemoScript> = {
     ].join("\n"),
     attachments: [LANDING_RELEASE_NOTE],
     reaction: "🚀",
-    recipientBotIds: ["chief"],
+    recipientAgentIds: ["chief"],
   },
 };
 

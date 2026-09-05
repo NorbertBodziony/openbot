@@ -37,10 +37,10 @@ describe.sequential("AgentService: routines", () => {
     const { store, mailbox } = stores(root);
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
-    const bot = await store.getOrCreate("chief");
+    const agent = await store.getOrCreate("chief");
 
     const created = service.createRoutine({
-      botId: bot.id,
+      agentId: agent.id,
       name: "Morning brief",
       instruction: "Prepare the daily brief.",
       active: true,
@@ -48,26 +48,26 @@ describe.sequential("AgentService: routines", () => {
       schedule: { kind: "daily", time: "09:00" },
     });
     const updated = service.updateRoutine({
-      botId: bot.id,
+      agentId: agent.id,
       routineId: created.id,
       name: "Updated morning brief",
     });
-    await service.deleteRoutine({ botId: bot.id, routineId: created.id });
+    await service.deleteRoutine({ agentId: agent.id, routineId: created.id });
 
-    const conversation = await service.readConversation(bot.id);
+    const conversation = await service.readConversation(agent.id);
     expect(conversation.messages.flatMap((message) => routineConversationEvent(message) ?? [])).toEqual([
       { action: "created", routineId: created.id, routineName: "Morning brief" },
       { action: "updated", routineId: updated.id, routineName: "Updated morning brief" },
       { action: "deleted", routineId: updated.id, routineName: "Updated morning brief" },
     ]);
-    expect((await service.readConversationPageFor(bot.id, "member-1")).readState?.unreadCount).toBe(0);
-    expect(service.searchConversationMessages("morning brief", bot.id).total).toBe(0);
+    expect((await service.readConversationPageFor(agent.id, "member-1")).readState?.unreadCount).toBe(0);
+    expect(service.searchConversationMessages("morning brief", agent.id).total).toBe(0);
 
     await service.stop();
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
     expect(
-      (await service.readConversation(bot.id)).messages.flatMap((message) => routineConversationEvent(message) ?? []),
+      (await service.readConversation(agent.id)).messages.flatMap((message) => routineConversationEvent(message) ?? []),
     ).toHaveLength(3);
   });
 
@@ -81,9 +81,9 @@ describe.sequential("AgentService: routines", () => {
     const emitted: AgentEvent[] = [];
     service.on("event", (event: AgentEvent) => emitted.push(event));
     await service.initialize();
-    const bot = await store.getOrCreate("chief");
+    const agent = await store.getOrCreate("chief");
     const routine = service.createRoutine({
-      botId: bot.id,
+      agentId: agent.id,
       name: "Retry running marker",
       instruction: "Keep the provider turn active while marker persistence retries.",
       active: true,
@@ -100,18 +100,18 @@ describe.sequential("AgentService: routines", () => {
       return appendConversationMessage(input);
     });
 
-    const run = await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    const run = await service.testRoutine({ agentId: agent.id, routineId: routine.id });
     await waitFor(() => {
-      const currentRun = service?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })[0];
+      const currentRun = service?.listRoutineRuns({ agentId: agent.id, routineId: routine.id, limit: 10 })[0];
       return currentRun?.id === run.id && currentRun.status === "running";
     });
 
-    expect(service.listQueue(bot.id).deliveries).toContainEqual(expect.objectContaining({ status: "running" }));
+    expect(service.listQueue(agent.id).deliveries).toContainEqual(expect.objectContaining({ status: "running" }));
     expect(client?.requests.filter((request) => request.method === "turn/start")).toHaveLength(1);
     expect(emitted).toContainEqual(
-      expect.objectContaining({ type: "error", code: "delivery_reconciliation_pending", botId: bot.id }),
+      expect.objectContaining({ type: "error", code: "delivery_reconciliation_pending", agentId: agent.id }),
     );
-    const runningMarkers = (await service.readConversation(bot.id)).messages.filter(
+    const runningMarkers = (await service.readConversation(agent.id)).messages.filter(
       (message) => routineRunConversationEvent(message)?.status === "running",
     );
     expect(runningMarkers).toHaveLength(1);
@@ -127,23 +127,23 @@ describe.sequential("AgentService: routines", () => {
     const emitted: AgentEvent[] = [];
     service.on("event", (event: AgentEvent) => emitted.push(event));
     await service.initialize();
-    const bot = await store.getOrCreate("chief");
+    const agent = await store.getOrCreate("chief");
     const routine = service.createRoutine({
-      botId: bot.id,
+      agentId: agent.id,
       name: "Approval marker retry",
       instruction: "Request approval and continue after the response.",
       active: true,
       timezone: "UTC",
       schedule: { kind: "daily", time: "09:00" },
     });
-    const run = await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    const run = await service.testRoutine({ agentId: agent.id, routineId: routine.id });
     await waitFor(() =>
       service
-        ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        ?.listRoutineRuns({ agentId: agent.id, routineId: routine.id, limit: 10 })
         .some((candidate) => candidate.id === run.id && candidate.status === "running"),
     );
-    const delivery = service.listQueue(bot.id).deliveries.find((candidate) => candidate.status === "running");
-    const threadId = store.activeProviderSession(bot.id)?.externalSessionId;
+    const delivery = service.listQueue(agent.id).deliveries.find((candidate) => candidate.status === "running");
+    const threadId = store.activeProviderSession(agent.id)?.externalSessionId;
     if (!delivery?.turnId || !client || !threadId) throw new Error("The routine turn did not start.");
 
     const appendConversationMessage = store.database.appendConversationMessage.bind(store.database);
@@ -170,7 +170,7 @@ describe.sequential("AgentService: routines", () => {
     await waitFor(() => emitted.some((event) => event.type === "approval"));
     await waitFor(() =>
       service
-        ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        ?.listRoutineRuns({ agentId: agent.id, routineId: routine.id, limit: 10 })
         .some((candidate) => candidate.id === run.id && candidate.status === "needs-attention"),
     );
     expect(client.responses).toEqual([]);
@@ -182,16 +182,17 @@ describe.sequential("AgentService: routines", () => {
     );
     await waitFor(() =>
       service
-        ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        ?.listRoutineRuns({ agentId: agent.id, routineId: routine.id, limit: 10 })
         .some((candidate) => candidate.id === run.id && candidate.status === "running"),
     );
 
     expect(
       emitted.filter(
-        (event) => event.type === "error" && event.code === "delivery_reconciliation_pending" && event.botId === bot.id,
+        (event) =>
+          event.type === "error" && event.code === "delivery_reconciliation_pending" && event.agentId === agent.id,
       ),
     ).toHaveLength(2);
-    const transitions = (await service.readConversation(bot.id)).messages.flatMap(
+    const transitions = (await service.readConversation(agent.id)).messages.flatMap(
       (message) => routineRunConversationEvent(message) ?? [],
     );
     expect(transitions.filter((event) => event.runId === run.id && event.status === "needs-attention")).toHaveLength(1);
@@ -208,26 +209,26 @@ describe.sequential("AgentService: routines", () => {
     const emitted: AgentEvent[] = [];
     service.on("event", (event: AgentEvent) => emitted.push(event));
     await service.initialize();
-    const bot = await store.getOrCreate("chief");
+    const agent = await store.getOrCreate("chief");
     const routine = service.createRoutine({
-      botId: bot.id,
+      agentId: agent.id,
       name: "Retry terminal marker",
       instruction: "Continue queued work after terminal marker persistence retries.",
       active: true,
       timezone: "UTC",
       schedule: { kind: "daily", time: "09:00" },
     });
-    const firstRun = await service.testRoutine({ botId: bot.id, routineId: routine.id });
-    await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    const firstRun = await service.testRoutine({ agentId: agent.id, routineId: routine.id });
+    await service.testRoutine({ agentId: agent.id, routineId: routine.id });
     await waitFor(() => {
-      const deliveries = service?.listQueue(bot.id).deliveries ?? [];
+      const deliveries = service?.listQueue(agent.id).deliveries ?? [];
       return (
         deliveries.some((delivery) => delivery.status === "running") &&
         deliveries.some((delivery) => delivery.status === "queued")
       );
     });
-    const firstDelivery = service.listQueue(bot.id).deliveries.find((delivery) => delivery.status === "running");
-    const threadId = store.activeProviderSession(bot.id)?.externalSessionId;
+    const firstDelivery = service.listQueue(agent.id).deliveries.find((delivery) => delivery.status === "running");
+    const threadId = store.activeProviderSession(agent.id)?.externalSessionId;
     if (!firstDelivery?.turnId || !client || !threadId) throw new Error("The first routine turn did not start.");
     const appendConversationMessage = store.database.appendConversationMessage.bind(store.database);
     let rejectTerminalMarker = true;
@@ -249,23 +250,24 @@ describe.sequential("AgentService: routines", () => {
 
     await waitFor(() =>
       emitted.some(
-        (event) => event.type === "turn-completed" && event.botId === bot.id && event.turnId === firstDelivery.turnId,
+        (event) =>
+          event.type === "turn-completed" && event.agentId === agent.id && event.turnId === firstDelivery.turnId,
       ),
     );
     await waitFor(() =>
       service
-        ?.listQueue(bot.id)
+        ?.listQueue(agent.id)
         .deliveries.some((delivery) => delivery.id !== firstDelivery.id && delivery.status === "running"),
     );
     expect(
       service
-        .listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        .listRoutineRuns({ agentId: agent.id, routineId: routine.id, limit: 10 })
         .find((run) => run.id === firstRun.id),
     ).toMatchObject({ status: "succeeded" });
     expect(emitted).toContainEqual(
-      expect.objectContaining({ type: "error", code: "delivery_reconciliation_pending", botId: bot.id }),
+      expect.objectContaining({ type: "error", code: "delivery_reconciliation_pending", agentId: agent.id }),
     );
-    const terminalMarkers = (await service.readConversation(bot.id)).messages.filter((message) => {
+    const terminalMarkers = (await service.readConversation(agent.id)).messages.filter((message) => {
       const event = routineRunConversationEvent(message);
       return event?.runId === firstRun.id && event.status === "succeeded";
     });
@@ -283,9 +285,9 @@ describe.sequential("AgentService: routines", () => {
       (provider) => new FakeAgentClient(provider),
     );
     await service.initialize();
-    const bot = await store.getOrCreate("chief");
+    const agent = await store.getOrCreate("chief");
     const routine = service.createRoutine({
-      botId: bot.id,
+      agentId: agent.id,
       name: "Queue health",
       instruction: "Check the current queue health.",
       active: true,
@@ -293,19 +295,19 @@ describe.sequential("AgentService: routines", () => {
       schedule: { kind: "daily", time: "09:00" },
     });
 
-    await service.testRoutine({ botId: bot.id, routineId: routine.id });
-    await waitFor(() => service?.listQueue(bot.id).deliveries[0]?.status === "completed");
+    await service.testRoutine({ agentId: agent.id, routineId: routine.id });
+    await waitFor(() => service?.listQueue(agent.id).deliveries[0]?.status === "completed");
 
-    const turnId = service.listQueue(bot.id).deliveries[0]?.turnId;
+    const turnId = service.listQueue(agent.id).deliveries[0]?.turnId;
     if (!turnId) throw new Error("The completed routine turn did not start.");
     expect(
       store.database.connection
         .prepare("SELECT status, completed_at FROM projection_turns WHERE turn_id = ?")
         .get(turnId),
     ).toMatchObject({ status: "completed", completed_at: expect.any(String) });
-    expect((await service.readConversation(bot.id)).activeTurnId).toBeNull();
+    expect((await service.readConversation(agent.id)).activeTurnId).toBeNull();
     expect(
-      (await service.readConversation(bot.id)).messages.flatMap(
+      (await service.readConversation(agent.id)).messages.flatMap(
         (message) => routineRunConversationEvent(message)?.status ?? [],
       ),
     ).toContain("succeeded");
@@ -320,7 +322,7 @@ describe.sequential("AgentService: routines", () => {
       return client;
     });
     await service.initialize();
-    const receipt = await service.sendMessage({ botId: "chief", text: "The launch is approved." });
+    const receipt = await service.sendMessage({ agentId: "chief", text: "The launch is approved." });
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
 
     const client = clients.get("codex");
@@ -329,7 +331,7 @@ describe.sequential("AgentService: routines", () => {
     const messageId = receipt.deliveries[0]?.id;
     if (!client || !threadId || !turnId || !messageId) throw new Error("The reaction test turn did not start.");
 
-    await service.setMessageReaction({ botId: "chief", messageId, emoji: "❤️" });
+    await service.setMessageReaction({ agentId: "chief", messageId, emoji: "❤️" });
     const first = await callOpenBotTool(client, threadId, "react_to_user_message", { emoji: "🎉" }, turnId);
     expect(openBotToolPayload(first.result)).toMatchObject({ status: "reacted", messageId, emoji: "🎉" });
     const second = await callOpenBotTool(client, threadId, "react_to_user_message", { emoji: "👨‍👩‍👧‍👦" }, turnId);
@@ -340,7 +342,7 @@ describe.sequential("AgentService: routines", () => {
       reaction: "❤️",
       reactions: [
         { emoji: "❤️", actor: { kind: "user" } },
-        { emoji: "👨‍👩‍👧‍👦", actor: { kind: "bot", botId: "chief" } },
+        { emoji: "👨‍👩‍👧‍👦", actor: { kind: "agent", agentId: "chief" } },
       ],
     });
     await expectOpenBotToolError(
@@ -361,8 +363,8 @@ describe.sequential("AgentService: routines", () => {
     await store.getOrCreate("chief");
     await store.getOrCreate("research");
     await mailbox.enqueue({
-      sender: { kind: "bot", botId: "research" },
-      recipientBotIds: ["chief"],
+      sender: { kind: "agent", agentId: "research" },
+      recipientAgentIds: ["chief"],
       text: "Teammate update.",
     });
     service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", (provider) => {
@@ -399,7 +401,7 @@ describe.sequential("AgentService: routines", () => {
     const screenshotPath = join(store.sharedRoot, "desktop-screenshot.png");
     const screenshot = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3, 4]);
     await writeFile(screenshotPath, screenshot);
-    await service.sendMessage({ botId: "chief", text: "Send me a screenshot." });
+    await service.sendMessage({ agentId: "chief", text: "Send me a screenshot." });
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
 
     const client = clients.get("codex");
@@ -526,7 +528,7 @@ describe.sequential("AgentService: routines", () => {
     await service.initialize();
     const screenshotPath = join(store.sharedRoot, "concurrent-screenshot.png");
     await writeFile(screenshotPath, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-    await service.sendMessage({ botId: "chief", text: "Send the screenshot once." });
+    await service.sendMessage({ agentId: "chief", text: "Send the screenshot once." });
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
 
     const client = clients.get("codex");
@@ -597,7 +599,7 @@ describe.sequential("AgentService: routines", () => {
     await service.initialize();
     const screenshotPath = join(store.sharedRoot, "retry-screenshot.png");
     await writeFile(screenshotPath, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-    await service.sendMessage({ botId: "chief", text: "Send the screenshot safely." });
+    await service.sendMessage({ agentId: "chief", text: "Send the screenshot safely." });
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
 
     const client = clients.get("codex");
@@ -650,7 +652,7 @@ describe.sequential("AgentService: routines", () => {
       {
         tool: "send_message",
         arguments: {
-          recipientBotIds: ["design"],
+          recipientAgentIds: ["design"],
           text: "Please review the interface proposal.",
         },
       },
@@ -659,16 +661,16 @@ describe.sequential("AgentService: routines", () => {
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
     await store.getOrCreate("design", "Design Studio", "Product design");
-    await store.updateBot({
-      botId: "design",
+    await store.updateAgent({
+      agentId: "design",
       description: "Owns product interface and visual design.",
     });
     await store.getOrCreate("research", "Research", "Research partner");
-    await service.sendMessage({ botId: "chief", text: "Ask the design bot." });
+    await service.sendMessage({ agentId: "chief", text: "Ask the design agent." });
 
     await waitFor(() => service?.listQueue("design").deliveries.length === 1);
     expect(service.listQueue("research").deliveries).toHaveLength(0);
-    expect(service.listQueue("design").deliveries[0]?.sender).toEqual({ kind: "bot", botId: "chief" });
+    expect(service.listQueue("design").deliveries[0]?.sender).toEqual({ kind: "agent", agentId: "chief" });
   });
 
   it("reliably relays a completed teammate result back through a reply chain without loops", async () => {
@@ -681,19 +683,19 @@ describe.sequential("AgentService: routines", () => {
     await store.getOrCreate("sales-outbound");
 
     const rootMessage = await mailbox.enqueue({
-      sender: { kind: "bot", botId: "chief" },
-      recipientBotIds: ["sales-outbound"],
+      sender: { kind: "agent", agentId: "chief" },
+      recipientAgentIds: ["sales-outbound"],
       text: "Check the weather.",
     });
     const clarification = await mailbox.enqueue({
-      sender: { kind: "bot", botId: "sales-outbound" },
-      recipientBotIds: ["chief"],
+      sender: { kind: "agent", agentId: "sales-outbound" },
+      recipientAgentIds: ["chief"],
       text: "Which city?",
       replyToMessageId: rootMessage.messageId,
     });
     const location = await mailbox.enqueue({
-      sender: { kind: "bot", botId: "chief" },
-      recipientBotIds: ["sales-outbound"],
+      sender: { kind: "agent", agentId: "chief" },
+      recipientAgentIds: ["sales-outbound"],
       text: "Kraków.",
       replyToMessageId: clarification.messageId,
     });
@@ -704,8 +706,8 @@ describe.sequential("AgentService: routines", () => {
         ?.listQueue("chief")
         .deliveries.some(
           (delivery) =>
-            delivery.sender.kind === "bot" &&
-            delivery.sender.botId === "sales-outbound" &&
+            delivery.sender.kind === "agent" &&
+            delivery.sender.agentId === "sales-outbound" &&
             delivery.replyToMessageId === location.messageId,
         ),
     );
@@ -717,7 +719,7 @@ describe.sequential("AgentService: routines", () => {
       messages: expect.arrayContaining([
         expect.objectContaining({
           author: "agent",
-          senderBotId: "sales-outbound",
+          senderAgentId: "sales-outbound",
           text: "AUTO_WEATHER_RESULT",
           replyToMessageId: location.messageId,
         }),
@@ -731,13 +733,13 @@ describe.sequential("AgentService: routines", () => {
     const { store, mailbox } = stores(root);
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
-    await service.sendMessage({ botId: "chief", text: "First turn" });
+    await service.sendMessage({ agentId: "chief", text: "First turn" });
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
     const firstTurnId = service.listQueue("chief").deliveries[0]?.turnId;
     if (!firstTurnId) throw new Error("First turn did not start.");
     await service.interrupt("chief", firstTurnId);
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "interrupted");
-    await service.sendMessage({ botId: "chief", text: "New live turn" });
+    await service.sendMessage({ agentId: "chief", text: "New live turn" });
     await waitFor(() => service?.listQueue("chief").deliveries[1]?.status === "running");
 
     const snapshot = await service.readConversation("chief");
@@ -757,7 +759,7 @@ describe.sequential("AgentService: routines", () => {
     service.on("event", (event) => events.push(event));
     await service.initialize();
 
-    await service.sendMessage({ botId: "chief", text: "Run exactly once" });
+    await service.sendMessage({ agentId: "chief", text: "Run exactly once" });
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "completed");
     await waitFor(() => events.some((event) => event.type === "error" && event.code === "delivery_start_unconfirmed"));
 
@@ -776,14 +778,14 @@ describe.sequential("AgentService: routines", () => {
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
 
-    await service.sendMessage({ botId: "chief", text: "Run exactly once" });
+    await service.sendMessage({ agentId: "chief", text: "Run exactly once" });
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "completed");
     const deliveryId = service.listQueue("chief").deliveries[0]?.id;
 
     // The fake answers `turn/start` on a delay, so a second completed turn is the
     // barrier proving the first turn's late start response was already written and
     // processed: both responses travel the same pipe, in order.
-    await service.sendMessage({ botId: "chief", text: "Run once more" });
+    await service.sendMessage({ agentId: "chief", text: "Run once more" });
     await waitFor(
       () => service?.listQueue("chief").deliveries.filter((entry) => entry.status === "completed").length === 2,
     );

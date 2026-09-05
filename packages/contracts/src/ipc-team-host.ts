@@ -107,7 +107,7 @@ export interface TeamMemberSummary {
 
 export interface TeamPresenceMember extends TeamMemberSummary {
   online: boolean;
-  typingBotId: string | null;
+  typingAgentId: string | null;
 }
 
 export interface TeamPresenceSnapshot {
@@ -117,7 +117,7 @@ export interface TeamPresenceSnapshot {
 }
 
 export interface SetTeamTypingInput {
-  botId: string | null;
+  agentId: string | null;
   typing: boolean;
 }
 
@@ -273,7 +273,7 @@ function isTeamPresenceMember(value: unknown): value is TeamPresenceMember {
     isTimestamp(value.createdAt) &&
     isBoolean(value.disabled) &&
     isBoolean(value.online) &&
-    (value.typingBotId === null || isIdentifier(value.typingBotId))
+    (value.typingAgentId === null || isIdentifier(value.typingAgentId))
   );
 }
 

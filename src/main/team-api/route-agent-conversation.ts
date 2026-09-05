@@ -36,18 +36,18 @@ export interface AgentConversationRouteDependencies {
 
 export async function routeAgentConversation(
   context: TeamApiRequestContext,
-  { botId, action }: AgentRouteTarget,
+  { agentId, action }: AgentRouteTarget,
   { agents }: AgentConversationRouteDependencies,
 ): Promise<RouteOutcome> {
   const { method, url, request, member, protocol, capabilities, json, empty } = context;
 
   if (method === "GET" && action === "conversation") {
-    const conversation = await agents.readConversationFor(botId, member.id);
+    const conversation = await agents.readConversationFor(agentId, member.id);
     return json(200, conversationForCapabilities(conversation, capabilities));
   }
   if (method === "GET" && action === "conversation-page") {
     const page = await agents.readConversationPageFor(
-      botId,
+      agentId,
       member.id,
       pageAnchor(url),
       pageLimit(url),
@@ -63,14 +63,14 @@ export async function routeAgentConversation(
       throw new HttpError(400, "This client does not support marking conversations unread.");
     }
     await readJson(request);
-    return json(200, await agents.markConversationUnread(botId, member.id));
+    return json(200, await agents.markConversationUnread(agentId, member.id));
   }
   if (method === "POST" && action === "conversation/read") {
     const body = await readJson(request);
     return json(
       200,
       await agents.markConversationRead(
-        botId,
+        agentId,
         member.id,
         nullableString(body, "throughMessageId"),
         markerExclusionsForCapabilities(capabilities),
@@ -82,7 +82,7 @@ export async function routeAgentConversation(
     return json(
       202,
       await agents.sendMessage({
-        botId,
+        agentId,
         text: stringField(body, "text", true, INPUT_LIMITS.messageText),
         attachmentDraftIds: stringArray(body, "attachmentDraftIds"),
         replyToMessageId: nullableString(body, "replyToMessageId"),
@@ -95,7 +95,7 @@ export async function routeAgentConversation(
     const emoji = body.emoji;
     if (emoji !== null && !isMessageReaction(emoji)) throw new HttpError(400, "Invalid emoji.");
     await agents.setMessageReaction({
-      botId,
+      agentId,
       messageId: stringField(body, "messageId"),
       emoji,
     });

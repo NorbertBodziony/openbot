@@ -42,15 +42,15 @@ export class ConversationQueries {
     this.#core = options.core;
   }
 
-  readConversation(botId: string, threadId: string | null): ConversationSnapshot {
-    if (!threadId) return { botId, threadId: null, activeTurnId: null, revision: 0, messages: [] };
+  readConversation(agentId: string, threadId: string | null): ConversationSnapshot {
+    if (!threadId) return { agentId, threadId: null, activeTurnId: null, revision: 0, messages: [] };
     const thread = decodeConversationThreadRow(
       this.#core.connection
         .prepare(
           `SELECT active_turn_id, last_event_sequence
            FROM projection_threads WHERE thread_id = ? AND agent_id = ?`,
         )
-        .get(threadId, botId),
+        .get(threadId, agentId),
     );
     const rows = databaseRows(
       this.#core.connection
@@ -61,7 +61,7 @@ export class ConversationQueries {
         .all(threadId),
     );
     return {
-      botId,
+      agentId,
       threadId,
       activeTurnId: thread?.active_turn_id ?? null,
       revision: thread?.last_event_sequence ?? 0,
@@ -70,7 +70,7 @@ export class ConversationQueries {
   }
 
   readConversationRuntime(
-    botId: string,
+    agentId: string,
     threadId: string | null,
   ): { activeTurnId: string | null; latestMessage: ConversationMessage | null } {
     if (!threadId) return { activeTurnId: null, latestMessage: null };
@@ -90,7 +90,7 @@ export class ConversationQueries {
            FROM projection_threads thread
            WHERE thread.thread_id = ? AND thread.agent_id = ?`,
         )
-        .get(threadId, botId),
+        .get(threadId, agentId),
     );
     if (!row) return { activeTurnId: null, latestMessage: null };
     const latestMessage = optionalStringColumn(row, "latest_message_json");
@@ -101,7 +101,7 @@ export class ConversationQueries {
   }
 
   readConversationPage(
-    botId: string,
+    agentId: string,
     threadId: string | null,
     anchor: ConversationPageAnchor = { type: "latest" },
     requestedLimit = 50,
@@ -113,7 +113,7 @@ export class ConversationQueries {
   ): ConversationPage {
     if (!threadId) {
       return {
-        botId,
+        agentId,
         threadId: null,
         activeTurnId: null,
         revision: 0,
@@ -129,7 +129,7 @@ export class ConversationQueries {
           `SELECT active_turn_id, last_event_sequence
            FROM projection_threads WHERE thread_id = ? AND agent_id = ?`,
         )
-        .get(threadId, botId),
+        .get(threadId, agentId),
     );
     const rows = this.#conversationPageRows(
       threadId,
@@ -180,7 +180,7 @@ export class ConversationQueries {
         )
       : false;
     return {
-      botId,
+      agentId,
       threadId,
       activeTurnId: thread?.active_turn_id ?? null,
       revision: thread?.last_event_sequence ?? 0,
@@ -236,7 +236,7 @@ export class ConversationQueries {
 
   searchConversationMessages(
     query: string,
-    botId?: string,
+    agentId?: string,
     cursor?: string,
     requestedLimit = 100,
   ): ConversationSearchPage {
@@ -245,8 +245,8 @@ export class ConversationQueries {
     const limit = pageLimit(requestedLimit);
     const offset = cursor ? decodeSearchCursor(cursor) : 0;
     const pattern = `%${escapeLike(normalized)}%`;
-    const filter = botId ? "AND thread.agent_id = ?" : "";
-    const parameters = botId ? [pattern, botId] : [pattern];
+    const filter = agentId ? "AND thread.agent_id = ?" : "";
+    const parameters = agentId ? [pattern, agentId] : [pattern];
     const countRow = databaseRow(
       this.#core.connection
         .prepare(
@@ -281,7 +281,7 @@ export class ConversationQueries {
         .all(...parameters, limit, offset),
     );
     const results = rows.map((row) => ({
-      botId: requiredStringColumn(row, "agent_id"),
+      agentId: requiredStringColumn(row, "agent_id"),
       message: decodeConversationMessageJson(requiredStringColumn(row, "message_json")),
     }));
     const nextOffset = offset + results.length;

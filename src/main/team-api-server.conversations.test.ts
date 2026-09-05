@@ -3,7 +3,7 @@
 // What a remote client reads back from one agent service: the agent list, the conversation and
 // its capability-filtered shape. `src/main/team-api/route-agent-conversation.ts`.
 
-import type { AccountUsage, BotSummary, ConversationWithReadState, CreateBotInput } from "@openbot/contracts/ipc";
+import type { AccountUsage, AgentSummary, ConversationWithReadState, CreateAgentInput } from "@openbot/contracts/ipc";
 import {
   hostedSiteConversationEventItemType,
   hostedSiteConversationEventText,
@@ -32,7 +32,7 @@ afterEach(stopTeamApiFixtures);
 describe("TeamApiServer conversations", () => {
   it("publishes agents and conversations from the same local agent service", async () => {
     const { root, store, start, signIn } = await createTeamApiFixture("local-instance", { configure: true });
-    const localBots: BotSummary[] = [
+    const localAgents: AgentSummary[] = [
       {
         id: "chief",
         provider: "codex",
@@ -52,7 +52,7 @@ describe("TeamApiServer conversations", () => {
       },
     ];
     const localConversation: ConversationWithReadState = {
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-chief",
       activeTurnId: null,
       revision: 1,
@@ -98,9 +98,9 @@ describe("TeamApiServer conversations", () => {
         },
       ],
     };
-    const createBot = vi.fn(
-      async (input: CreateBotInput): Promise<BotSummary> => ({
-        ...localBots[0],
+    const createAgent = vi.fn(
+      async (input: CreateAgentInput): Promise<AgentSummary> => ({
+        ...localAgents[0],
         id: "trip-planner",
         name: input.name,
         title: "",
@@ -116,6 +116,14 @@ describe("TeamApiServer conversations", () => {
         ...localConversation.messages.slice(1),
       ],
     };
+    /**
+     * Everything the fake agent service hands the host is current-shaped, so it says `agentId`. Everything
+     * an assertion below reads back came off `fetch` or the socket as frozen Team API wire JSON, which
+     * still says `botId`. Both vocabularies in one file is the shim doing its job, not a missed rename.
+     */
+    const { agentId: localAgentId, ...localConversationRest } = localConversation;
+    const wireConversation = { ...localConversationRest, botId: localAgentId };
+    const wireLegacyConversation = { ...wireConversation, messages: legacyConversation.messages };
     const sendMessage = vi.fn<TeamApiAgents["sendMessage"]>(async () => ({
       messageId: "message-tagged",
       deliveries: [],
@@ -157,25 +165,25 @@ describe("TeamApiServer conversations", () => {
         throughMessageId: options.excludeHostedSiteEvents ? "message-1" : "hosted-site-event-1",
       },
     }));
-    const markConversationUnread = vi.fn(async (_botId: string, _memberId: string) => ({
+    const markConversationUnread = vi.fn(async (_agentId: string, _memberId: string) => ({
       unreadCount: 1,
       firstUnreadMessageId: "message-1",
       throughMessageId: null,
     }));
     const agents = createAgents({
-      listBots: () => localBots,
+      listAgents: () => localAgents,
       getUsage,
-      createBot,
+      createAgent,
       listConversationReads,
       markConversationUnread,
-      readConversationFor: async (botId: string, _memberId: string) => ({
+      readConversationFor: async (agentId: string, _memberId: string) => ({
         ...localConversation,
-        botId,
+        agentId,
         readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "hosted-site-event-1" },
       }),
       readConversationPageFor,
       markConversationRead: async (
-        _botId: string,
+        _agentId: string,
         _memberId: string,
         throughMessageId: string | null,
         options: { excludeHostedSiteEvents?: boolean } = {},
@@ -189,7 +197,7 @@ describe("TeamApiServer conversations", () => {
     const { base } = await start({ agents });
 
     const token = await signIn();
-    const createInput: CreateBotInput = {
+    const createInput: CreateAgentInput = {
       name: "Trip Planner",
       description: "Builds practical itineraries.",
       avatarSeed: "setup:trip",
@@ -202,8 +210,8 @@ describe("TeamApiServer conversations", () => {
       description: "Builds practical itineraries.",
       title: "",
     });
-    expect(createBot).toHaveBeenCalledWith(createInput);
-    await expect(jsonRequest(base, "/v1/agents", { token: token })).resolves.toEqual(localBots);
+    expect(createAgent).toHaveBeenCalledWith(createInput);
+    await expect(jsonRequest(base, "/v1/agents", { token: token })).resolves.toEqual(localAgents);
     await expect(
       jsonRequest(base, "/v1/agents/chief/usage", {
         token: token,
@@ -213,8 +221,8 @@ describe("TeamApiServer conversations", () => {
     ).resolves.toEqual(usage);
     expect(getUsage).toHaveBeenCalledWith("chief");
     await expect(jsonRequest(base, "/v1/agents/chief/conversation", { token: token })).resolves.toEqual({
-      ...legacyConversation,
-      messages: [legacyConversation.messages[0]],
+      ...wireLegacyConversation,
+      messages: [wireLegacyConversation.messages[0]],
       readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "message-1" },
     });
     await expect(
@@ -223,7 +231,7 @@ describe("TeamApiServer conversations", () => {
         capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
       }),
     ).resolves.toEqual({
-      ...legacyConversation,
+      ...wireLegacyConversation,
       readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "hosted-site-event-1" },
     });
     await expect(
@@ -232,7 +240,7 @@ describe("TeamApiServer conversations", () => {
         capabilities: [...TEAM_CURRENT_CAPABILITIES],
       }),
     ).resolves.toEqual({
-      ...localConversation,
+      ...wireConversation,
       readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "hosted-site-event-1" },
     });
     await expect(
@@ -251,7 +259,7 @@ describe("TeamApiServer conversations", () => {
         token: token,
         capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
       }),
-    ).resolves.toMatchObject({ messages: legacyConversation.messages });
+    ).resolves.toMatchObject({ messages: wireLegacyConversation.messages });
     expect(readConversationPageFor.mock.calls.at(-1)?.[4]).toEqual({
       excludeRoutineEvents: false,
       excludeRoutineRunEvents: false,
@@ -300,7 +308,7 @@ describe("TeamApiServer conversations", () => {
       },
     });
     expect(sendMessage).toHaveBeenCalledWith({
-      botId: "chief",
+      agentId: "chief",
       text: taggedMessage,
       attachmentDraftIds: [],
       replyToMessageId: null,

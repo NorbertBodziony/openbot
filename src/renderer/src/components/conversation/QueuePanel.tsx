@@ -1,7 +1,7 @@
 import { expandChatTagReferences } from "@openbot/contracts/chat-tag-references";
 import type { InstalledSkill, QueueDelivery } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, createUniqueId, For, onCleanup, Show, untrack } from "solid-js";
-import type { BotProfile } from "../../data";
+import type { AgentProfile } from "../../data";
 import { createVerticalDragPreview } from "../createVerticalDragPreview";
 import { Button } from "../ui";
 import { AnchoredTooltip } from "./AnchoredTooltip";
@@ -11,7 +11,7 @@ import { createSmoothHeightResize } from "./createSmoothHeightResize";
 
 interface QueuePanelProps {
   deliveries: QueueDelivery[];
-  bots?: BotProfile[];
+  agents?: AgentProfile[];
   skills?: InstalledSkill[];
   editingDeliveryId?: string | null;
   canSteer: boolean;
@@ -341,10 +341,10 @@ export function QueuePanel(props: QueuePanelProps) {
   }
 
   function messagePreview(delivery: QueueDelivery): string {
-    const botNames = new Map((props.bots ?? []).map((bot) => [bot.id, bot.name]));
+    const agentNames = new Map((props.agents ?? []).map((agent) => [agent.id, agent.name]));
     const skillNames = new Map((props.skills ?? []).map((skill) => [skill.skillId, skill.name]));
     const text = expandChatTagReferences(delivery.text.trim(), (reference) =>
-      reference.kind === "agent" ? botNames.get(reference.id) : skillNames.get(reference.id),
+      reference.kind === "agent" ? agentNames.get(reference.id) : skillNames.get(reference.id),
     );
     return text || delivery.attachments.map((attachment) => attachment.name).join(", ") || "Attachment";
   }

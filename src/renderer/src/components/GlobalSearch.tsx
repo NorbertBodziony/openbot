@@ -1,20 +1,22 @@
 import { expandChatTagReferences } from "@openbot/contracts/chat-tag-references";
 import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
-import type { BotMessage, BotProfile } from "../data";
+import type { AgentMessage, AgentProfile } from "../data";
 import { AgentAvatar } from "./AgentAvatar";
 import { Combobox, Dialog, Input, Kbd, Search, Tabs } from "./ui";
 
-type SearchTab = "all" | "messages" | "bots";
+type SearchTab = "all" | "messages" | "agents";
 
-type GlobalSearchResult = { kind: "bot"; bot: BotProfile } | { kind: "message"; bot: BotProfile; message: BotMessage };
+type GlobalSearchResult =
+  | { kind: "agent"; agent: AgentProfile }
+  | { kind: "message"; agent: AgentProfile; message: AgentMessage };
 
 interface GlobalSearchProps {
   open: boolean;
-  bots: BotProfile[];
-  onSearchMessages?: (query: string) => Promise<Array<{ botId: string; message: BotMessage }>>;
+  agents: AgentProfile[];
+  onSearchMessages?: (query: string) => Promise<Array<{ agentId: string; message: AgentMessage }>>;
   onOpenChange: (open: boolean) => void;
-  onSelectBot: (botId: string) => void;
-  onSelectMessage: (botId: string, messageId: string) => void;
+  onSelectAgent: (agentId: string) => void;
+  onSelectMessage: (agentId: string, messageId: string) => void;
 }
 
 const SEARCH_RESULT_LIMIT = 100;
@@ -24,33 +26,33 @@ function normalized(value: string): string {
 }
 
 function isSearchTab(value: string): value is SearchTab {
-  return value === "all" || value === "messages" || value === "bots";
+  return value === "all" || value === "messages" || value === "agents";
 }
 
-function messagePreview(message: BotMessage): string {
+function messagePreview(message: AgentMessage): string {
   return expandChatTagReferences(message.body).trim().replace(/\s+/g, " ");
 }
 
 function resultKey(result: GlobalSearchResult): string {
-  return result.kind === "bot" ? `bot:${result.bot.id}` : `message:${result.bot.id}:${result.message.id}`;
+  return result.kind === "agent" ? `agent:${result.agent.id}` : `message:${result.agent.id}:${result.message.id}`;
 }
 
 function resultLabel(result: GlobalSearchResult): string {
-  return result.kind === "bot" ? result.bot.name : messagePreview(result.message);
+  return result.kind === "agent" ? result.agent.name : messagePreview(result.message);
 }
 
 function resultSearchText(result: GlobalSearchResult): string {
-  if (result.kind === "bot") {
-    return normalized(`${result.bot.name} ${result.bot.title} ${result.bot.description} ${result.bot.preview}`);
+  if (result.kind === "agent") {
+    return normalized(`${result.agent.name} ${result.agent.title} ${result.agent.description} ${result.agent.preview}`);
   }
   return normalized(
-    `${messagePreview(result.message)} ${result.bot.name} ${result.bot.title} ${result.bot.description}`,
+    `${messagePreview(result.message)} ${result.agent.name} ${result.agent.title} ${result.agent.description}`,
   );
 }
 
 function resultDescription(result: GlobalSearchResult): string {
-  if (result.kind === "bot") return result.bot.title || result.bot.preview;
-  const direction = result.message.author === "you" ? `You to ${result.bot.name}` : `${result.bot.name} to you`;
+  if (result.kind === "agent") return result.agent.title || result.agent.preview;
+  const direction = result.message.author === "you" ? `You to ${result.agent.name}` : `${result.agent.name} to you`;
   return `${direction} · ${result.message.time}`;
 }
 
@@ -62,18 +64,18 @@ export function GlobalSearch(props: GlobalSearchProps) {
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
   let searchRequest = 0;
 
-  const botResults = createMemo<GlobalSearchResult[]>(() => props.bots.map((bot) => ({ kind: "bot", bot })));
+  const agentResults = createMemo<GlobalSearchResult[]>(() => props.agents.map((agent) => ({ kind: "agent", agent })));
   const results = createMemo(() => {
     const value = normalized(query());
     const category = tab();
     const candidates =
-      category === "bots"
-        ? botResults()
+      category === "agents"
+        ? agentResults()
         : category === "messages"
           ? messageResults()
           : value
-            ? [...botResults(), ...messageResults()]
-            : botResults();
+            ? [...agentResults(), ...messageResults()]
+            : agentResults();
     if (!value) return candidates.slice(0, SEARCH_RESULT_LIMIT);
     return candidates.filter((result) => resultSearchText(result).includes(value)).slice(0, SEARCH_RESULT_LIMIT);
   });
@@ -94,7 +96,7 @@ export function GlobalSearch(props: GlobalSearchProps) {
       if (searchTimer) clearTimeout(searchTimer);
       const request = ++searchRequest;
       const value = normalized(query);
-      if (!open || !value || tab === "bots") {
+      if (!open || !value || tab === "agents") {
         setMessageResults([]);
         return;
       }
@@ -105,10 +107,10 @@ export function GlobalSearch(props: GlobalSearchProps) {
           .then((items) => {
             if (request !== searchRequest) return;
             setMessageResults(
-              items.flatMap(({ botId, message }) => {
-                const bot = props.bots.find((candidate) => candidate.id === botId);
-                return bot && message.kind !== "thinking" && messagePreview(message)
-                  ? [{ kind: "message" as const, bot, message }]
+              items.flatMap(({ agentId, message }) => {
+                const agent = props.agents.find((candidate) => candidate.id === agentId);
+                return agent && message.kind !== "thinking" && messagePreview(message)
+                  ? [{ kind: "message" as const, agent, message }]
                   : [];
               }),
             );
@@ -127,8 +129,8 @@ export function GlobalSearch(props: GlobalSearchProps) {
   function activate(result: GlobalSearchResult | null | undefined): void {
     if (!result) return;
     props.onOpenChange(false);
-    if (result.kind === "bot") props.onSelectBot(result.bot.id);
-    else props.onSelectMessage(result.bot.id, result.message.id);
+    if (result.kind === "agent") props.onSelectAgent(result.agent.id);
+    else props.onSelectMessage(result.agent.id, result.message.id);
   }
 
   return (
@@ -157,7 +159,7 @@ export function GlobalSearch(props: GlobalSearchProps) {
               const index = () => results().findIndex((candidate) => resultKey(candidate) === resultKey(result));
               return (
                 <Combobox.Item item={itemProps.item} class="global-search-result">
-                  <AgentAvatar bot={result.bot} motion="hover" class="global-search-avatar" />
+                  <AgentAvatar agent={result.agent} motion="hover" class="global-search-avatar" />
                   <span class="global-search-result-copy">
                     <Combobox.ItemLabel>
                       <span class="global-search-result-title">{resultLabel(result)}</span>
@@ -167,7 +169,7 @@ export function GlobalSearch(props: GlobalSearchProps) {
                   <span class="global-search-result-shortcut" aria-hidden="true">
                     <Show
                       when={index() >= 0 && index() < 9}
-                      fallback={<span>{result.kind === "bot" ? "Bot" : "Message"}</span>}
+                      fallback={<span>{result.kind === "agent" ? "Agent" : "Message"}</span>}
                     >
                       <Kbd>⌘</Kbd>
                       <Kbd>{index() + 1}</Kbd>
@@ -217,14 +219,14 @@ export function GlobalSearch(props: GlobalSearchProps) {
               <Tabs.List aria-label="Filter results">
                 <Tabs.Trigger value="all">All</Tabs.Trigger>
                 <Tabs.Trigger value="messages">Messages</Tabs.Trigger>
-                <Tabs.Trigger value="bots">Bots</Tabs.Trigger>
+                <Tabs.Trigger value="agents">Agents</Tabs.Trigger>
               </Tabs.List>
             </Tabs.Root>
 
             <Combobox.Content class="global-search-results">
               <Combobox.Listbox aria-label="Results" />
               <Show when={results().length === 0}>
-                <div class="global-search-empty">No matching messages or bots</div>
+                <div class="global-search-empty">No matching messages or agents</div>
               </Show>
             </Combobox.Content>
           </Combobox.Root>

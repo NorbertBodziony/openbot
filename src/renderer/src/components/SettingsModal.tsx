@@ -110,7 +110,7 @@ const tabDetails: Record<SettingsTab, { title: string; description: string }> = 
   profile: { title: "Profile", description: "Manage how you appear in OpenBot." },
   "mobile-connect": { title: "Mobile Connect", description: "Sign in securely on your phone." },
   updates: { title: "Updates", description: "Keep OpenBot current on this computer." },
-  "hosted-sites": { title: "Hosted sites", description: "View and manage static sites published by your bots." },
+  "hosted-sites": { title: "Hosted sites", description: "View and manage static sites published by your agents." },
 };
 
 interface ProfileNameEdit {
@@ -941,7 +941,7 @@ export function SettingsModal(props: SettingsModalProps) {
                   checked={props.value.macBookNotch}
                   onChange={(checked) => updateSetting("macBookNotch", checked)}
                   label="Show status in the MacBook notch"
-                  description="Show bot activity and items that need attention at the top of each display."
+                  description="Show agent activity and items that need attention at the top of each display."
                 />
                 <SwitchField
                   checked={props.value.macBookNotchIdle}
@@ -1414,13 +1414,13 @@ export function SettingsModal(props: SettingsModalProps) {
               <div class="hosted-sites-overview">
                 <span class="settings-modal-row-title">{panels.hosting.sites.length} of 10 sites</span>
                 <Text tone="muted" variant="caption">
-                  Sites expire 30 days after publication. Ask a bot to publish or update a site.
+                  Sites expire 30 days after publication. Ask an agent to publish or update a site.
                 </Text>
               </div>
               <Show when={panels.hosting.error}>{(message) => <p class="settings-modal-error">{message()}</p>}</Show>
               <Show
                 when={panels.hosting.sites.length > 0}
-                fallback={<Text tone="muted">You do not have a hosted site yet. Ask a bot to publish one.</Text>}
+                fallback={<Text tone="muted">You do not have a hosted site yet. Ask an agent to publish one.</Text>}
               >
                 <ItemGroup class="settings-modal-card hosted-sites-list" surface="subtle">
                   <For each={panels.hosting.sites}>

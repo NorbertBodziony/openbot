@@ -1,8 +1,8 @@
 import { type Block, BloubBot, defaultCycle, makeBlock, POSES, type StateId } from "@norbert_bodziony/bloub";
-import type { BotAvatarHue } from "@openbot/contracts/ipc";
+import type { AvatarHue } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, onSettled, Show } from "solid-js";
 import { type AvatarMotion, bloubAvatarProfile, type SupportedAvatarSilhouetteId } from "../bloub-avatar";
-import type { BotProfile } from "../data";
+import type { AgentProfile } from "../data";
 
 const DEFAULT_CYCLE: Block[] = defaultCycle().blocks;
 // An avatar is 24 to 40 px of morphing blob, and every drawn frame costs a style
@@ -22,9 +22,9 @@ function slowerBlock(state: StateId): Block {
 }
 
 interface AgentAvatarProps {
-  bot?: Pick<BotProfile, "avatarSeed" | "avatarHue" | "avatarUrl">;
+  agent?: Pick<AgentProfile, "avatarSeed" | "avatarHue" | "avatarUrl">;
   seed?: string;
-  hue?: BotAvatarHue | null;
+  hue?: AvatarHue | null;
   url?: string | null;
   motion?: AvatarMotion;
   cycleOffset?: number;
@@ -36,10 +36,10 @@ interface AgentAvatarProps {
 }
 
 export function AgentAvatar(props: AgentAvatarProps) {
-  const seed = () => props.seed ?? props.bot?.avatarSeed ?? "agent";
-  const hue = () => (props.hue !== undefined ? props.hue : (props.bot?.avatarHue ?? null));
+  const seed = () => props.seed ?? props.agent?.avatarSeed ?? "agent";
+  const hue = () => (props.hue !== undefined ? props.hue : (props.agent?.avatarHue ?? null));
   const motion = () => props.motion ?? "hover";
-  const url = () => (props.url !== undefined ? props.url : (props.bot?.avatarUrl ?? null));
+  const url = () => (props.url !== undefined ? props.url : (props.agent?.avatarUrl ?? null));
   const [imageFailed, setImageFailed] = createSignal(false);
   createEffect(
     () => url(),
@@ -47,7 +47,7 @@ export function AgentAvatar(props: AgentAvatarProps) {
       setImageFailed(false);
     },
   );
-  const className = () => `bot-avatar bot-avatar-motion-${motion()} ${props.class ?? ""}`;
+  const className = () => `agent-avatar agent-avatar-motion-${motion()} ${props.class ?? ""}`;
   return (
     <Show
       when={url() && !imageFailed()}
@@ -65,7 +65,7 @@ export function AgentAvatar(props: AgentAvatarProps) {
         />
       }
     >
-      <span class={`${className()} bot-avatar-custom`} style={props.style} aria-hidden="true">
+      <span class={`${className()} agent-avatar-custom`} style={props.style} aria-hidden="true">
         <img src={url() ?? ""} alt="" draggable={false} onError={() => setImageFailed(true)} />
       </span>
     </Show>
@@ -74,7 +74,7 @@ export function AgentAvatar(props: AgentAvatarProps) {
 
 function GeneratedAvatar(props: {
   seed: string;
-  hue: BotAvatarHue | null;
+  hue: AvatarHue | null;
   motion: AvatarMotion;
   cycleOffset?: number;
   animationOffset?: number;
@@ -145,7 +145,7 @@ function GeneratedAvatar(props: {
   return (
     <span
       ref={element}
-      class={`${props.class} bot-avatar-bloub`}
+      class={`${props.class} agent-avatar-bloub`}
       style={props.style}
       data-animation-state={props.animationState}
       aria-hidden="true"

@@ -5,15 +5,15 @@ import type {
   AgentProviderId,
   AgentReasoningEffort,
   AgentStatus,
+  AvatarHue,
   AvatarImageInput,
-  BotAvatarHue,
   ProviderRuntimeStatus,
-  UpdateBotInput,
+  UpdateAgentInput,
 } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, createStore, For, onSettled, Show } from "solid-js";
 import { normalizeAvatarFile } from "../../avatar-image";
 import { AVATAR_HUE_OPTIONS, avatarCandidateSeeds, avatarHueSwatch } from "../../bloub-avatar";
-import type { BotProfile } from "../../data";
+import type { AgentProfile } from "../../data";
 import { AgentAvatar } from "../AgentAvatar";
 import { PanelResizer, readPanelWidth, savePanelWidth } from "../PanelResizer";
 import { ProviderModelPicker } from "../ProviderModelPicker";
@@ -48,7 +48,7 @@ export interface AgentRuntimeSettings {
 export type AgentRuntimeSettingsPatch = AgentRuntimeSettings | Pick<AgentRuntimeSettings, "reasoningEffort">;
 
 interface AgentSettingsPanelProps {
-  bot: BotProfile;
+  agent: AgentProfile;
   runtimeSettings: AgentRuntimeSettings;
   agentStatus: AgentStatus;
   modelOptions: AgentModelOption[];
@@ -60,13 +60,13 @@ interface AgentSettingsPanelProps {
   maxWidth: () => number;
   onClose: () => void;
   onWidthChange: (width: number) => void;
-  onUpdateBot: (botId: string, updates: Omit<UpdateBotInput, "botId">) => Promise<void>;
+  onUpdateAgent: (agentId: string, updates: Omit<UpdateAgentInput, "agentId">) => Promise<void>;
   onUpdateRuntimeSettings: (
-    botId: string,
+    agentId: string,
     settings: AgentRuntimeSettings,
     updates: AgentRuntimeSettingsPatch,
   ) => Promise<boolean>;
-  onSetAgentAvatar: (botId: string, image: AvatarImageInput | null) => Promise<void>;
+  onSetAgentAvatar: (agentId: string, image: AvatarImageInput | null) => Promise<void>;
   routineSelectionRequest?: RoutineSelectionRequest | null;
   onRoutineSelectionRequestHandled?: (nonce: number) => void;
   onOpenRoutineRun?: (messageId: string) => void;
@@ -82,7 +82,7 @@ interface AgentTextFields {
 interface AvatarEditor {
   batch: number;
   candidateSeed: string;
-  hue: BotAvatarHue | null;
+  hue: AvatarHue | null;
   pickerOpen: boolean;
   seed: string;
   uploadBusy: boolean;
@@ -122,10 +122,10 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
     memories: { count: 0, open: false },
     notifications: true,
     routines: { count: 0, open: false },
-    runtime: { model: "gpt-5.6-luna", provider: props.bot.provider, reasoningEffort: "medium" },
+    runtime: { model: "gpt-5.6-luna", provider: props.agent.provider, reasoningEffort: "medium" },
     saveError: null,
   });
-  const avatarUrl = () => props.bot.avatarUrl ?? null;
+  const avatarUrl = () => props.agent.avatarUrl ?? null;
 
   /** The message under the form: every save path clears it first and reports its failure through it. */
   function setSaveError(message: string | null): void {
@@ -141,12 +141,12 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
   );
   const reasoningOptions = createMemo(() => selectedModel()?.supportedReasoningEfforts ?? ["medium" as const]);
   const avatarCandidates = createMemo(() =>
-    avatarCandidateSeeds(props.bot.id, draft.avatar.candidateSeed, draft.avatar.batch),
+    avatarCandidateSeeds(props.agent.id, draft.avatar.candidateSeed, draft.avatar.batch),
   );
   let avatarPickerRoot: HTMLDivElement | undefined;
   let avatarFileInput: HTMLInputElement | undefined;
   let lastSignature: string | undefined;
-  let lastBotId: string | undefined;
+  let lastAgentId: string | undefined;
 
   createEffect(
     () => panelWidth(),
@@ -157,63 +157,63 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
 
   createEffect(
     () => {
-      const bot = props.bot;
+      const agent = props.agent;
       const runtimeSettings = props.runtimeSettings;
       return {
-        bot,
+        agent,
         runtimeSettings,
         signature: [
-          bot.id,
-          bot.name,
-          bot.title,
-          bot.description,
-          String(bot.notifications),
+          agent.id,
+          agent.name,
+          agent.title,
+          agent.description,
+          String(agent.notifications),
           runtimeSettings.provider,
           runtimeSettings.model,
           runtimeSettings.reasoningEffort,
-          bot.avatarSeed,
-          String(bot.avatarHue),
+          agent.avatarSeed,
+          String(agent.avatarHue),
         ].join("\u0000"),
       };
     },
-    ({ bot, runtimeSettings, signature }) => {
+    ({ agent, runtimeSettings, signature }) => {
       if (signature === lastSignature) return;
-      const botChanged = bot.id !== lastBotId;
+      const agentChanged = agent.id !== lastAgentId;
       // A field the user has edited keeps its draft, unless this is a different agent, whose values
       // replace the panel wholesale. Read before the write, so a fresh agent clears the flags here.
       const keep = {
-        description: !botChanged && draft.dirty.description,
-        name: !botChanged && draft.dirty.name,
-        title: !botChanged && draft.dirty.title,
+        description: !agentChanged && draft.dirty.description,
+        name: !agentChanged && draft.dirty.name,
+        title: !agentChanged && draft.dirty.title,
       };
       lastSignature = signature;
-      lastBotId = bot.id;
+      lastAgentId = agent.id;
       setDraft((state) => {
-        if (botChanged) {
+        if (agentChanged) {
           state.dirty.description = false;
           state.dirty.name = false;
           state.dirty.title = false;
         }
-        if (!keep.name) state.fields.name = bot.name;
-        if (!keep.title) state.fields.title = bot.title;
-        if (!keep.description) state.fields.description = bot.description;
-        state.notifications = bot.notifications;
+        if (!keep.name) state.fields.name = agent.name;
+        if (!keep.title) state.fields.title = agent.title;
+        if (!keep.description) state.fields.description = agent.description;
+        state.notifications = agent.notifications;
         state.runtime.provider = runtimeSettings.provider;
         state.runtime.model = runtimeSettings.model;
         state.runtime.reasoningEffort = runtimeSettings.reasoningEffort;
-        state.avatar.seed = bot.avatarSeed;
-        state.avatar.hue = bot.avatarHue;
-        if (botChanged) {
-          state.avatar.candidateSeed = bot.avatarSeed;
+        state.avatar.seed = agent.avatarSeed;
+        state.avatar.hue = agent.avatarHue;
+        if (agentChanged) {
+          state.avatar.candidateSeed = agent.avatarSeed;
           state.avatar.batch = 0;
           state.avatar.pickerOpen = false;
           state.memories.open = false;
           state.routines.open = false;
         }
       });
-      if (botChanged) {
+      if (agentChanged) {
         void window.openbot.agent
-          .listMemories(bot.id)
+          .listMemories(agent.id)
           .catch(() => [])
           .then((items) => {
             setDraft((state) => {
@@ -221,7 +221,7 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
             });
           });
         void window.openbot.agent
-          .listRoutines(bot.id)
+          .listRoutines(agent.id)
           .catch(() => [])
           .then((items) => {
             setDraft((state) => {
@@ -233,7 +233,7 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
   );
 
   createEffect(
-    () => ({ request: props.routineSelectionRequest, botId: props.bot.id }),
+    () => ({ request: props.routineSelectionRequest, agentId: props.agent.id }),
     ({ request }) => {
       if (request) {
         setDraft((state) => {
@@ -255,10 +255,10 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
     return () => window.removeEventListener("pointerdown", closeAvatarPicker);
   });
 
-  async function saveBotPatch(updates: Omit<UpdateBotInput, "botId">): Promise<boolean> {
+  async function saveAgentPatch(updates: Omit<UpdateAgentInput, "agentId">): Promise<boolean> {
     setSaveError(null);
     try {
-      await props.onUpdateBot(props.bot.id, updates);
+      await props.onUpdateAgent(props.agent.id, updates);
       return true;
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Could not save agent settings.");
@@ -269,15 +269,15 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
   async function saveRuntimeSettings(
     settings: AgentRuntimeSettings,
     updates: AgentRuntimeSettingsPatch,
-    botId = props.bot.id,
+    agentId = props.agent.id,
   ): Promise<boolean> {
     setSaveError(null);
     try {
-      const saved = await props.onUpdateRuntimeSettings(botId, settings, updates);
-      if (!saved && props.bot.id === botId) setSaveError("Could not save agent settings.");
+      const saved = await props.onUpdateRuntimeSettings(agentId, settings, updates);
+      if (!saved && props.agent.id === agentId) setSaveError("Could not save agent settings.");
       return saved;
     } catch (error) {
-      if (props.bot.id === botId) {
+      if (props.agent.id === agentId) {
         setSaveError(error instanceof Error ? error.message : "Could not save agent settings.");
       }
       return false;
@@ -285,13 +285,13 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
   }
 
   function saveName(): void {
-    const botId = props.bot.id;
+    const agentId = props.agent.id;
     const value = draft.fields.name.trim() || "New agent";
     setDraft((state) => {
       state.fields.name = value;
     });
-    void saveBotPatch({ name: value }).then((saved) => {
-      if (saved && props.bot.id === botId && draft.fields.name === value) {
+    void saveAgentPatch({ name: value }).then((saved) => {
+      if (saved && props.agent.id === agentId && draft.fields.name === value) {
         setDraft((state) => {
           state.dirty.name = false;
         });
@@ -300,13 +300,13 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
   }
 
   function saveTitle(): void {
-    const botId = props.bot.id;
+    const agentId = props.agent.id;
     const value = draft.fields.title.trim();
     setDraft((state) => {
       state.fields.title = value;
     });
-    void saveBotPatch({ title: value }).then((saved) => {
-      if (saved && props.bot.id === botId && draft.fields.title === value) {
+    void saveAgentPatch({ title: value }).then((saved) => {
+      if (saved && props.agent.id === agentId && draft.fields.title === value) {
         setDraft((state) => {
           state.dirty.title = false;
         });
@@ -315,10 +315,10 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
   }
 
   function saveDescription(): void {
-    const botId = props.bot.id;
+    const agentId = props.agent.id;
     const value = draft.fields.description;
-    void saveBotPatch({ description: value }).then((saved) => {
-      if (saved && props.bot.id === botId && draft.fields.description === value) {
+    void saveAgentPatch({ description: value }).then((saved) => {
+      if (saved && props.agent.id === agentId && draft.fields.description === value) {
         setDraft((state) => {
           state.dirty.description = false;
         });
@@ -333,7 +333,7 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
       state.saveError = null;
     });
     try {
-      await props.onSetAgentAvatar(props.bot.id, image);
+      await props.onSetAgentAvatar(props.agent.id, image);
       return true;
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Could not save the agent avatar.");
@@ -353,7 +353,7 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
     });
     try {
       const image = await normalizeAvatarFile(file);
-      await props.onSetAgentAvatar(props.bot.id, image);
+      await props.onSetAgentAvatar(props.agent.id, image);
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Could not process the agent avatar.");
     } finally {
@@ -369,7 +369,7 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
     setDraft((state) => {
       state.avatar.seed = seed;
     });
-    await saveBotPatch({ avatarSeed: seed });
+    await saveAgentPatch({ avatarSeed: seed });
   }
 
   async function selectModel(nextModel: AgentModelId, nextProvider: AgentProviderId): Promise<void> {
@@ -384,7 +384,7 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
       provider: draft.runtime.provider,
       reasoningEffort: draft.runtime.reasoningEffort,
     };
-    const botId = props.bot.id;
+    const agentId = props.agent.id;
     const settings: AgentRuntimeSettings = {
       model: nextModel,
       provider: nextProvider,
@@ -397,9 +397,9 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
       state.runtime.model = settings.model;
       state.runtime.reasoningEffort = settings.reasoningEffort;
     });
-    if (await saveRuntimeSettings(settings, settings, botId)) return;
+    if (await saveRuntimeSettings(settings, settings, agentId)) return;
     // Roll back only what this call wrote: another agent, or a later pick, owns the panel now.
-    if (props.bot.id !== botId || !sameRuntimeSettings(draft.runtime, settings)) return;
+    if (props.agent.id !== agentId || !sameRuntimeSettings(draft.runtime, settings)) return;
     setDraft((state) => {
       state.runtime.provider = previous.provider;
       state.runtime.model = previous.model;
@@ -408,7 +408,7 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
   }
 
   async function selectReasoning(nextReasoning: AgentReasoningEffort): Promise<void> {
-    const botId = props.bot.id;
+    const agentId = props.agent.id;
     const previousReasoning = draft.runtime.reasoningEffort;
     const settings: AgentRuntimeSettings = {
       model: draft.runtime.model,
@@ -418,8 +418,8 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
     setDraft((state) => {
       state.runtime.reasoningEffort = nextReasoning;
     });
-    if (await saveRuntimeSettings(settings, { reasoningEffort: nextReasoning }, botId)) return;
-    if (props.bot.id === botId && sameRuntimeSettings(draft.runtime, settings)) {
+    if (await saveRuntimeSettings(settings, { reasoningEffort: nextReasoning }, agentId)) return;
+    if (props.agent.id === agentId && sameRuntimeSettings(draft.runtime, settings)) {
       setDraft((state) => {
         state.runtime.reasoningEffort = previousReasoning;
       });
@@ -536,16 +536,16 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
                 <div class="avatar-editor-heading">
                   <span>Generated face</span>
                   <div class="avatar-editor-actions">
-                    <Show when={draft.avatar.seed !== props.bot.id}>
+                    <Show when={draft.avatar.seed !== props.agent.id}>
                       <Button
                         variant="outline"
                         type="button"
                         onClick={() => {
                           setDraft((state) => {
-                            state.avatar.candidateSeed = props.bot.id;
+                            state.avatar.candidateSeed = props.agent.id;
                             state.avatar.batch = 0;
                           });
-                          void selectGeneratedAvatar(props.bot.id);
+                          void selectGeneratedAvatar(props.agent.id);
                         }}
                       >
                         Reset to ID
@@ -603,7 +603,7 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
                       setDraft((state) => {
                         state.avatar.hue = null;
                       });
-                      void saveBotPatch({ avatarHue: null });
+                      void saveAgentPatch({ avatarHue: null });
                     }}
                   >
                     <span class="avatar-color-swatch avatar-color-swatch-auto">A</span>
@@ -620,7 +620,7 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
                           setDraft((state) => {
                             state.avatar.hue = option.hue;
                           });
-                          void saveBotPatch({ avatarHue: option.hue });
+                          void saveAgentPatch({ avatarHue: option.hue });
                         }}
                       >
                         <span class="avatar-color-swatch" style={{ background: avatarHueSwatch(option.hue) }} />
@@ -787,7 +787,7 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
                 setDraft((state) => {
                   state.notifications = next;
                 });
-                void saveBotPatch({ notifications: next });
+                void saveAgentPatch({ notifications: next });
               }}
             />
           </div>
@@ -796,7 +796,7 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
       <Show when={draft.routines.open}>
         <div class="agent-routines-overlay">
           <AgentRoutinesSettings
-            botId={props.bot.id}
+            agentId={props.agent.id}
             onCountChange={(count) =>
               setDraft((state) => {
                 state.routines.count = count;
@@ -815,8 +815,8 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
         </div>
       </Show>
       <AgentMemoriesModal
-        botId={props.bot.id}
-        botName={props.bot.name}
+        agentId={props.agent.id}
+        agentName={props.agent.name}
         open={draft.memories.open}
         onOpenChange={(open) =>
           setDraft((state) => {

@@ -7,22 +7,22 @@ import { Pressable, View } from "react-native";
 import { MobileChatView } from "@/features/chat/components/chat-view";
 import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 
-export function BotChatScreen() {
+export function AgentChatScreen() {
   usePreventZoomTransitionDismissal();
 
-  const { avatarTransition, botId } = useLocalSearchParams<{ avatarTransition?: string; botId: string }>();
-  const { bots } = useMobileWorkspace();
+  const { avatarTransition, agentId } = useLocalSearchParams<{ avatarTransition?: string; agentId: string }>();
+  const { agents } = useMobileWorkspace();
   const foreground = useThemeColor("foreground");
-  const resolvedBotId = Array.isArray(botId) ? botId[0] : botId;
+  const resolvedAgentId = Array.isArray(agentId) ? agentId[0] : agentId;
   const resolvedAvatarTransition = Array.isArray(avatarTransition) ? avatarTransition[0] : avatarTransition;
   const animateAvatarOnExit = resolvedAvatarTransition === "search";
-  const bot = bots.find((candidate) => candidate.id === resolvedBotId);
+  const agent = agents.find((candidate) => candidate.id === resolvedAgentId);
 
-  if (bot) {
+  if (agent) {
     return (
       <>
         <Stack.Screen options={{ animation: animateAvatarOnExit ? "fade" : "slide_from_right" }} />
-        <MobileChatView animateAvatarOnExit={animateAvatarOnExit} bot={bot} />
+        <MobileChatView animateAvatarOnExit={animateAvatarOnExit} agent={agent} />
       </>
     );
   }
@@ -30,10 +30,10 @@ export function BotChatScreen() {
   return (
     <View className="flex-1 items-center justify-center gap-5 bg-background px-8">
       <Typography.Heading type="h4" align="center">
-        Bot unavailable
+        Agent unavailable
       </Typography.Heading>
       <Typography.Paragraph align="center" className="text-text-secondary">
-        This bot is no longer available on the selected server.
+        This agent is no longer available on the selected server.
       </Typography.Paragraph>
       <Pressable
         accessibilityRole="button"

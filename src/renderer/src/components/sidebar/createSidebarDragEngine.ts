@@ -11,7 +11,7 @@
  */
 
 import type { TeamPresenceMember } from "@openbot/contracts/ipc";
-import type { BotProfile } from "../../data";
+import type { AgentProfile } from "../../data";
 import type { SidebarPinnedItem } from "../../sidebar-pins";
 import { createBoundedDragPreview } from "../createBoundedDragPreview";
 import type { createScrollFades } from "../createScrollFades";
@@ -45,9 +45,9 @@ export interface SidebarDragEngineDeps {
   /** Read on the resolve path, so it is a predicate over the pin count - never a read of the source. */
   canPinDraggedItem: () => boolean;
   dragState: SidebarDragWriters;
-  filteredBotsBySection: () => Map<string, BotProfile[]>;
+  filteredAgentsBySection: () => Map<string, AgentProfile[]>;
   filteredPeople: () => TeamPresenceMember[];
-  getBotList: () => HTMLElement | undefined;
+  getAgentList: () => HTMLElement | undefined;
   props: SidebarProps;
   scrollFades: ReturnType<typeof createScrollFades>;
   sectionAcceptsAgent: (sectionId: string) => boolean;
@@ -62,7 +62,7 @@ export function createSidebarDragEngine(deps: SidebarDragEngineDeps) {
     canPinDraggedItem,
     commitSidebarDrop,
     dragState,
-    filteredBotsBySection,
+    filteredAgentsBySection,
     filteredPeople,
     scrollFades,
     sectionAcceptsAgent,
@@ -112,7 +112,7 @@ export function createSidebarDragEngine(deps: SidebarDragEngineDeps) {
     dragScrollSpeed = 0;
     dragGeometry = { list: null, pinned: null };
     dragState.resetDrag();
-    clearSidebarDragDecorations(deps.getBotList());
+    clearSidebarDragDecorations(deps.getAgentList());
     for (const slot of personDragSlots.values()) slot.element.classList.remove("sidebar-person-item-dragging");
     agentDragSlots.clear();
     personDragSlots.clear();
@@ -138,7 +138,7 @@ export function createSidebarDragEngine(deps: SidebarDragEngineDeps) {
     agentDragSlots = new Map();
     personDragSlots = new Map();
     pinnedDragSlots = [];
-    const list = deps.getBotList();
+    const list = deps.getAgentList();
     const startScrollTop = list?.scrollTop ?? 0;
     sectionDragStartScrollTop = startScrollTop;
     agentDragStartScrollTop = startScrollTop;
@@ -161,12 +161,12 @@ export function createSidebarDragEngine(deps: SidebarDragEngineDeps) {
     }
     event.dataTransfer?.setData("text/plain", options.data);
     if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
-    dragSession = { source: options.source, startScrollTop: deps.getBotList()?.scrollTop ?? 0 };
+    dragSession = { source: options.source, startScrollTop: deps.getAgentList()?.scrollTop ?? 0 };
     dragPoint = { clientX: event.clientX, clientY: event.clientY };
     dragTarget = null;
     dragState.beginDrag(options.source);
     measureSidebarDragTargets();
-    const list = deps.getBotList();
+    const list = deps.getAgentList();
     if (!list) return;
     dragPreview.start({
       bounds: list,
@@ -180,14 +180,14 @@ export function createSidebarDragEngine(deps: SidebarDragEngineDeps) {
     window.addEventListener("blur", stopSidebarDragging, { once: true });
   }
 
-  function startAgentDragging(event: DragEvent & { currentTarget: HTMLElement }, bot: BotProfile): void {
+  function startAgentDragging(event: DragEvent & { currentTarget: HTMLElement }, agent: AgentProfile): void {
     if (deps.props.compact) return;
     startNativeItemDragging(event, {
       className: "sidebar-agent-drag-preview",
       createPreview: createSidebarAgentDragCard,
-      data: `openbot-agent:${bot.id}`,
+      data: `openbot-agent:${agent.id}`,
       previewSize: { height: 94, width: 72 },
-      source: { kind: "agent", id: bot.id, origin: "section" },
+      source: { kind: "agent", id: agent.id, origin: "section" },
     });
   }
 
@@ -217,7 +217,7 @@ export function createSidebarDragEngine(deps: SidebarDragEngineDeps) {
    * today, and one shared field would hide the day they stop.
    */
   function sidebarDragWorld(session: SidebarDragSession): SidebarDragWorld {
-    const scrollTop = deps.getBotList()?.scrollTop ?? 0;
+    const scrollTop = deps.getAgentList()?.scrollTop ?? 0;
     return {
       agentScrollDelta: scrollTop - agentDragStartScrollTop,
       agentSlots: agentDragSlots,
@@ -269,7 +269,7 @@ export function createSidebarDragEngine(deps: SidebarDragEngineDeps) {
         const targetSlot = agentDragSlots.get(target.target.agentId);
         // An agent only pushes its own neighbours: aimed at another section it is a move, not a reorder.
         if (!sourceSlot || !targetSlot || sourceSlot.sectionId !== targetSlot.sectionId) return {};
-        const agentIds = (filteredBotsBySection().get(sourceSlot.sectionId) ?? []).map((bot) => bot.id);
+        const agentIds = (filteredAgentsBySection().get(sourceSlot.sectionId) ?? []).map((agent) => agent.id);
         return reorderOffsets(
           agentIds,
           source.id,
@@ -336,7 +336,7 @@ export function createSidebarDragEngine(deps: SidebarDragEngineDeps) {
 
   function runSidebarDragAutoScroll(): void {
     dragScrollFrame = null;
-    const list = deps.getBotList();
+    const list = deps.getAgentList();
     if (!list || !dragSession || !dragPoint || dragScrollSpeed === 0) return;
     const previousScrollTop = list.scrollTop;
     list.scrollTop += dragScrollSpeed;

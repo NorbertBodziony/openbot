@@ -5,11 +5,11 @@ import { createSignal } from "solid-js";
 import { expect, fn, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { ComposerEditor } from "../src/components/ComposerEditor";
-import { STORY_BOTS } from "./fixtures";
+import { STORY_AGENTS } from "./fixtures";
 
 const args: Parameters<typeof ComposerEditor>[0] = {
-  botId: "chief",
-  bots: STORY_BOTS,
+  agentId: "chief",
+  agents: STORY_AGENTS,
   attachments: [],
   value: "",
   placeholder: "Message Chief",

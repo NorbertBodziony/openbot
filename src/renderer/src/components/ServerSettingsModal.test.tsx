@@ -65,7 +65,7 @@ const members: TeamPresenceMember[] = [
     createdAt: "2026-01-01T00:00:00.000Z",
     disabled: false,
     online: true,
-    typingBotId: null,
+    typingAgentId: null,
   },
   {
     id: "alice-1",
@@ -76,7 +76,7 @@ const members: TeamPresenceMember[] = [
     createdAt: "2026-02-01T00:00:00.000Z",
     disabled: false,
     online: false,
-    typingBotId: null,
+    typingAgentId: null,
   },
 ];
 

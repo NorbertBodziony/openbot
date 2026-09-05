@@ -191,6 +191,8 @@ describe("Team API compatibility negotiation", () => {
         attempts += 1;
         if (attempts === 1) throw new TypeError("connection reset after commit");
         if (attempts === 2) return Response.json({ error: "Host response was lost." }, { status: 503 });
+        // The stub is the *host*, so its body is frozen Team API wire JSON and says `bot`. The result the
+        // client resolves to is current-shaped and says `agent`; the adapter in between is what converts.
         return Response.json(
           {
             bot: {
@@ -203,7 +205,7 @@ describe("Team API compatibility negotiation", () => {
               model: "gpt-5.6-luna",
               reasoningEffort: "medium",
               threadId: null,
-              workspacePath: "/OpenBot/Bots/bot-copy",
+              workspacePath: "/OpenBot/Agents/bot-copy",
               preview: "No messages yet",
               updatedAt: null,
               avatarSeed: "research",
@@ -224,10 +226,10 @@ describe("Team API compatibility negotiation", () => {
     });
     const fixture = await createRemoteManager({ servers: [storedHttpsServer("duplicate")], appVersion: "1.0.0" });
 
-    await expect(fixture.manager.duplicateBot("bot-source", "duplicate")).rejects.toThrow("connection reset");
-    await expect(fixture.manager.duplicateBot("bot-source", "duplicate")).rejects.toThrow("Host response was lost");
-    await expect(fixture.manager.duplicateBot("bot-source", "duplicate")).resolves.toMatchObject({
-      bot: { id: "bot-copy" },
+    await expect(fixture.manager.duplicateAgent("bot-source", "duplicate")).rejects.toThrow("connection reset");
+    await expect(fixture.manager.duplicateAgent("bot-source", "duplicate")).rejects.toThrow("Host response was lost");
+    await expect(fixture.manager.duplicateAgent("bot-source", "duplicate")).resolves.toMatchObject({
+      agent: { id: "bot-copy" },
     });
 
     // A failure that may have committed on the host keeps its id, so the third attempt is the same

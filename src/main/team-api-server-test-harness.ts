@@ -60,7 +60,7 @@ export function createAgents(overrides: Partial<TeamApiAgents> = {}, events = ne
     },
     getStatus: unimplemented,
     getRuntimeSnapshot: () => ({
-      bots: [],
+      agents: [],
       activeTurns: [],
       work: [],
       latestMessages: [],
@@ -72,7 +72,7 @@ export function createAgents(overrides: Partial<TeamApiAgents> = {}, events = ne
     }),
     getUsage: unimplemented,
     listModels: unimplemented,
-    listBots: unimplemented,
+    listAgents: unimplemented,
     listMemories: unimplemented,
     createMemory: unimplemented,
     updateMemory: unimplemented,
@@ -85,12 +85,12 @@ export function createAgents(overrides: Partial<TeamApiAgents> = {}, events = ne
     testRoutine: unimplemented,
     listRoutineRuns: unimplemented,
     listConversationReads: unimplemented,
-    createBot: unimplemented,
-    committedBotDuplication: () => null,
-    duplicateBot: unimplemented,
-    commitBotDuplication: unimplemented,
-    updateBot: unimplemented,
-    deleteBot: unimplemented,
+    createAgent: unimplemented,
+    committedAgentDuplication: () => null,
+    duplicateAgent: unimplemented,
+    commitAgentDuplication: unimplemented,
+    updateAgent: unimplemented,
+    deleteAgent: unimplemented,
     setAvatar: unimplemented,
     resolveAvatar: unimplemented,
     readConversationFor: unimplemented,
@@ -289,6 +289,11 @@ export async function rawRequest(base: string, requestLine: string, headers: rea
   });
 }
 
+/**
+ * The projection a test applies to a frame read straight off the socket, so its keys are the frozen
+ * Team API wire spelling: `botId`, not the current `agentId` the fake agent service beside it speaks.
+ * Both vocabularies in one file is the shim doing its job, not a missed rename.
+ */
 export interface TestRealtimeEvent {
   type: string;
   botId?: string;
@@ -345,7 +350,7 @@ export function decodeTestRealtimeEvent(value: unknown): TestRealtimeEvent {
   const typing = value.typing;
   if (typing !== undefined && !isBoolean(typing)) throw new Error("Invalid test typing state.");
   const botId = value.botId;
-  if (botId !== undefined && !isString(botId)) throw new Error("Invalid test bot id.");
+  if (botId !== undefined && !isString(botId)) throw new Error("Invalid test agent id.");
   const revision = value.revision;
   if (revision !== undefined && !isNumber(revision)) throw new Error("Invalid test revision.");
   return {

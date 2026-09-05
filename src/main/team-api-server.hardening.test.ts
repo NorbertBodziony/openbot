@@ -17,7 +17,7 @@ describe("TeamApiServer hardening", () => {
     const lines: string[] = [];
     const { base } = await start({
       agents: createAgents({
-        listBots: () => {
+        listAgents: () => {
           throw internalError;
         },
       }),

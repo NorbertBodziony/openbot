@@ -6,11 +6,11 @@
 
 import { SIDEBAR_PEOPLE_SECTION_ID, SIDEBAR_UNASSIGNED_SECTION_ID } from "@openbot/contracts/ipc";
 import { createMemo } from "solid-js";
-import type { BotProfile } from "../../../data";
+import type { AgentProfile } from "../../../data";
 import { sidebarPinnedItemKey } from "../../../sidebar-pins";
 import type { ResolvedPinnedItem, SidebarProps } from "../../Sidebar";
 import { teamMemberName } from "../../TeamPersonAvatar";
-import { botMatchesQuery, personMatchesQuery } from "../sidebar-filtering";
+import { agentMatchesQuery, personMatchesQuery } from "../sidebar-filtering";
 
 export function createSidebarDataStore(deps: { normalizedQuery: () => string; props: SidebarProps }) {
   const { normalizedQuery, props } = deps;
@@ -20,26 +20,26 @@ export function createSidebarDataStore(deps: { normalizedQuery: () => string; pr
   );
   const agentPinnedItems = createMemo(() => props.pinnedItems.filter((item) => item.kind === "agent"));
   const pinnedKeys = createMemo(() => new Set(agentPinnedItems().map(sidebarPinnedItemKey)));
-  const botById = createMemo(() => new Map(props.bots.map((bot) => [bot.id, bot])));
+  const agentById = createMemo(() => new Map(props.agents.map((agent) => [agent.id, agent])));
   const personById = createMemo(() => new Map(props.people.map((member) => [member.id, member])));
   const resolvedPinnedItems = createMemo<ResolvedPinnedItem[]>(() => {
     const items: ResolvedPinnedItem[] = [];
     for (const ref of agentPinnedItems()) {
       if (ref.kind === "agent") {
-        const bot = botById().get(ref.id);
-        if (bot && botMatchesQuery(bot, normalizedQuery())) items.push({ ref, bot });
+        const agent = agentById().get(ref.id);
+        if (agent && agentMatchesQuery(agent, normalizedQuery())) items.push({ ref, agent });
       }
     }
     return items;
   });
-  const filteredBots = createMemo(() => {
+  const filteredAgents = createMemo(() => {
     const orderIndex = new Map(props.layout.agentOrder.map((agentId, index) => [agentId, index]));
-    const naturalIndex = new Map(props.bots.map((bot, index) => [bot.id, index]));
-    return props.bots
+    const naturalIndex = new Map(props.agents.map((agent, index) => [agent.id, index]));
+    return props.agents
       .filter(
-        (bot) =>
-          !pinnedKeys().has(sidebarPinnedItemKey({ kind: "agent", id: bot.id })) &&
-          botMatchesQuery(bot, normalizedQuery()),
+        (agent) =>
+          !pinnedKeys().has(sidebarPinnedItemKey({ kind: "agent", id: agent.id })) &&
+          agentMatchesQuery(agent, normalizedQuery()),
       )
       .sort(
         (left, right) =>
@@ -73,12 +73,12 @@ export function createSidebarDataStore(deps: { normalizedQuery: () => string; pr
   );
   const customSectionById = createMemo(() => new Map(props.layout.sections.map((section) => [section.id, section])));
   const collapsedSectionIds = createMemo(() => new Set(props.collapsedSectionIds));
-  const filteredBotsBySection = createMemo(() => {
-    const groups = new Map<string, BotProfile[]>();
-    for (const bot of filteredBots()) {
-      const assigned = props.layout.agentAssignments[bot.id];
+  const filteredAgentsBySection = createMemo(() => {
+    const groups = new Map<string, AgentProfile[]>();
+    for (const agent of filteredAgents()) {
+      const assigned = props.layout.agentAssignments[agent.id];
       const sectionId = assigned && customSectionById().has(assigned) ? assigned : SIDEBAR_UNASSIGNED_SECTION_ID;
-      groups.set(sectionId, [...(groups.get(sectionId) ?? []), bot]);
+      groups.set(sectionId, [...(groups.get(sectionId) ?? []), agent]);
     }
     return groups;
   });
@@ -86,10 +86,10 @@ export function createSidebarDataStore(deps: { normalizedQuery: () => string; pr
     props.layout.order.filter((sectionId) => {
       if (sectionId === SIDEBAR_PEOPLE_SECTION_ID) return props.showPeople !== false && filteredPeople().length > 0;
       if (customSectionById().has(sectionId)) {
-        return !normalizedQuery() || (filteredBotsBySection().get(sectionId)?.length ?? 0) > 0;
+        return !normalizedQuery() || (filteredAgentsBySection().get(sectionId)?.length ?? 0) > 0;
       }
       if (sectionId !== SIDEBAR_UNASSIGNED_SECTION_ID) return false;
-      return (filteredBotsBySection().get(sectionId)?.length ?? 0) > 0;
+      return (filteredAgentsBySection().get(sectionId)?.length ?? 0) > 0;
     }),
   );
 
@@ -127,11 +127,11 @@ export function createSidebarDataStore(deps: { normalizedQuery: () => string; pr
   return {
     agentPinnedItems,
     assignedSectionId,
-    botById,
+    agentById,
     customSectionById,
     directThreadByMember,
-    filteredBots,
-    filteredBotsBySection,
+    filteredAgents,
+    filteredAgentsBySection,
     filteredPeople,
     orderedPeople,
     personById,

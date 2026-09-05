@@ -16,7 +16,7 @@ interface LandingDemoControllerOptions {
 }
 
 interface ScriptRun {
-  botId: string;
+  agentId: string;
   turnId: string;
   timers: Set<ReturnType<typeof setTimeout>>;
 }
@@ -31,8 +31,8 @@ type SelectedConversation = { kind: "agent"; id: string } | { kind: "direct"; id
 
 const SCRIPT_TIME = "2026-08-21T10:01:00.000Z";
 
-function scriptId(botId: string, runId: number, part: string): string {
-  return `${LANDING_SCRIPT_MESSAGE_PREFIX}${botId}:${runId}:${part}`;
+function scriptId(agentId: string, runId: number, part: string): string {
+  return `${LANDING_SCRIPT_MESSAGE_PREFIX}${agentId}:${runId}:${part}`;
 }
 
 function isScriptMessage(message: ConversationMessage): boolean {
@@ -71,11 +71,11 @@ export function createLandingDemoController(
   }
 
   function emitTurnCompleted(run: ScriptRun, status: "completed" | "interrupted"): void {
-    const snapshot = mock.readConversationSnapshot(run.botId);
+    const snapshot = mock.readConversationSnapshot(run.agentId);
     mock.emitAgentEvent({
       type: "turn-completed",
-      botId: run.botId,
-      threadId: snapshot.threadId ?? `thread-${run.botId}`,
+      agentId: run.agentId,
+      threadId: snapshot.threadId ?? `thread-${run.agentId}`,
       turnId: run.turnId,
       status,
     });
@@ -85,10 +85,10 @@ export function createLandingDemoController(
     const run = activeRun;
     if (!run) return;
     clearRunTimers(run);
-    mock.updateConversationSnapshot(run.botId, (snapshot) => {
+    mock.updateConversationSnapshot(run.agentId, (snapshot) => {
       snapshot.activeTurnId = null;
     });
-    mock.setQueueSnapshot(run.botId, []);
+    mock.setQueueSnapshot(run.agentId, []);
     emitTurnCompleted(run, "interrupted");
     activeRun = null;
   }
@@ -131,7 +131,7 @@ export function createLandingDemoController(
 
   function createMessages(script: LandingDemoScript, runId: number, turnId: string) {
     const user: ConversationMessage = {
-      id: scriptId(script.botId, runId, "prompt"),
+      id: scriptId(script.agentId, runId, "prompt"),
       turnId,
       author: "user",
       source: "user",
@@ -140,7 +140,7 @@ export function createLandingDemoController(
       status: "completed",
     };
     const thinking = script.thinkingSteps.map<ConversationMessage>((text, index) => ({
-      id: scriptId(script.botId, runId, `thinking-${index + 1}`),
+      id: scriptId(script.agentId, runId, `thinking-${index + 1}`),
       turnId,
       author: "assistant",
       source: "assistant",
@@ -150,7 +150,7 @@ export function createLandingDemoController(
       status: "completed",
     }));
     const answer: ConversationMessage = {
-      id: scriptId(script.botId, runId, "answer"),
+      id: scriptId(script.agentId, runId, "answer"),
       turnId,
       author: "assistant",
       source: "assistant",
@@ -162,7 +162,7 @@ export function createLandingDemoController(
       reaction: script.reaction,
     };
     const handoff: ConversationMessage = {
-      id: scriptId(script.botId, runId, "handoff"),
+      id: scriptId(script.agentId, runId, "handoff"),
       turnId,
       author: "system",
       source: "system",
@@ -171,13 +171,13 @@ export function createLandingDemoController(
       status: "completed",
       exchange: {
         direction: "outgoing",
-        messageId: scriptId(script.botId, runId, "handoff"),
-        senderBotId: script.botId,
-        recipientBotIds: script.recipientBotIds,
+        messageId: scriptId(script.agentId, runId, "handoff"),
+        senderAgentId: script.agentId,
+        recipientAgentIds: script.recipientAgentIds,
         replyToMessageId: answer.id,
-        deliveries: script.recipientBotIds.map((recipientBotId, index) => ({
-          id: scriptId(script.botId, runId, `delivery-${index + 1}`),
-          recipientBotId,
+        deliveries: script.recipientAgentIds.map((recipientAgentId, index) => ({
+          id: scriptId(script.agentId, runId, `delivery-${index + 1}`),
+          recipientAgentId,
           status: "completed",
           position: null,
           error: null,
@@ -187,12 +187,12 @@ export function createLandingDemoController(
     return { user, thinking, answer, handoff };
   }
 
-  function resetScriptMessages(botId: string): void {
-    mock.updateConversationSnapshot(botId, (snapshot) => {
+  function resetScriptMessages(agentId: string): void {
+    mock.updateConversationSnapshot(agentId, (snapshot) => {
       snapshot.activeTurnId = null;
       snapshot.messages = snapshot.messages.filter((message) => !isScriptMessage(message));
     });
-    mock.setQueueSnapshot(botId, []);
+    mock.setQueueSnapshot(agentId, []);
   }
 
   function resetDirectScriptMessages(memberId: string): void {
@@ -279,17 +279,17 @@ export function createLandingDemoController(
 
   function completeWithoutMotion(script: LandingDemoScript): void {
     const runId = ++runCounter;
-    const turnId = scriptId(script.botId, runId, "turn");
-    const run: ScriptRun = { botId: script.botId, turnId, timers: new Set() };
+    const turnId = scriptId(script.agentId, runId, "turn");
+    const run: ScriptRun = { agentId: script.agentId, turnId, timers: new Set() };
     const messages = createMessages(script, runId, turnId);
     activeRun = run;
     mock.emitAgentEvent({
       type: "turn-started",
-      botId: script.botId,
-      threadId: mock.readConversationSnapshot(script.botId).threadId ?? `thread-${script.botId}`,
+      agentId: script.agentId,
+      threadId: mock.readConversationSnapshot(script.agentId).threadId ?? `thread-${script.agentId}`,
       turnId,
     });
-    mock.updateConversationSnapshot(script.botId, (snapshot) => {
+    mock.updateConversationSnapshot(script.agentId, (snapshot) => {
       snapshot.activeTurnId = null;
       snapshot.messages = [
         ...snapshot.messages,
@@ -299,31 +299,31 @@ export function createLandingDemoController(
         messages.handoff,
       ];
     });
-    mock.setQueueSnapshot(script.botId, []);
+    mock.setQueueSnapshot(script.agentId, []);
     emitTurnCompleted(run, "completed");
     activeRun = null;
   }
 
   function startScript(script: LandingDemoScript): void {
-    resetScriptMessages(script.botId);
+    resetScriptMessages(script.agentId);
     if (options.reducedMotion) {
       completeWithoutMotion(script);
       return;
     }
 
     const runId = ++runCounter;
-    const turnId = scriptId(script.botId, runId, "turn");
+    const turnId = scriptId(script.agentId, runId, "turn");
     const messages = createMessages(script, runId, turnId);
-    const run: ScriptRun = { botId: script.botId, turnId, timers: new Set() };
+    const run: ScriptRun = { agentId: script.agentId, turnId, timers: new Set() };
     activeRun = run;
 
     schedule(
       run,
       () => {
         const delivery: QueueDelivery = {
-          id: scriptId(script.botId, runId, "queue"),
+          id: scriptId(script.agentId, runId, "queue"),
           messageId: messages.user.id,
-          recipientBotId: script.botId,
+          recipientAgentId: script.agentId,
           sender: { kind: "user" },
           text: script.prompt,
           attachments: [],
@@ -334,15 +334,15 @@ export function createLandingDemoController(
           error: null,
           createdAt: SCRIPT_TIME,
         };
-        mock.updateConversationSnapshot(script.botId, (snapshot) => {
+        mock.updateConversationSnapshot(script.agentId, (snapshot) => {
           snapshot.activeTurnId = turnId;
           snapshot.messages = [...snapshot.messages, messages.user];
         });
-        mock.setQueueSnapshot(script.botId, [delivery]);
+        mock.setQueueSnapshot(script.agentId, [delivery]);
         mock.emitAgentEvent({
           type: "turn-started",
-          botId: script.botId,
-          threadId: mock.readConversationSnapshot(script.botId).threadId ?? `thread-${script.botId}`,
+          agentId: script.agentId,
+          threadId: mock.readConversationSnapshot(script.agentId).threadId ?? `thread-${script.agentId}`,
           turnId,
         });
       },
@@ -352,7 +352,7 @@ export function createLandingDemoController(
     schedule(
       run,
       () => {
-        mock.updateConversationSnapshot(script.botId, (snapshot) => {
+        mock.updateConversationSnapshot(script.agentId, (snapshot) => {
           snapshot.messages = [...snapshot.messages, { ...messages.thinking[0], status: "streaming" }];
         });
       },
@@ -362,7 +362,7 @@ export function createLandingDemoController(
     schedule(
       run,
       () => {
-        mock.updateConversationSnapshot(script.botId, (snapshot) => {
+        mock.updateConversationSnapshot(script.agentId, (snapshot) => {
           snapshot.messages = snapshot.messages.map((message) =>
             message.id === messages.thinking[0].id ? { ...message, status: "completed" } : message,
           );
@@ -380,7 +380,7 @@ export function createLandingDemoController(
         const streamNext = () => {
           const delta = chunks[chunkIndex];
           if (delta === undefined) {
-            mock.updateConversationSnapshot(script.botId, (snapshot) => {
+            mock.updateConversationSnapshot(script.agentId, (snapshot) => {
               snapshot.messages = snapshot.messages.map((message) =>
                 message.id === messages.thinking[1].id ? { ...message, status: "completed" } : message,
               );
@@ -389,11 +389,11 @@ export function createLandingDemoController(
             schedule(
               run,
               () => {
-                mock.updateConversationSnapshot(script.botId, (snapshot) => {
+                mock.updateConversationSnapshot(script.agentId, (snapshot) => {
                   snapshot.activeTurnId = null;
                   snapshot.messages = [...snapshot.messages, messages.handoff];
                 });
-                mock.setQueueSnapshot(script.botId, []);
+                mock.setQueueSnapshot(script.agentId, []);
                 emitTurnCompleted(run, "completed");
                 activeRun = null;
               },
@@ -402,8 +402,8 @@ export function createLandingDemoController(
             return;
           }
           mock.emitConversationDelta({
-            botId: script.botId,
-            threadId: mock.readConversationSnapshot(script.botId).threadId ?? `thread-${script.botId}`,
+            agentId: script.agentId,
+            threadId: mock.readConversationSnapshot(script.agentId).threadId ?? `thread-${script.agentId}`,
             turnId,
             messageId: messages.answer.id,
             delta,
@@ -418,12 +418,12 @@ export function createLandingDemoController(
     );
   }
 
-  function selectAgent(botId: string): void {
-    if (!scripts[botId] || (selectedConversation?.kind === "agent" && selectedConversation.id === botId)) return;
+  function selectAgent(agentId: string): void {
+    if (!scripts[agentId] || (selectedConversation?.kind === "agent" && selectedConversation.id === agentId)) return;
     cancelActiveDirectRun();
     cancelActiveRun();
-    selectedConversation = { kind: "agent", id: botId };
-    if (activated) startScript(scripts[botId]);
+    selectedConversation = { kind: "agent", id: agentId };
+    if (activated) startScript(scripts[agentId]);
   }
 
   function selectDirectMember(memberId: string): void {

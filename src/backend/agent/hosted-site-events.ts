@@ -31,11 +31,11 @@ export function hostedSiteEventMessageId(operationId: string, status: HostedSite
 }
 
 export function hostedSiteEventCommandId(
-  botId: string,
+  agentId: string,
   operationId: string,
   status: HostedSiteConversationEventStatus,
 ): string {
-  return `hosted-site-event:${botId}:${operationId}:${status}`;
+  return `hosted-site-event:${agentId}:${operationId}:${status}`;
 }
 
 export function hostedSiteEventDetails(site: HostedSiteSummary, siteId = site.id): HostedSiteConversationEventDetails {

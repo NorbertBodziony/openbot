@@ -1,4 +1,4 @@
-import type { AgentModelId, AgentProviderId, AgentReasoningEffort, UpdateBotInput } from "@openbot/contracts/ipc";
+import type { AgentModelId, AgentProviderId, AgentReasoningEffort, UpdateAgentInput } from "@openbot/contracts/ipc";
 import { agentConversationKey } from "../../../conversation-keys";
 import type { ConversationProps } from "../../ConversationView";
 import type { AgentRuntimeSettings, AgentRuntimeSettingsPatch } from "../AgentSettingsPanel";
@@ -36,7 +36,7 @@ export interface SettingsStoreDeps {
   setSettingsReasoning: (effort: AgentReasoningEffort) => void;
   setComposerError: (error: string | null) => void;
   viewIsMounted: () => boolean;
-  saveBotPatch: (updates: Omit<UpdateBotInput, "botId">, targetBotId?: string) => Promise<boolean>;
+  saveAgentPatch: (updates: Omit<UpdateAgentInput, "agentId">, targetAgentId?: string) => Promise<boolean>;
 }
 
 export function createSettingsStore(deps: SettingsStoreDeps) {
@@ -44,13 +44,13 @@ export function createSettingsStore(deps: SettingsStoreDeps) {
     settings: AgentRuntimeSettings,
     updates: AgentRuntimeSettingsPatch,
     errorMessage: string | null,
-    targetBotId = deps.props.bot?.id,
+    targetAgentId = deps.props.agent?.id,
   ): Promise<boolean> {
-    const botId = targetBotId;
-    if (!botId) return false;
+    const agentId = targetAgentId;
+    if (!agentId) return false;
     // Both maps live on the controller, which outlives one server, so the key
     // has to say which server the settings belong to.
-    const settingsKey = agentConversationKey(deps.props.server?.id ?? "local", botId);
+    const settingsKey = agentConversationKey(deps.props.server?.id ?? "local", agentId);
     const previousAttempt = deps.runtimeSettingsAttempts.get(settingsKey);
     const generation = (previousAttempt?.generation ?? 0) + 1;
     deps.runtimeSettingsAttempts.set(settingsKey, { generation, pending: true, settings });
@@ -67,13 +67,13 @@ export function createSettingsStore(deps: SettingsStoreDeps) {
     let abandoned = false;
     try {
       if (previousSave) baseValid = await previousSave;
-      // `agent.updateBot` is routed by the server main has selected, not by the
-      // bot id in its payload, so a save still queued behind an earlier one when
+      // `agent.updateAgent` is routed by the server main has selected, not by the
+      // agent id in its payload, so a save still queued behind an earlier one when
       // the user leaves would be applied to whichever server they arrive at. It
       // belongs to the one it was made on, and that one is gone.
       abandoned = !deps.viewIsMounted();
       const completePatch = isCompleteRuntimeSettingsPatch(updates);
-      saved = !abandoned && (baseValid || completePatch) ? await deps.saveBotPatch(updates, botId) : false;
+      saved = !abandoned && (baseValid || completePatch) ? await deps.saveAgentPatch(updates, agentId) : false;
       if (completePatch) baseValid = saved;
     } finally {
       releaseSave(baseValid);
@@ -84,44 +84,44 @@ export function createSettingsStore(deps: SettingsStoreDeps) {
     const latestAttempt = deps.runtimeSettingsAttempts.get(settingsKey);
     if (latestAttempt?.generation !== generation) return true;
     latestAttempt.pending = false;
-    // Nothing left to report to: the pickers, the composer error and the bot
+    // Nothing left to report to: the pickers, the composer error and the agent
     // this would roll back to all belonged to the conversation that is gone.
     if (abandoned) return false;
     if (saved) {
-      const activeBot = deps.props.bot;
-      if (activeBot?.id === botId) {
-        deps.setSettingsProvider(activeBot.provider);
-        deps.setSettingsModel(activeBot.model);
-        deps.setSettingsReasoning(activeBot.reasoningEffort);
+      const activeAgent = deps.props.agent;
+      if (activeAgent?.id === agentId) {
+        deps.setSettingsProvider(activeAgent.provider);
+        deps.setSettingsModel(activeAgent.model);
+        deps.setSettingsReasoning(activeAgent.reasoningEffort);
       }
       return true;
     }
 
-    const activeBot = deps.props.bot;
+    const activeAgent = deps.props.agent;
     const currentSettings = {
       provider: deps.settingsProvider(),
       model: deps.settingsModel(),
       reasoningEffort: deps.settingsReasoning(),
     };
-    if (activeBot?.id !== botId || !runtimeSettingsEqual(currentSettings, settings)) return false;
-    deps.setSettingsProvider(activeBot.provider);
-    deps.setSettingsModel(activeBot.model);
-    deps.setSettingsReasoning(activeBot.reasoningEffort);
+    if (activeAgent?.id !== agentId || !runtimeSettingsEqual(currentSettings, settings)) return false;
+    deps.setSettingsProvider(activeAgent.provider);
+    deps.setSettingsModel(activeAgent.model);
+    deps.setSettingsReasoning(activeAgent.reasoningEffort);
     if (errorMessage) deps.setComposerError(errorMessage);
     return false;
   }
 
   async function updateRuntimeSettings(
-    botId: string,
+    agentId: string,
     settings: AgentRuntimeSettings,
     updates: AgentRuntimeSettingsPatch,
   ): Promise<boolean> {
-    if (deps.props.bot?.id === botId) {
+    if (deps.props.agent?.id === agentId) {
       deps.setSettingsProvider(settings.provider);
       deps.setSettingsModel(settings.model);
       deps.setSettingsReasoning(settings.reasoningEffort);
     }
-    return saveRuntimeSettings(settings, updates, null, botId);
+    return saveRuntimeSettings(settings, updates, null, agentId);
   }
 
   async function selectModel(

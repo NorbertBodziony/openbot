@@ -1,5 +1,5 @@
 import { createMemo, For, Loading, lazy, Show, untrack } from "solid-js";
-import type { BotMessage, ChatActionMarkerModel } from "../../data";
+import type { AgentMessage, ChatActionMarkerModel } from "../../data";
 import { BrowserTakeoverCard } from "../ConversationPrompts";
 import type { ConversationProps } from "../ConversationView";
 import { Bubble, BubbleContent, BubbleReactions, type BubbleVariant, Button, Message, MessageContent } from "../ui";
@@ -13,7 +13,7 @@ import { ScrollToLatestButton } from "./MessageNavigation";
 import { MessageActions, MessageBody } from "./MessageRendering";
 import { UnreadMessagesBanner, UnreadMessagesDivider } from "./UnreadMessages";
 
-function conversationBubbleVariant(message: BotMessage): BubbleVariant {
+function conversationBubbleVariant(message: AgentMessage): BubbleVariant {
   if (message.author === "you") return "secondary";
   if (message.imageGeneration || (!message.body.trim() && message.attachments?.length)) return "ghost";
   const contentBlocks = messageContentBlocks(message.body, message.streaming === true);
@@ -22,7 +22,7 @@ function conversationBubbleVariant(message: BotMessage): BubbleVariant {
 }
 
 /** A message that renders only an action marker, with no bubble of its own. */
-function markerOnlyMessage(message: BotMessage): boolean {
+function markerOnlyMessage(message: AgentMessage): boolean {
   const marker = message.actionMarker;
   if (!marker) return false;
   return (
@@ -34,7 +34,7 @@ function markerOnlyMessage(message: BotMessage): boolean {
 }
 
 /** Marker-only rows that render attachment cards below the marker do not end with one. */
-function markerRowEndsWithMarker(message: BotMessage): boolean {
+function markerRowEndsWithMarker(message: AgentMessage): boolean {
   if (!markerOnlyMessage(message)) return false;
   return !(message.exchange?.direction === "incoming" && (message.attachments?.length ?? 0) > 0);
 }
@@ -250,7 +250,7 @@ export function ConversationTimeline() {
                           {(marker) => (
                             <ChatActionMarker
                               marker={marker()}
-                              bots={props.bots}
+                              agents={props.agents}
                               announce={animateEntrance}
                               routineAvailable={routineMarkerAvailable(marker(), props.availableRoutineIds)}
                               onSelectAgent={props.onSelectAgent}
@@ -319,7 +319,7 @@ export function ConversationTimeline() {
                                 {(marker) => (
                                   <ChatActionMarker
                                     marker={marker()}
-                                    bots={props.bots}
+                                    agents={props.agents}
                                     announce={animateEntrance}
                                     routineAvailable={routineMarkerAvailable(marker(), props.availableRoutineIds)}
                                     onSelectAgent={props.onSelectAgent}
@@ -338,7 +338,7 @@ export function ConversationTimeline() {
                                   {
                                     "message-entry-animated": animateEntrance,
                                     "message-entry-user": message()?.author === "you",
-                                    "message-entry-bot": message()?.author === "bot",
+                                    "message-entry-agent": message()?.author === "agent",
                                   },
                                 ]}
                               >
@@ -361,7 +361,7 @@ export function ConversationTimeline() {
                                               ? props.messageReferences?.[message()?.replyToMessageId ?? ""]
                                               : undefined)
                                           }
-                                          bots={props.bots}
+                                          agents={props.agents}
                                           skills={installedSkills()}
                                           onSelectAgent={props.onSelectAgent}
                                           onOpenLink={(url) => void openExternalMessageUrl(url)}
@@ -391,10 +391,10 @@ export function ConversationTimeline() {
                                                     class="message-reaction-pill message-reaction-pill-readonly"
                                                     role="img"
                                                     aria-label={`${
-                                                      props.bots.find(
-                                                        (bot) =>
-                                                          reaction.actor.kind === "bot" &&
-                                                          bot.id === reaction.actor.botId,
+                                                      props.agents.find(
+                                                        (agent) =>
+                                                          reaction.actor.kind === "agent" &&
+                                                          agent.id === reaction.actor.agentId,
                                                       )?.name ?? "Agent"
                                                     } reacted with ${reaction.emoji}`}
                                                   >
@@ -475,9 +475,9 @@ export function ConversationTimeline() {
                             <ThinkingDisclosure
                               message={message() ?? initialMessage}
                               working={Boolean(props.activeTurnId && message()?.turnId === props.activeTurnId)}
-                              open={expandedThinkingMessages()[`${props.bot?.id ?? ""}:${message()?.id ?? ""}`]}
+                              open={expandedThinkingMessages()[`${props.agent?.id ?? ""}:${message()?.id ?? ""}`]}
                               onOpenChange={(open) => {
-                                const key = `${props.bot?.id ?? ""}:${message()?.id ?? ""}`;
+                                const key = `${props.agent?.id ?? ""}:${message()?.id ?? ""}`;
                                 setExpandedThinkingMessages((current) =>
                                   current[key] === open ? current : { ...current, [key]: open },
                                 );
@@ -514,7 +514,7 @@ export function ConversationTimeline() {
             <Show when={renderedAgentActivity()}>
               {(activity) => (
                 <AgentActivityIndicator
-                  bot={activity().bot}
+                  agent={activity().agent}
                   detail={activity().detail}
                   presentation={activity().presentation}
                   phase={activity().phase}
@@ -529,7 +529,11 @@ export function ConversationTimeline() {
                   questions={entry.prompt.questions}
                   onSubmit={props.onAnswerPrompt}
                   onResolutionPresented={() =>
-                    props.onPromptResolutionPresented?.(entry.prompt.botId, entry.prompt.turnId, entry.prompt.requestId)
+                    props.onPromptResolutionPresented?.(
+                      entry.prompt.agentId,
+                      entry.prompt.turnId,
+                      entry.prompt.requestId,
+                    )
                   }
                 />
               </Loading>
@@ -549,7 +553,7 @@ export function ConversationTimeline() {
           <Show when={props.browserTakeover}>
             <Loading>
               <BrowserTakeoverCard
-                botName={props.bot?.name ?? "the agent"}
+                agentName={props.agent?.name ?? "the agent"}
                 tab={browserTakeoverTab()}
                 preview={browserTakeoverPreview().preview}
                 previewStatus={browserTakeoverPreview().status}
@@ -561,7 +565,7 @@ export function ConversationTimeline() {
           <Show when={!props.browserTakeover && browserTakeoverResolution()}>
             {(resolution) => (
               <BrowserTakeoverCard
-                botName={props.bot?.name ?? "the agent"}
+                agentName={props.agent?.name ?? "the agent"}
                 tab={resolution().tab}
                 preview={resolution().preview}
                 previewStatus={resolution().previewStatus}

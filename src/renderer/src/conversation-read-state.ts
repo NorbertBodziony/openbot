@@ -9,7 +9,7 @@ import {
   ROUTINE_EVENT_ITEM_TYPE_PREFIX,
   ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX,
 } from "@openbot/contracts/ipc";
-import type { BotMessage } from "./data";
+import type { AgentMessage } from "./data";
 
 /**
  * What the renderer has already asked main to mark read, per conversation. A
@@ -61,7 +61,7 @@ function isIncomingConversationMessage(message: { author: ConversationMessageAut
  * kinds of row the renderer synthesizes itself: streamed thinking and UI notices.
  * Neither exists in main, so neither can be read.
  */
-function isIncomingAgentMessage(message: BotMessage): boolean {
+function isIncomingAgentMessage(message: AgentMessage): boolean {
   return (
     isIncoming(message, message.author === "you") &&
     !message.id.startsWith("thinking:") &&
@@ -81,7 +81,7 @@ export function latestIncomingConversationMessage<
 }
 
 /** The same boundary over what the renderer is showing. */
-export function latestVisibleAgentMessageId(messages: readonly BotMessage[] | undefined): string | null {
+export function latestVisibleAgentMessageId(messages: readonly AgentMessage[] | undefined): string | null {
   if (!messages) return null;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
@@ -115,7 +115,7 @@ export function readStateForMessages(
 export function preserveKnownAgentUnread(
   state: ConversationReadState,
   boundary: string | null,
-  messages: BotMessage[],
+  messages: AgentMessage[],
 ): ConversationReadState {
   const throughMessageId = state.throughMessageId ?? boundary;
   const throughIndex = throughMessageId ? messages.findIndex((message) => message.id === throughMessageId) : -1;
@@ -162,8 +162,8 @@ export function retainedAutoReadState(entry: AgentAutoReadEntry | undefined): Co
  * and pages may re-apply their own revision, so they compare with `<`; a delta
  * has to advance it, so it compares with `<=`.
  */
-export function appliedConversationRevision(revisions: Record<string, number>, botId: string): number {
-  return revisions[botId] ?? -1;
+export function appliedConversationRevision(revisions: Record<string, number>, agentId: string): number {
+  return revisions[agentId] ?? -1;
 }
 
 /** What to do about a message the renderer would like to mark read. */

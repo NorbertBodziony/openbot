@@ -15,7 +15,7 @@ import { OpenPanelBase, type OpenPanelOptions } from "@openpanel/web";
 export const OPENPANEL_API_URL = "https://analytics.openbot.run/api";
 export const OPENPANEL_CLIENT_ID = "6c989975-87ef-4f0c-857e-ab449a65b5c2";
 const MAX_PENDING_EVENTS = 100;
-export const ANALYTICS_SCHEMA_VERSION = 4;
+export const ANALYTICS_SCHEMA_VERSION = 5;
 
 export type ServerKind = "local" | "remote" | "unknown";
 export type AnalyticsResult = "succeeded" | "failed";

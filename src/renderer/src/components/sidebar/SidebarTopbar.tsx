@@ -32,7 +32,7 @@ export function SidebarTopbar() {
           ]}
           onClick={() => (props.compact ? props.onExpand() : props.onOpenMarketplace())}
           aria-label={props.compact ? "Expand sidebar" : "Open Marketplace"}
-          aria-controls={props.compact ? "bot-sidebar" : undefined}
+          aria-controls={props.compact ? "agent-sidebar" : undefined}
           aria-expanded={props.compact ? "false" : undefined}
           title={props.compact ? "Expand sidebar" : "Marketplace"}
         >
@@ -44,8 +44,8 @@ export function SidebarTopbar() {
           variant="ghost"
           type="button"
           class="sidebar-icon-button sidebar-new-button no-drag"
-          onClick={props.onCreateBot}
-          aria-label="Create new Bot"
+          onClick={props.onCreateAgent}
+          aria-label="Create new agent"
           aria-hidden={props.compact ? "true" : undefined}
           tabindex={props.compact ? -1 : 0}
         >

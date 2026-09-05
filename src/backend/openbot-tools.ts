@@ -17,7 +17,7 @@ export const OPENBOT_DYNAMIC_TOOLS = {
       type: "function",
       name: "publish_site",
       description:
-        "Publish a new static site after the user explicitly asks to publish it. The source must be inside this bot's workspace or OpenBot Shared.",
+        "Publish a new static site after the user explicitly asks to publish it. The source must be inside this agent's workspace or OpenBot Shared.",
       inputSchema: {
         type: "object",
         properties: {
@@ -91,12 +91,12 @@ export const OPENBOT_DYNAMIC_TOOLS = {
       inputSchema: {
         type: "object",
         properties: {
-          botId: { type: "string", minLength: 1 },
+          agentId: { type: "string", minLength: 1 },
           name: { type: "string", maxLength: 80 },
           title: { type: "string", maxLength: 120 },
           description: { type: "string", maxLength: 2_000 },
         },
-        required: ["botId"],
+        required: ["agentId"],
         additionalProperties: false,
       },
     },
@@ -104,10 +104,10 @@ export const OPENBOT_DYNAMIC_TOOLS = {
       type: "function",
       name: "list_routines",
       description:
-        "List routines for this agent, or for another local agent when botId is provided. Use this before updating or deleting a routine.",
+        "List routines for this agent, or for another local agent when agentId is provided. Use this before updating or deleting a routine.",
       inputSchema: {
         type: "object",
-        properties: { botId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier } },
+        properties: { agentId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier } },
         additionalProperties: false,
       },
     },
@@ -115,11 +115,11 @@ export const OPENBOT_DYNAMIC_TOOLS = {
       type: "function",
       name: "create_routine",
       description:
-        "Create a scheduled routine for this agent, or for another local agent when botId is provided. It is active by default and uses the host timezone by default.",
+        "Create a scheduled routine for this agent, or for another local agent when agentId is provided. It is active by default and uses the host timezone by default.",
       inputSchema: {
         type: "object",
         properties: {
-          botId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier },
+          agentId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier },
           name: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.routineName },
           instruction: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.routineInstruction },
           schedule: ROUTINE_SCHEDULE_JSON_SCHEMA,
@@ -139,11 +139,11 @@ export const OPENBOT_DYNAMIC_TOOLS = {
       type: "function",
       name: "update_routine",
       description:
-        "Update, pause, or resume an existing routine for this agent, or for another local agent when botId is provided.",
+        "Update, pause, or resume an existing routine for this agent, or for another local agent when agentId is provided.",
       inputSchema: {
         type: "object",
         properties: {
-          botId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier },
+          agentId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier },
           routineId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier },
           name: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.routineName },
           instruction: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.routineInstruction },
@@ -157,11 +157,11 @@ export const OPENBOT_DYNAMIC_TOOLS = {
     {
       type: "function",
       name: "delete_routine",
-      description: "Delete an existing routine for this agent, or for another local agent when botId is provided.",
+      description: "Delete an existing routine for this agent, or for another local agent when agentId is provided.",
       inputSchema: {
         type: "object",
         properties: {
-          botId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier },
+          agentId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier },
           routineId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier },
         },
         required: ["routineId"],
@@ -172,11 +172,11 @@ export const OPENBOT_DYNAMIC_TOOLS = {
       type: "function",
       name: "test_routine",
       description:
-        "Queue one manual test run of an existing routine for this agent, or for another local agent when botId is provided.",
+        "Queue one manual test run of an existing routine for this agent, or for another local agent when agentId is provided.",
       inputSchema: {
         type: "object",
         properties: {
-          botId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier },
+          agentId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier },
           routineId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier },
         },
         required: ["routineId"],
@@ -279,7 +279,7 @@ export const OPENBOT_DYNAMIC_TOOLS = {
       inputSchema: {
         type: "object",
         properties: {
-          recipientBotIds: {
+          recipientAgentIds: {
             type: "array",
             items: { type: "string" },
             minItems: 1,
@@ -289,7 +289,7 @@ export const OPENBOT_DYNAMIC_TOOLS = {
           paths: { type: "array", items: { type: "string" }, maxItems: 10 },
           replyToMessageId: { type: ["string", "null"] },
         },
-        required: ["recipientBotIds", "text"],
+        required: ["recipientAgentIds", "text"],
         additionalProperties: false,
       },
     },

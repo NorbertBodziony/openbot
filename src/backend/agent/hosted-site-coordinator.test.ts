@@ -72,11 +72,11 @@ describe.sequential("HostedSiteCoordinator: approval, mutation and markers", () 
     const events: AgentEvent[] = [];
     service.on("event", (event) => events.push(event));
     await service.initialize();
-    const bot = await store.getOrCreate("chief");
-    await service.sendMessage({ botId: bot.id, text: "Publish my site." });
+    const agent = await store.getOrCreate("chief");
+    await service.sendMessage({ agentId: agent.id, text: "Publish my site." });
     await waitFor(() => events.some((event) => event.type === "turn-started"));
     const client = clients.get("codex");
-    const threadId = store.activeProviderSession(bot.id)?.externalSessionId;
+    const threadId = store.activeProviderSession(agent.id)?.externalSessionId;
     const turnId = events.find((event) => event.type === "turn-started")?.turnId;
     if (!client || !threadId || !turnId) throw new Error("The hosted site approval turn did not start.");
 
@@ -105,7 +105,7 @@ describe.sequential("HostedSiteCoordinator: approval, mutation and markers", () 
         namespace: "openbot",
         tool: "publish_site",
         arguments: {
-          sourcePath: bot.workspacePath,
+          sourcePath: agent.workspacePath,
           title: "Approved public site",
           description: "A public test site.",
         },
@@ -118,7 +118,7 @@ describe.sequential("HostedSiteCoordinator: approval, mutation and markers", () 
       approval: {
         kind: "permissions",
         reason: 'Publish "Approved public site" as a public site on openbot.site.',
-        permissions: { fileSystem: { read: [bot.workspacePath], write: [] }, network: true },
+        permissions: { fileSystem: { read: [agent.workspacePath], write: [] }, network: true },
       },
     });
 
@@ -143,7 +143,7 @@ describe.sequential("HostedSiteCoordinator: approval, mutation and markers", () 
     expect(hostedSites.publish).toHaveBeenCalledTimes(1);
     expect(openBotToolPayload(client.responses[0]?.result)).toMatchObject({ id: "site-1", status: "active" });
     expect(
-      (await service.readConversation(bot.id)).messages.flatMap(
+      (await service.readConversation(agent.id)).messages.flatMap(
         (message) => hostedSiteConversationEvent(message) ?? [],
       ),
     ).toEqual([
@@ -167,7 +167,7 @@ describe.sequential("HostedSiteCoordinator: approval, mutation and markers", () 
         namespace: "openbot",
         tool: "publish_site",
         arguments: {
-          sourcePath: bot.workspacePath,
+          sourcePath: agent.workspacePath,
           title: "Unrecorded site",
           description: "This deploy must not start.",
         },
@@ -205,7 +205,7 @@ describe.sequential("HostedSiteCoordinator: approval, mutation and markers", () 
       id: "delete-site-approval",
       error: { message: "The user declined this hosted site change." },
     });
-    const markers = (await service.readConversation(bot.id)).messages.flatMap(
+    const markers = (await service.readConversation(agent.id)).messages.flatMap(
       (message) => hostedSiteConversationEvent(message) ?? [],
     );
     expect(markers.map(({ action, status }) => ({ action, status }))).toEqual([
@@ -213,8 +213,8 @@ describe.sequential("HostedSiteCoordinator: approval, mutation and markers", () 
       { action: "publish", status: "succeeded" },
       { action: "delete", status: "cancelled" },
     ]);
-    expect((await service.readConversationPageFor(bot.id, "member-1")).readState?.unreadCount).toBe(0);
-    expect(service.searchConversationMessages(hostedSite.title, bot.id).total).toBe(0);
+    expect((await service.readConversationPageFor(agent.id, "member-1")).readState?.unreadCount).toBe(0);
+    expect(service.searchConversationMessages(hostedSite.title, agent.id).total).toBe(0);
   });
 
   it("records failed site updates and successful site deletions as separate transitions", async () => {
@@ -261,11 +261,11 @@ describe.sequential("HostedSiteCoordinator: approval, mutation and markers", () 
     const events: AgentEvent[] = [];
     service.on("event", (event) => events.push(event));
     await service.initialize();
-    const bot = await store.getOrCreate("chief");
-    await service.sendMessage({ botId: bot.id, text: "Update and remove my site." });
+    const agent = await store.getOrCreate("chief");
+    await service.sendMessage({ agentId: agent.id, text: "Update and remove my site." });
     await waitFor(() => events.some((event) => event.type === "turn-started"));
     const client = clients.get("codex");
-    const threadId = store.activeProviderSession(bot.id)?.externalSessionId;
+    const threadId = store.activeProviderSession(agent.id)?.externalSessionId;
     const turnId = events.find((event) => event.type === "turn-started")?.turnId;
     if (!client || !threadId || !turnId) throw new Error("The hosted site transition turn did not start.");
 
@@ -280,7 +280,7 @@ describe.sequential("HostedSiteCoordinator: approval, mutation and markers", () 
         tool: "replace_site",
         arguments: {
           siteId: hostedSite.id,
-          sourcePath: bot.workspacePath,
+          sourcePath: agent.workspacePath,
           title: "Updated site",
           description: "Updated content.",
         },
@@ -310,7 +310,7 @@ describe.sequential("HostedSiteCoordinator: approval, mutation and markers", () 
     await service.respondToApproval({ requestId: "delete-site-success", decision: "accept" });
     expect(hostedSites.delete).toHaveBeenCalledTimes(1);
 
-    const markers = (await service.readConversation(bot.id)).messages.flatMap(
+    const markers = (await service.readConversation(agent.id)).messages.flatMap(
       (message) => hostedSiteConversationEvent(message) ?? [],
     );
     expect(markers.map(({ action, status }) => ({ action, status }))).toEqual([
@@ -364,11 +364,11 @@ describe.sequential("HostedSiteCoordinator: approval, mutation and markers", () 
     const events: AgentEvent[] = [];
     service.on("event", (event) => events.push(event));
     await service.initialize();
-    const bot = await store.getOrCreate("chief");
-    await service.sendMessage({ botId: bot.id, text: "Publish my site." });
+    const agent = await store.getOrCreate("chief");
+    await service.sendMessage({ agentId: agent.id, text: "Publish my site." });
     await waitFor(() => events.some((event) => event.type === "turn-started"));
     const client = clients.get("codex");
-    const threadId = store.activeProviderSession(bot.id)?.externalSessionId;
+    const threadId = store.activeProviderSession(agent.id)?.externalSessionId;
     const turnId = events.find((event) => event.type === "turn-started")?.turnId;
     if (!client || !threadId || !turnId) throw new Error("The hosted site retry test turn did not start.");
 
@@ -382,7 +382,7 @@ describe.sequential("HostedSiteCoordinator: approval, mutation and markers", () 
         namespace: "openbot",
         tool: "publish_site",
         arguments: {
-          sourcePath: bot.workspacePath,
+          sourcePath: agent.workspacePath,
           title: hostedSite.title,
           description: hostedSite.description,
         },
@@ -404,7 +404,7 @@ describe.sequential("HostedSiteCoordinator: approval, mutation and markers", () 
     expect(hostedSites.publish).toHaveBeenCalledTimes(1);
     expect(client.responses).toHaveLength(0);
     expect(
-      (await service.readConversation(bot.id)).messages
+      (await service.readConversation(agent.id)).messages
         .flatMap((message) => hostedSiteConversationEvent(message) ?? [])
         .map((marker) => marker.status),
     ).toEqual(["running"]);
@@ -424,7 +424,7 @@ describe.sequential("HostedSiteCoordinator: approval, mutation and markers", () 
 
     expect(hostedSites.publish).toHaveBeenCalledTimes(1);
     expect(
-      (await service.readConversation(bot.id)).messages
+      (await service.readConversation(agent.id)).messages
         .flatMap((message) => hostedSiteConversationEvent(message) ?? [])
         .map((marker) => marker.status),
     ).toEqual(["running", "succeeded"]);
@@ -474,11 +474,11 @@ describe.sequential("HostedSiteCoordinator: approval, mutation and markers", () 
     const events: AgentEvent[] = [];
     service.on("event", (event) => events.push(event));
     await service.initialize();
-    const bot = await store.getOrCreate("chief");
-    await service.sendMessage({ botId: bot.id, text: "Delete my old site." });
+    const agent = await store.getOrCreate("chief");
+    await service.sendMessage({ agentId: agent.id, text: "Delete my old site." });
     await waitFor(() => events.some((event) => event.type === "turn-started"));
     const client = clients.get("codex");
-    const threadId = store.activeProviderSession(bot.id)?.externalSessionId;
+    const threadId = store.activeProviderSession(agent.id)?.externalSessionId;
     const turnId = events.find((event) => event.type === "turn-started")?.turnId;
     if (!client || !threadId || !turnId) throw new Error("The legacy hosted site test turn did not start.");
 
@@ -498,7 +498,7 @@ describe.sequential("HostedSiteCoordinator: approval, mutation and markers", () 
     await service.respondToApproval({ requestId: "delete-legacy-site", decision: "accept" });
 
     expect(hostedSites.delete).toHaveBeenCalledTimes(1);
-    const markers = (await service.readConversation(bot.id)).messages.flatMap(
+    const markers = (await service.readConversation(agent.id)).messages.flatMap(
       (message) => hostedSiteConversationEvent(message) ?? [],
     );
     expect(markers.map((marker) => marker.status)).toEqual(["running", "succeeded"]);
@@ -514,11 +514,11 @@ describe.sequential("HostedSiteCoordinator: approval, mutation and markers", () 
     const { store, mailbox } = stores(root);
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
-    const bot = await store.getOrCreate("chief");
-    const threadId = store.ensureThreadIdNow(bot.id);
+    const agent = await store.getOrCreate("chief");
+    const threadId = store.ensureThreadIdNow(agent.id);
     const details = { siteId: null, title: "Restarted deploy", hostname: null, url: null };
     store.database.appendConversationMessage({
-      botId: bot.id,
+      agentId: agent.id,
       threadId,
       activeTurnId: null,
       message: {
@@ -535,7 +535,7 @@ describe.sequential("HostedSiteCoordinator: approval, mutation and markers", () 
       commandId: "hosted-site-event:operation-restart:running",
     });
     store.database.recordActiveHostedSiteConversationEvent({
-      botId: bot.id,
+      agentId: agent.id,
       threadId,
       turnId: "turn-restart",
       createdAt: "2026-09-01T12:00:00.000Z",
@@ -545,7 +545,7 @@ describe.sequential("HostedSiteCoordinator: approval, mutation and markers", () 
     await service.stop();
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
-    const markers = (await service.readConversation(bot.id)).messages.flatMap(
+    const markers = (await service.readConversation(agent.id)).messages.flatMap(
       (message) => hostedSiteConversationEvent(message) ?? [],
     );
     expect(markers.map((marker) => marker.status)).toEqual(["running", "interrupted"]);
@@ -594,11 +594,11 @@ describe.sequential("HostedSiteCoordinator: approval, mutation and markers", () 
     const events: AgentEvent[] = [];
     service.on("event", (event) => events.push(event));
     await service.initialize();
-    const bot = await store.getOrCreate("chief");
-    await service.sendMessage({ botId: bot.id, text: "Publish my site." });
+    const agent = await store.getOrCreate("chief");
+    await service.sendMessage({ agentId: agent.id, text: "Publish my site." });
     await waitFor(() => events.some((event) => event.type === "turn-started"));
     const client = clients.get("codex");
-    const threadId = store.activeProviderSession(bot.id)?.externalSessionId;
+    const threadId = store.activeProviderSession(agent.id)?.externalSessionId;
     const turnId = events.find((event) => event.type === "turn-started")?.turnId;
     if (!client || !threadId || !turnId) throw new Error("The hosted site response test turn did not start.");
 
@@ -612,7 +612,7 @@ describe.sequential("HostedSiteCoordinator: approval, mutation and markers", () 
         namespace: "openbot",
         tool: "publish_site",
         arguments: {
-          sourcePath: bot.workspacePath,
+          sourcePath: agent.workspacePath,
           title: hostedSite.title,
           description: hostedSite.description,
         },
@@ -624,7 +624,7 @@ describe.sequential("HostedSiteCoordinator: approval, mutation and markers", () 
 
     expect(hostedSites.publish).toHaveBeenCalledTimes(1);
     expect(
-      (await service.readConversation(bot.id)).messages
+      (await service.readConversation(agent.id)).messages
         .flatMap((message) => hostedSiteConversationEvent(message) ?? [])
         .map((marker) => marker.status),
     ).toEqual(["running", "succeeded"]);

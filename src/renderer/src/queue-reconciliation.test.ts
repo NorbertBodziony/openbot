@@ -18,7 +18,7 @@ function delivery(overrides: DeliveryOverrides): QueueDelivery {
   return {
     id: overrides.id,
     messageId: `message-${overrides.id}`,
-    recipientBotId: "chief",
+    recipientAgentId: "chief",
     sender: { kind: "user" },
     text: "Do the thing",
     attachments: [],
@@ -31,7 +31,7 @@ function delivery(overrides: DeliveryOverrides): QueueDelivery {
   };
 }
 
-const snapshot = (...deliveries: QueueDelivery[]): QueueSnapshot => ({ botId: "chief", deliveries });
+const snapshot = (...deliveries: QueueDelivery[]): QueueSnapshot => ({ agentId: "chief", deliveries });
 const ids = (deliveries: readonly QueueDelivery[]) => deliveries.map((entry) => entry.id);
 
 describe("activeQueueDeliveries", () => {

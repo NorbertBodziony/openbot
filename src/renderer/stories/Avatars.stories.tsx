@@ -3,7 +3,7 @@ import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { bloubAvatarProfile } from "../src/bloub-avatar";
 import { AgentAvatar } from "../src/components/AgentAvatar";
 import { TeamPersonAvatar } from "../src/components/TeamPersonAvatar";
-import { STORY_BOTS, STORY_PRESENCE } from "./fixtures";
+import { STORY_AGENTS, STORY_PRESENCE } from "./fixtures";
 
 const agentMeta = {
   title: "Identity/AgentAvatar",
@@ -15,15 +15,15 @@ export default agentMeta;
 type AgentStory = StoryObj<typeof agentMeta>;
 
 export const Generated: AgentStory = {
-  args: { bot: STORY_BOTS[0], motion: "hover" },
+  args: { agent: STORY_AGENTS[0], motion: "hover" },
 };
 
 export const Thinking: AgentStory = {
-  args: { bot: STORY_BOTS[1], motion: "always", class: "size-12" },
+  args: { agent: STORY_AGENTS[1], motion: "always", class: "size-12" },
 };
 
 export const CustomImageFallback: AgentStory = {
-  args: { bot: { ...STORY_BOTS[2], avatarUrl: "mock-avatar://missing" } },
+  args: { agent: { ...STORY_AGENTS[2], avatarUrl: "mock-avatar://missing" } },
 };
 
 const AVATAR_SIZES = [16, 18, 24, 32, 36, 42, 62] as const;
@@ -43,7 +43,7 @@ export const SizesAndStates: AgentStory = {
             <div class="flex items-end gap-5">
               {AVATAR_SIZES.map((size) => (
                 <div class="grid justify-items-center gap-2">
-                  <span class="bot-avatar bot-avatar-bloub" style={{ width: `${size}px`, height: `${size}px` }}>
+                  <span class="agent-avatar agent-avatar-bloub" style={{ width: `${size}px`, height: `${size}px` }}>
                     <BloubBot
                       size={100}
                       shape={profile.shape}

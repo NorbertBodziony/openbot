@@ -6,7 +6,7 @@ import {
 import { expandChatTagReferences } from "@openbot/contracts/chat-tag-references";
 import type { InstalledSkill, MessageReaction } from "@openbot/contracts/ipc";
 import { desktopAnalytics } from "../../../analytics";
-import type { BotMessage } from "../../../data";
+import type { AgentMessage } from "../../../data";
 import type { ComposerDraft, ConversationProps } from "../../ConversationView";
 
 export interface MessageActionsDeps {
@@ -14,7 +14,7 @@ export interface MessageActionsDeps {
   installedSkills: () => InstalledSkill[];
   currentDraft: () => ComposerDraft;
   updateCurrentDraft: (patch: Partial<ComposerDraft>) => void;
-  currentTarget: () => { botId: string; serverId: string } | undefined;
+  currentTarget: () => { agentId: string; serverId: string } | undefined;
   setOpenReactionMessageId: (id: string | null) => void;
   setOpenMoreMessageId: (id: string | null) => void;
   setExpandedEmojiMessageId: (id: string | null) => void;
@@ -24,21 +24,21 @@ export interface MessageActionsDeps {
 }
 
 export function createMessageActions(deps: MessageActionsDeps) {
-  function replyToMessage(message: BotMessage) {
+  function replyToMessage(message: AgentMessage) {
     deps.updateCurrentDraft({ replyToMessageId: message.id });
     deps.setOpenReactionMessageId(null);
     deps.setOpenMoreMessageId(null);
   }
 
-  async function reactToMessage(message: BotMessage, emoji: MessageReaction | null) {
-    const botId = deps.props.bot?.id;
-    if (!botId) return;
+  async function reactToMessage(message: AgentMessage, emoji: MessageReaction | null) {
+    const agentId = deps.props.agent?.id;
+    if (!agentId) return;
     const analytics = desktopAnalytics.scope();
     deps.setOpenReactionMessageId(null);
     deps.setExpandedEmojiMessageId(null);
     try {
       await window.openbot.agent.setMessageReaction({
-        botId,
+        agentId,
         messageId: message.id,
         emoji,
       });
@@ -53,9 +53,9 @@ export function createMessageActions(deps: MessageActionsDeps) {
     }
   }
 
-  async function copyMessage(message: BotMessage) {
+  async function copyMessage(message: AgentMessage) {
     const attachmentNames = new Map((message.attachments ?? []).map((attachment) => [attachment.id, attachment.name]));
-    const agentNames = new Map(deps.props.bots.map((bot) => [bot.id, bot.name]));
+    const agentNames = new Map(deps.props.agents.map((agent) => [agent.id, agent.name]));
     const skillNames = new Map(
       deps
         .installedSkills()

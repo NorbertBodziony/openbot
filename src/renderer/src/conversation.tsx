@@ -11,12 +11,12 @@ import { useAgentReadTracking } from "./agent-read-tracking";
 import { useAgents } from "./agents";
 import { desktopAnalytics } from "./analytics";
 import {
-  botMessagesEqual,
+  agentMessagesEqual,
   formatTime,
   retainThinkingMessages,
-  toBotMessage,
-  toBotMessages,
-  withoutBot,
+  toAgentMessage,
+  toAgentMessages,
+  withoutAgent,
 } from "./app-message-projection";
 import { createStoredMessage, updateStored } from "./app-stored-values";
 import { agentConversationKey, agentMessageKey, messagePromptRequestKey, promptRequestKey } from "./conversation-keys";
@@ -30,7 +30,7 @@ import {
   readStateForMessages,
   retainedAutoReadState,
 } from "./conversation-read-state";
-import type { BotMessage } from "./data";
+import type { AgentMessage } from "./data";
 import { useDirectMessages } from "./direct-messages";
 import { usePlatform } from "./platform";
 import { createScopeGuard } from "./scope-lifetime";
@@ -61,7 +61,7 @@ import { useTurns } from "./turns";
  * function:
  *
  * - **Reads are serialized per conversation.** `conversationReadOperations`
- *   chains every `markConversationRead` for a bot behind the previous one, so
+ *   chains every `markConversationRead` for an agent behind the previous one, so
  *   two boundaries can never race to become the stored one.
  * - **An optimistic read is owned by `autoReadAgentMessages`.** Whoever wrote the
  *   optimistic state is the only one allowed to roll it back, which is why the
@@ -80,7 +80,7 @@ import { useTurns } from "./turns";
  * borrowed from `agent-read-tracking.tsx` rather than owned here. A read is
  * issued against a named server and can still be in flight when the user leaves
  * it, so its retry marker has to survive the switch to be found on the way back.
- * `agentChatsRetriedOnOpen` is the one that stays, because it is keyed by bot id
+ * `agentChatsRetriedOnOpen` is the one that stays, because it is keyed by agent id
  * alone and describes this open rather than that read.
  */
 const Conversation = createSimpleContext({
@@ -92,20 +92,20 @@ const Conversation = createSimpleContext({
     const scopeIsCurrent = createScopeGuard();
     const { activeDirectMemberId } = useDirectMessages();
     const {
-      activeBot,
-      activeBotId,
+      activeAgent,
+      activeAgentId,
       agentStatus,
       agentChatOpenRevision,
       setAgentChatOpenRevision,
       appendUiError,
       analyticsAgentProperties,
-      botSetupOpen,
+      agentSetupOpen,
       explicitlyOpenedAgentChatId,
       uiErrors,
       setUiErrors,
     } = useAgents();
     const {
-      completedTurnByBot,
+      completedTurnByAgent,
       pendingPrompts,
       setPendingPrompts,
       presentedPromptResolutions,
@@ -116,13 +116,13 @@ const Conversation = createSimpleContext({
       setTurnProgress,
     } = useTurns();
 
-    const [liveMessages, setLiveMessages] = createSignal<Record<string, BotMessage[]>>({});
+    const [liveMessages, setLiveMessages] = createSignal<Record<string, AgentMessage[]>>({});
     const [conversationLoaded, setConversationLoaded] = createSignal<Record<string, boolean>>({});
     const [conversationRevisions, setConversationRevisions] = createSignal<Record<string, number>>({});
     const [conversationPages, setConversationPages] = createSignal<Record<string, ConversationPageInfo>>({});
     const [conversationWindowModes, setConversationWindowModes] = createSignal<Record<string, "latest" | "around">>({});
     const [conversationReferences, setConversationReferences] = createSignal<
-      Record<string, Record<string, BotMessage>>
+      Record<string, Record<string, AgentMessage>>
     >({});
     const rawAgentMessageBodies = new Map<string, string>();
     const [conversationOlderLoading, setConversationOlderLoading] = createSignal<Record<string, boolean>>({});
@@ -139,101 +139,103 @@ const Conversation = createSimpleContext({
     let conversationFrame: number | undefined;
 
     const activeMessages = createMemo(() => {
-      const bot = activeBot();
-      if (!bot) return [];
-      const prompt = pendingPrompts()[bot.id];
+      const agent = activeAgent();
+      if (!agent) return [];
+      const prompt = pendingPrompts()[agent.id];
       const requestKey = prompt?.type === "prompt" ? promptRequestKey(prompt.turnId, prompt.requestId) : null;
-      const messages = (liveMessages()[bot.id] ?? []).filter(
+      const messages = (liveMessages()[agent.id] ?? []).filter(
         (message) =>
           message.questionPrompt?.resolution !== null &&
           (!requestKey || messagePromptRequestKey(message) !== requestKey),
       );
-      return [...messages, ...(uiErrors()[agentConversationKey(activeServerId(), bot.id)] ?? [])];
+      return [...messages, ...(uiErrors()[agentConversationKey(activeServerId(), agent.id)] ?? [])];
     });
 
     createEffect(
-      () => ({ botId: activeBotId(), agentPhase: agentStatus().phase, openRevision: agentChatOpenRevision() }),
-      ({ botId }) => {
-        if (!botId) return;
+      () => ({ agentId: activeAgentId(), agentPhase: agentStatus().phase, openRevision: agentChatOpenRevision() }),
+      ({ agentId }) => {
+        if (!agentId) return;
         const serverId = activeServerId();
-        const trackingKey = agentConversationKey(serverId, botId);
-        const pageRequest = (conversationPageRequests.get(botId) ?? 0) + 1;
-        conversationPageRequests.set(botId, pageRequest);
+        const trackingKey = agentConversationKey(serverId, agentId);
+        const pageRequest = (conversationPageRequests.get(agentId) ?? 0) + 1;
+        conversationPageRequests.set(agentId, pageRequest);
         void window.openbot.agent
-          .readConversationPage({ botId, anchor: { type: "latest" }, limit: 50 }, serverId)
+          .readConversationPage({ agentId, anchor: { type: "latest" }, limit: 50 }, serverId)
           .then((page) => {
-            if (!scopeIsCurrent() || conversationPageRequests.get(botId) !== pageRequest) return;
+            if (!scopeIsCurrent() || conversationPageRequests.get(agentId) !== pageRequest) return;
             const pageApplied = applyConversationPage(page, "replace", "latest");
             if (!pageApplied) {
               if (agentChatsToMarkRead.has(trackingKey)) {
-                if (!agentChatsRetriedOnOpen.has(botId)) {
-                  agentChatsRetriedOnOpen.add(botId);
+                if (!agentChatsRetriedOnOpen.has(agentId)) {
+                  agentChatsRetriedOnOpen.add(agentId);
                   setAgentChatOpenRevision((current) => current + 1);
                 } else {
                   agentChatsToMarkRead.delete(trackingKey);
-                  markLatestVisibleAgentMessageRead(botId, serverId);
+                  markLatestVisibleAgentMessageRead(agentId, serverId);
                 }
               }
               return;
             }
-            agentChatsRetriedOnOpen.delete(botId);
+            agentChatsRetriedOnOpen.delete(agentId);
             const markReadOnOpen = agentChatsToMarkRead.delete(trackingKey);
             if (markReadOnOpen && (page.readState?.unreadCount ?? 0) > 0) {
-              void markAgentMessagesRead(botId, page.messages.at(-1)?.id ?? null, serverId).catch((error) =>
-                appendUiError(botId, error, "Read state failed", serverId),
+              void markAgentMessagesRead(agentId, page.messages.at(-1)?.id ?? null, serverId).catch((error) =>
+                appendUiError(agentId, error, "Read state failed", serverId),
               );
             } else if (agentChatsToRetryRead.has(trackingKey) && (page.readState?.unreadCount ?? 0) > 0) {
               const latestIncomingMessage = latestIncomingConversationMessage(page.messages);
-              if (latestIncomingMessage) autoMarkAgentMessageRead(botId, latestIncomingMessage.id);
+              if (latestIncomingMessage) autoMarkAgentMessageRead(agentId, latestIncomingMessage.id);
             }
           })
           .catch((error) => {
-            if (!scopeIsCurrent() || conversationPageRequests.get(botId) !== pageRequest) return;
-            appendUiError(botId, error, "Load failed", serverId);
-            if (agentChatsToMarkRead.delete(trackingKey)) markLatestVisibleAgentMessageRead(botId, serverId);
+            if (!scopeIsCurrent() || conversationPageRequests.get(agentId) !== pageRequest) return;
+            appendUiError(agentId, error, "Load failed", serverId);
+            if (agentChatsToMarkRead.delete(trackingKey)) markLatestVisibleAgentMessageRead(agentId, serverId);
           });
       },
     );
 
     function applyConversationReads(reads: Record<string, ConversationReadState>): void {
       setConversationReads(reads);
-      setUnreadReplies(Object.fromEntries(Object.entries(reads).map(([botId, state]) => [botId, state.unreadCount])));
+      setUnreadReplies(
+        Object.fromEntries(Object.entries(reads).map(([agentId, state]) => [agentId, state.unreadCount])),
+      );
     }
 
-    function applyConversationReadState(botId: string, state: ConversationReadState): void {
-      setConversationReads((current) => ({ ...current, [botId]: state }));
-      setUnreadReplies((current) => ({ ...current, [botId]: state.unreadCount }));
+    function applyConversationReadState(agentId: string, state: ConversationReadState): void {
+      setConversationReads((current) => ({ ...current, [agentId]: state }));
+      setUnreadReplies((current) => ({ ...current, [agentId]: state.unreadCount }));
     }
 
     function scheduleConversation(snapshot: ConversationSnapshot) {
-      const botId = snapshot.botId;
-      const appliedRevision = appliedConversationRevision(conversationRevisions(), botId);
-      const pending = pendingConversationSnapshots.get(botId);
+      const agentId = snapshot.agentId;
+      const appliedRevision = appliedConversationRevision(conversationRevisions(), agentId);
+      const pending = pendingConversationSnapshots.get(agentId);
       const pendingRevision = pending?.revision ?? -1;
       if (snapshot.revision < Math.max(appliedRevision, pendingRevision)) return;
       for (const message of snapshot.messages) {
-        const key = agentMessageKey(botId, message.id);
+        const key = agentMessageKey(agentId, message.id);
         if (message.author !== "user" && message.status === "streaming") rawAgentMessageBodies.set(key, message.text);
         else rawAgentMessageBodies.delete(key);
       }
-      pendingConversationSnapshots.set(botId, snapshot);
+      pendingConversationSnapshots.set(agentId, snapshot);
       if (conversationFrame !== undefined) return;
       conversationFrame = requestAnimationFrame(() => {
         conversationFrame = undefined;
         const snapshots = [...pendingConversationSnapshots.values()];
         pendingConversationSnapshots.clear();
         for (const pendingSnapshot of snapshots) {
-          applyConversation(pendingSnapshot, isAgentChatReadable(pendingSnapshot.botId));
+          applyConversation(pendingSnapshot, isAgentChatReadable(pendingSnapshot.agentId));
         }
       });
     }
 
-    function isAgentChatOpen(botId: string): boolean {
-      return !botSetupOpen() && !activeDirectMemberId() && activeBot()?.id === botId;
+    function isAgentChatOpen(agentId: string): boolean {
+      return !agentSetupOpen() && !activeDirectMemberId() && activeAgent()?.id === agentId;
     }
 
-    function isAgentChatReadable(botId: string): boolean {
-      return appFocused() && isAgentChatOpen(botId);
+    function isAgentChatReadable(agentId: string): boolean {
+      return appFocused() && isAgentChatOpen(agentId);
     }
 
     /**
@@ -246,32 +248,32 @@ const Conversation = createSimpleContext({
      * it. The two arrive together whenever a live event advances the chat while
      * the open's page is still on the wire, which is a race, not a rare case.
      */
-    function markLatestVisibleAgentMessageRead(botId: string, serverId: string): void {
-      const latestMessageId = latestVisibleAgentMessageId(liveMessages()[botId]);
+    function markLatestVisibleAgentMessageRead(agentId: string, serverId: string): void {
+      const latestMessageId = latestVisibleAgentMessageId(liveMessages()[agentId]);
       if (!latestMessageId) return;
-      if (autoReadAgentMessages.get(agentConversationKey(serverId, botId))?.messageId === latestMessageId) return;
-      void markAgentMessagesRead(botId, latestMessageId, serverId).catch((error) =>
-        appendUiError(botId, error, "Read state failed", serverId),
+      if (autoReadAgentMessages.get(agentConversationKey(serverId, agentId))?.messageId === latestMessageId) return;
+      void markAgentMessagesRead(agentId, latestMessageId, serverId).catch((error) =>
+        appendUiError(agentId, error, "Read state failed", serverId),
       );
     }
 
     function refreshAgentReadStateAfterFailure(
-      botId: string,
+      agentId: string,
       messageId: string,
       serverId: string,
       minimumRevision: number,
       fallbackState: ConversationReadState | null,
     ): void {
-      const trackingKey = agentConversationKey(serverId, botId);
+      const trackingKey = agentConversationKey(serverId, agentId);
       const applyFallback = () => {
         if (!scopeIsCurrent() || autoReadAgentMessages.has(trackingKey) || !fallbackState) return;
-        const latest = conversationReads()[botId];
+        const latest = conversationReads()[agentId];
         if (latest?.unreadCount === 0 && latest.throughMessageId === messageId) {
-          applyConversationReadState(botId, fallbackState);
+          applyConversationReadState(agentId, fallbackState);
         }
       };
       void window.openbot.agent
-        .readConversationPage({ botId, anchor: { type: "latest" }, limit: 1 }, serverId)
+        .readConversationPage({ agentId, anchor: { type: "latest" }, limit: 1 }, serverId)
         .then((page) => {
           if (
             !scopeIsCurrent() ||
@@ -282,20 +284,20 @@ const Conversation = createSimpleContext({
             applyFallback();
             return;
           }
-          applyConversationReadState(botId, page.readState);
+          applyConversationReadState(agentId, page.readState);
         })
         .catch(applyFallback);
     }
 
-    function autoMarkAgentMessageRead(botId: string, messageId: string, optimisticallyClearUnread = false): void {
+    function autoMarkAgentMessageRead(agentId: string, messageId: string, optimisticallyClearUnread = false): void {
       const serverId = activeServerId();
-      const trackingKey = agentConversationKey(serverId, botId);
+      const trackingKey = agentConversationKey(serverId, agentId);
       const decision = decideAgentAutoRead({
         messageId,
-        current: conversationReads()[botId],
+        current: conversationReads()[agentId],
         tracked: autoReadAgentMessages.get(trackingKey),
         optimisticallyClearUnread,
-        explicitlyOpened: explicitlyOpenedAgentChatId() === botId,
+        explicitlyOpened: explicitlyOpenedAgentChatId() === agentId,
         // Read, not consumed: the flag is spent below, on the one path that asks
         // main. It can only be set on that path anyway - a set flag is what stops
         // the decision being `deferred` - so spending it later changes nothing.
@@ -303,14 +305,14 @@ const Conversation = createSimpleContext({
       });
       if (decision.kind === "deferred") return;
       if (decision.kind === "retained") {
-        if (decision.state) applyConversationReadState(botId, decision.state);
+        if (decision.state) applyConversationReadState(agentId, decision.state);
         return;
       }
       agentChatsToRetryRead.delete(trackingKey);
       const optimisticState = decision.optimisticState;
       autoReadAgentMessages.set(trackingKey, { messageId, status: "pending", optimisticState });
-      if (optimisticState) applyConversationReadState(botId, optimisticState);
-      void markAgentMessagesRead(botId, messageId, serverId, (state) => {
+      if (optimisticState) applyConversationReadState(agentId, optimisticState);
+      void markAgentMessagesRead(agentId, messageId, serverId, (state) => {
         if (autoReadAgentMessages.get(trackingKey)?.messageId !== messageId) return;
         autoReadAgentMessages.set(trackingKey, { messageId, status: "succeeded", state });
       }).catch((error) => {
@@ -319,33 +321,33 @@ const Conversation = createSimpleContext({
         agentChatsToRetryRead.add(trackingKey);
         if (!scopeIsCurrent()) return;
         refreshAgentReadStateAfterFailure(
-          botId,
+          agentId,
           messageId,
           serverId,
-          appliedConversationRevision(conversationRevisions(), botId),
+          appliedConversationRevision(conversationRevisions(), agentId),
           decision.rollbackState,
         );
-        appendUiError(botId, error, "Read state failed", serverId);
+        appendUiError(agentId, error, "Read state failed", serverId);
       });
     }
 
     function applyConversationDelta(event: Extract<AgentEvent, { type: "conversation-delta" }>) {
-      if (event.revision <= appliedConversationRevision(conversationRevisions(), event.botId)) return;
-      const pendingSnapshot = pendingConversationSnapshots.get(event.botId);
+      if (event.revision <= appliedConversationRevision(conversationRevisions(), event.agentId)) return;
+      const pendingSnapshot = pendingConversationSnapshots.get(event.agentId);
       if (pendingSnapshot) {
         if (event.revision <= pendingSnapshot.revision) return;
-        pendingConversationSnapshots.delete(event.botId);
-        applyConversation(pendingSnapshot, isAgentChatReadable(event.botId));
+        pendingConversationSnapshots.delete(event.agentId);
+        applyConversation(pendingSnapshot, isAgentChatReadable(event.agentId));
       }
       setConversationRevisions((current) => ({
         ...current,
-        [event.botId]: event.revision,
+        [event.agentId]: event.revision,
       }));
 
-      const messageKey = agentMessageKey(event.botId, event.messageId);
+      const messageKey = agentMessageKey(event.agentId, event.messageId);
       let appended = false;
       setLiveMessages((current) => {
-        const messages = current[event.botId] ?? [];
+        const messages = current[event.agentId] ?? [];
         const existing = messages.find((message) => message.id === event.messageId);
         const thinking = existing
           ? undefined
@@ -374,49 +376,49 @@ const Conversation = createSimpleContext({
         const message = createStoredMessage({
           id: event.messageId,
           turnId: event.turnId,
-          author: "bot",
+          author: "agent",
           body: cleanAgentMessageText(rawBody),
           time: formatTime(event.createdAt),
           createdAt: event.createdAt,
           streaming: true,
-          animate: conversationLoaded()[event.botId] === true,
+          animate: conversationLoaded()[event.agentId] === true,
           kind: "text",
         });
         appended = true;
         return {
           ...current,
-          [event.botId]: [...(current[event.botId] ?? []), message],
+          [event.agentId]: [...(current[event.agentId] ?? []), message],
         };
       });
       if (appended) {
-        const readState = conversationReads()[event.botId];
-        if (isAgentChatReadable(event.botId)) {
-          autoMarkAgentMessageRead(event.botId, event.messageId);
+        const readState = conversationReads()[event.agentId];
+        if (isAgentChatReadable(event.agentId)) {
+          autoMarkAgentMessageRead(event.agentId, event.messageId);
         } else if (readState) {
-          applyConversationReadState(event.botId, {
+          applyConversationReadState(event.agentId, {
             ...readState,
             unreadCount: readState.unreadCount + 1,
             firstUnreadMessageId: readState.firstUnreadMessageId ?? event.messageId,
           });
         }
       }
-      setConversationLoaded((current) => ({ ...current, [event.botId]: true }));
+      setConversationLoaded((current) => ({ ...current, [event.agentId]: true }));
     }
 
     function applyConversation(snapshot: ConversationSnapshot, markNewMessagesRead = false) {
-      const botId = snapshot.botId;
-      if (snapshot.revision < appliedConversationRevision(conversationRevisions(), botId)) return;
-      const initialLoad = conversationLoaded()[botId] !== true;
+      const agentId = snapshot.agentId;
+      if (snapshot.revision < appliedConversationRevision(conversationRevisions(), agentId)) return;
+      const initialLoad = conversationLoaded()[agentId] !== true;
       setConversationRevisions((current) => ({
         ...current,
-        [botId]: snapshot.revision,
+        [agentId]: snapshot.revision,
       }));
       setLiveMessages((current) => {
-        const previous = current[botId] ?? [];
+        const previous = current[agentId] ?? [];
         const previousById = new Map(previous.map((message) => [message.id, message]));
-        const allMappedMessages = toBotMessages(snapshot.messages, snapshot.botId);
-        const pageInfo = conversationPages()[botId];
-        const windowMode = conversationWindowModes()[botId] ?? "latest";
+        const allMappedMessages = toAgentMessages(snapshot.messages, snapshot.agentId);
+        const pageInfo = conversationPages()[agentId];
+        const windowMode = conversationWindowModes()[agentId] ?? "latest";
         const mappedMessages = retainThinkingMessages(
           previous,
           windowedSnapshotMessages(previous, allMappedMessages, {
@@ -427,20 +429,20 @@ const Conversation = createSimpleContext({
         const next = mappedMessages.map((mapped) => {
           const existing = previousById.get(mapped.id);
           if (!existing) return createStoredMessage({ ...mapped, animate: !initialLoad });
-          if (!botMessagesEqual(existing, mapped)) updateStored(existing, mapped);
+          if (!agentMessagesEqual(existing, mapped)) updateStored(existing, mapped);
           return existing;
         });
         if (previous.length === next.length && previous.every((message, index) => message === next[index])) {
           return current;
         }
-        return { ...current, [botId]: next };
+        return { ...current, [agentId]: next };
       });
-      setConversationLoaded((current) => ({ ...current, [botId]: true }));
-      const presentedRequestKey = presentedPromptResolutions()[botId];
-      const pendingPrompt = pendingPrompts()[botId];
+      setConversationLoaded((current) => ({ ...current, [agentId]: true }));
+      const presentedRequestKey = presentedPromptResolutions()[agentId];
+      const pendingPrompt = pendingPrompts()[agentId];
       const pendingRequestKey =
         pendingPrompt?.type === "prompt" ? promptRequestKey(pendingPrompt.turnId, pendingPrompt.requestId) : null;
-      const submittedRequestKey = submittedPromptRequests()[botId];
+      const submittedRequestKey = submittedPromptRequests()[agentId];
       const resolvedPendingPrompt =
         pendingRequestKey !== null &&
         snapshot.messages.some(
@@ -454,33 +456,33 @@ const Conversation = createSimpleContext({
             messagePromptRequestKey(message) === presentedRequestKey && message.questionPrompt?.resolution !== null,
         )
       ) {
-        setPendingPrompts((current) => ({ ...current, [botId]: undefined }));
-        setPresentedPromptResolutions((current) => ({ ...current, [botId]: undefined }));
-        setSubmittedPromptRequests((current) => ({ ...current, [botId]: undefined }));
+        setPendingPrompts((current) => ({ ...current, [agentId]: undefined }));
+        setPresentedPromptResolutions((current) => ({ ...current, [agentId]: undefined }));
+        setSubmittedPromptRequests((current) => ({ ...current, [agentId]: undefined }));
       } else if (
         resolvedPendingPrompt &&
-        (activeBot()?.id !== botId || !submittedRequestKey || submittedRequestKey !== pendingRequestKey)
+        (activeAgent()?.id !== agentId || !submittedRequestKey || submittedRequestKey !== pendingRequestKey)
       ) {
-        setPendingPrompts((current) => ({ ...current, [botId]: undefined }));
-        setPresentedPromptResolutions((current) => ({ ...current, [botId]: undefined }));
-        setSubmittedPromptRequests((current) => ({ ...current, [botId]: undefined }));
+        setPendingPrompts((current) => ({ ...current, [agentId]: undefined }));
+        setPresentedPromptResolutions((current) => ({ ...current, [agentId]: undefined }));
+        setSubmittedPromptRequests((current) => ({ ...current, [agentId]: undefined }));
       }
       setActiveTurns((current) => ({
         ...current,
-        [botId]: completedTurnByBot.get(botId) === snapshot.activeTurnId ? null : snapshot.activeTurnId,
+        [agentId]: completedTurnByAgent.get(agentId) === snapshot.activeTurnId ? null : snapshot.activeTurnId,
       }));
       setTurnProgress((current) => {
-        const progress = current[botId];
-        return progress && progress.turnId !== snapshot.activeTurnId ? withoutBot(current, botId) : current;
+        const progress = current[agentId];
+        return progress && progress.turnId !== snapshot.activeTurnId ? withoutAgent(current, agentId) : current;
       });
-      const readState = conversationReads()[botId];
+      const readState = conversationReads()[agentId];
       const latestIncomingMessage = markNewMessagesRead
         ? latestIncomingConversationMessage(snapshot.messages)
         : undefined;
       if (latestIncomingMessage) {
-        autoMarkAgentMessageRead(botId, latestIncomingMessage.id);
+        autoMarkAgentMessageRead(agentId, latestIncomingMessage.id);
       } else if (readState) {
-        applyConversationReadState(botId, readStateForMessages(readState, snapshot.messages));
+        applyConversationReadState(agentId, readStateForMessages(readState, snapshot.messages));
       }
     }
 
@@ -489,84 +491,87 @@ const Conversation = createSimpleContext({
       merge: "replace" | "older" | "latest",
       windowMode?: "latest" | "around",
     ): boolean {
-      if (page.revision < appliedConversationRevision(conversationRevisions(), page.botId)) return false;
+      if (page.revision < appliedConversationRevision(conversationRevisions(), page.agentId)) return false;
       for (const message of page.messages) {
-        const key = agentMessageKey(page.botId, message.id);
+        const key = agentMessageKey(page.agentId, message.id);
         if (message.author !== "user" && message.status === "streaming") rawAgentMessageBodies.set(key, message.text);
         else rawAgentMessageBodies.delete(key);
       }
-      const mapped = toBotMessages(page.messages, page.botId);
+      const mapped = toAgentMessages(page.messages, page.agentId);
       setLiveMessages((current) => {
-        const currentMessages = current[page.botId] ?? [];
+        const currentMessages = current[page.agentId] ?? [];
         const currentById = new Map(currentMessages.map((message) => [message.id, message]));
         const pageMessages = mapped.map((message) => {
           const stored = currentById.get(message.id);
           if (!stored) return createStoredMessage({ ...message, animate: false });
-          if (!botMessagesEqual(stored, message)) updateStored(stored, { ...message, animate: stored.animate });
+          if (!agentMessagesEqual(stored, message)) updateStored(stored, { ...message, animate: stored.animate });
           return stored;
         });
-        return { ...current, [page.botId]: mergeConversationPage(currentMessages, pageMessages, merge) };
+        return { ...current, [page.agentId]: mergeConversationPage(currentMessages, pageMessages, merge) };
       });
       setConversationReferences((current) => ({
         ...current,
-        [page.botId]: {
-          ...(merge === "replace" ? {} : current[page.botId]),
+        [page.agentId]: {
+          ...(merge === "replace" ? {} : current[page.agentId]),
           ...Object.fromEntries(
-            Object.entries(page.references).map(([id, message]) => [id, toBotMessage(message, page.botId)]),
+            Object.entries(page.references).map(([id, message]) => [id, toAgentMessage(message, page.agentId)]),
           ),
         },
       }));
-      setConversationPages((current) => ({ ...current, [page.botId]: page.pageInfo }));
-      if (windowMode) setConversationWindowModes((current) => ({ ...current, [page.botId]: windowMode }));
-      setConversationRevisions((current) => ({ ...current, [page.botId]: page.revision }));
-      setConversationLoaded((current) => ({ ...current, [page.botId]: true }));
+      setConversationPages((current) => ({ ...current, [page.agentId]: page.pageInfo }));
+      if (windowMode) setConversationWindowModes((current) => ({ ...current, [page.agentId]: windowMode }));
+      setConversationRevisions((current) => ({ ...current, [page.agentId]: page.revision }));
+      setConversationLoaded((current) => ({ ...current, [page.agentId]: true }));
       setActiveTurns((current) => ({
         ...current,
-        [page.botId]: completedTurnByBot.get(page.botId) === page.activeTurnId ? null : page.activeTurnId,
+        [page.agentId]: completedTurnByAgent.get(page.agentId) === page.activeTurnId ? null : page.activeTurnId,
       }));
       if (page.readState && merge !== "older") {
-        const trackedAutoRead = autoReadAgentMessages.get(agentConversationKey(activeServerId(), page.botId));
+        const trackedAutoRead = autoReadAgentMessages.get(agentConversationKey(activeServerId(), page.agentId));
         const latestIncomingMessage = latestIncomingConversationMessage(page.messages);
         const retainedState =
           trackedAutoRead && trackedAutoRead.messageId === latestIncomingMessage?.id
             ? retainedAutoReadState(trackedAutoRead)
             : null;
-        applyConversationReadState(page.botId, retainedState ?? page.readState);
+        applyConversationReadState(page.agentId, retainedState ?? page.readState);
       }
       return true;
     }
 
-    async function loadOlderAgentMessages(botId = activeBot()?.id): Promise<void> {
-      if (!botId || conversationOlderLoading()[botId]) return;
-      const pageInfo = conversationPages()[botId];
+    async function loadOlderAgentMessages(agentId = activeAgent()?.id): Promise<void> {
+      if (!agentId || conversationOlderLoading()[agentId]) return;
+      const pageInfo = conversationPages()[agentId];
       if (!pageInfo?.hasOlder || !pageInfo.olderCursor) return;
       const cursor = pageInfo.olderCursor;
-      const requestVersion = conversationPageRequests.get(botId) ?? 0;
-      setConversationOlderLoading((current) => ({ ...current, [botId]: true }));
-      setConversationOlderErrors((current) => ({ ...current, [botId]: null }));
+      const requestVersion = conversationPageRequests.get(agentId) ?? 0;
+      setConversationOlderLoading((current) => ({ ...current, [agentId]: true }));
+      setConversationOlderErrors((current) => ({ ...current, [agentId]: null }));
       try {
         const page = await window.openbot.agent.readConversationPage({
-          botId,
+          agentId,
           anchor: { type: "before", cursor },
           limit: 50,
         });
-        if (conversationPageRequests.get(botId) !== requestVersion) return;
-        if (conversationPages()[botId]?.olderCursor !== cursor) return;
+        if (conversationPageRequests.get(agentId) !== requestVersion) return;
+        if (conversationPages()[agentId]?.olderCursor !== cursor) return;
         applyConversationPage(page, "older");
       } catch (error) {
         setConversationOlderErrors((current) => ({
           ...current,
-          [botId]: error instanceof Error ? error.message : "Older messages could not load.",
+          [agentId]: error instanceof Error ? error.message : "Older messages could not load.",
         }));
       } finally {
-        setConversationOlderLoading((current) => ({ ...current, [botId]: false }));
+        setConversationOlderLoading((current) => ({ ...current, [agentId]: false }));
       }
     }
 
-    async function searchAgentMessages(botId: string, query: string): Promise<{ messageIds: string[]; total: number }> {
+    async function searchAgentMessages(
+      agentId: string,
+      query: string,
+    ): Promise<{ messageIds: string[]; total: number }> {
       const analytics = desktopAnalytics.scope();
       try {
-        const page = await window.openbot.agent.searchConversationMessages({ query, botId, limit: 100 });
+        const page = await window.openbot.agent.searchConversationMessages({ query, agentId, limit: 100 });
         analytics.track("search_action", { scope: "agent", result: "succeeded", result_count: page.total });
         return { messageIds: page.results.map((result) => result.message.id), total: page.total };
       } catch (error) {
@@ -575,77 +580,77 @@ const Conversation = createSimpleContext({
       }
     }
 
-    function pruneInactiveAgentHistory(botId: string): void {
-      const messages = liveMessages()[botId];
+    function pruneInactiveAgentHistory(agentId: string): void {
+      const messages = liveMessages()[agentId];
       if (!messages || messages.length <= 50) return;
       setLiveMessages((current) => {
-        const currentMessages = current[botId];
+        const currentMessages = current[agentId];
         if (!currentMessages || currentMessages.length <= 50) return current;
-        return { ...current, [botId]: currentMessages.slice(-50) };
+        return { ...current, [agentId]: currentMessages.slice(-50) };
       });
-      setConversationReferences((current) => ({ ...current, [botId]: {} }));
+      setConversationReferences((current) => ({ ...current, [agentId]: {} }));
       setConversationPages((current) => ({
         ...current,
-        [botId]: { hasOlder: true, olderCursor: null },
+        [agentId]: { hasOlder: true, olderCursor: null },
       }));
     }
 
-    async function loadLatestAgentMessages(botId: string): Promise<void> {
-      const request = (conversationPageRequests.get(botId) ?? 0) + 1;
-      conversationPageRequests.set(botId, request);
+    async function loadLatestAgentMessages(agentId: string): Promise<void> {
+      const request = (conversationPageRequests.get(agentId) ?? 0) + 1;
+      conversationPageRequests.set(agentId, request);
       const page = await window.openbot.agent.readConversationPage({
-        botId,
+        agentId,
         anchor: { type: "latest" },
         limit: 50,
       });
-      if (conversationPageRequests.get(botId) !== request) return;
+      if (conversationPageRequests.get(agentId) !== request) return;
       applyConversationPage(page, "replace", "latest");
     }
 
-    function markReplyCompleted(botId: string) {
-      clearRecentReply(botId);
+    function markReplyCompleted(agentId: string) {
+      clearRecentReply(agentId);
       if (appFocused()) return;
-      setRecentReplies((current) => ({ ...current, [botId]: true }));
+      setRecentReplies((current) => ({ ...current, [agentId]: true }));
     }
 
-    function clearRecentReply(botId: string) {
-      setRecentReplies((current) => (current[botId] ? { ...current, [botId]: false } : current));
+    function clearRecentReply(agentId: string) {
+      setRecentReplies((current) => (current[agentId] ? { ...current, [agentId]: false } : current));
     }
 
-    function clearReplyIndicators(botId: string) {
-      clearRecentReply(botId);
+    function clearReplyIndicators(agentId: string) {
+      clearRecentReply(agentId);
     }
 
     async function sendMessage(
       body: string,
       attachmentDraftIds: string[],
       replyToMessageId: string | null,
-      target?: { botId: string; serverId: string },
+      target?: { agentId: string; serverId: string },
     ): Promise<boolean> {
-      const botId = target?.botId ?? activeBot()?.id;
+      const agentId = target?.agentId ?? activeAgent()?.id;
       const serverId = target?.serverId ?? activeServerId();
-      if (!botId || (!body.trim() && attachmentDraftIds.length === 0)) return false;
-      return sendMessageToBot(botId, body, attachmentDraftIds, replyToMessageId, serverId);
+      if (!agentId || (!body.trim() && attachmentDraftIds.length === 0)) return false;
+      return sendMessageToAgent(agentId, body, attachmentDraftIds, replyToMessageId, serverId);
     }
 
-    async function sendMessageToBot(
-      botId: string,
+    async function sendMessageToAgent(
+      agentId: string,
       body: string,
       attachmentDraftIds: string[],
       replyToMessageId: string | null = null,
       serverId = activeServerId(),
     ): Promise<boolean> {
       const analytics = desktopAnalytics.scope();
-      const properties = analyticsAgentProperties(botId);
+      const properties = analyticsAgentProperties(agentId);
       try {
         const input = {
-          botId,
+          agentId,
           text: body.trim(),
           attachmentDraftIds,
           ...(replyToMessageId ? { replyToMessageId } : {}),
         };
         const receipt = await window.openbot.agent.sendMessage(input, serverId);
-        const errorKey = agentConversationKey(serverId, botId);
+        const errorKey = agentConversationKey(serverId, agentId);
         setUiErrors((current) => ({ ...current, [errorKey]: [] }));
         analytics.track("message_send", {
           ...(properties ?? {}),
@@ -656,9 +661,9 @@ const Conversation = createSimpleContext({
           delivery_count: receipt.deliveries.length,
         });
         try {
-          await markAgentMessagesRead(botId, receipt.deliveries[0]?.id ?? receipt.messageId, serverId);
+          await markAgentMessagesRead(agentId, receipt.deliveries[0]?.id ?? receipt.messageId, serverId);
         } catch (error) {
-          appendUiError(botId, error, "Read state failed", serverId);
+          appendUiError(agentId, error, "Read state failed", serverId);
         }
         return true;
       } catch (error) {
@@ -670,24 +675,24 @@ const Conversation = createSimpleContext({
           result: "failed",
           failure_code: "send_failed",
         });
-        appendUiError(botId, error, "Send failed", serverId);
+        appendUiError(agentId, error, "Send failed", serverId);
         return false;
       }
     }
 
     async function markAgentMessagesRead(
-      botId = activeBot()?.id,
+      agentId = activeAgent()?.id,
       throughMessageId?: string | null,
       serverId = activeServerId(),
       onSuccess?: (state: ConversationReadState) => void,
     ): Promise<void> {
-      if (!botId || !scopeIsCurrent()) return;
-      const requestKey = agentConversationKey(serverId, botId);
-      const visibleMessageIdAtStart = latestVisibleAgentMessageId(liveMessages()[botId]);
+      if (!agentId || !scopeIsCurrent()) return;
+      const requestKey = agentConversationKey(serverId, agentId);
+      const visibleMessageIdAtStart = latestVisibleAgentMessageId(liveMessages()[agentId]);
       const boundary =
         throughMessageId ??
         liveMessages()
-          [botId]?.filter((message) => !message.id.startsWith("thinking:") && !message.id.startsWith("ui-"))
+          [agentId]?.filter((message) => !message.id.startsWith("thinking:") && !message.id.startsWith("ui-"))
           .at(-1)?.id ??
         null;
       const previousOperation = conversationReadOperations.get(requestKey) ?? Promise.resolve();
@@ -696,42 +701,42 @@ const Conversation = createSimpleContext({
         .then(async () => {
           const state: ConversationReadState = await window.openbot.agent.markConversationRead(
             {
-              botId,
+              agentId,
               throughMessageId: boundary,
             },
             serverId,
           );
           agentChatsToRetryRead.delete(requestKey);
-          const nextState = isAgentChatReadable(botId)
+          const nextState = isAgentChatReadable(agentId)
             ? state
-            : preserveKnownAgentUnread(state, boundary, liveMessages()[botId] ?? []);
+            : preserveKnownAgentUnread(state, boundary, liveMessages()[agentId] ?? []);
           onSuccess?.(nextState);
           const trackedAutoRead = autoReadAgentMessages.get(requestKey);
           const supersededByAutoRead = Boolean(trackedAutoRead && trackedAutoRead.messageId !== boundary);
           if (scopeIsCurrent() && !supersededByAutoRead) {
-            applyConversationReadState(botId, nextState);
-            if (nextState.unreadCount === 0) clearRecentReply(botId);
+            applyConversationReadState(agentId, nextState);
+            if (nextState.unreadCount === 0) clearRecentReply(agentId);
           }
-          const latestMessageId = latestVisibleAgentMessageId(liveMessages()[botId]);
+          const latestMessageId = latestVisibleAgentMessageId(liveMessages()[agentId]);
           if (
             conversationReadOperations.get(requestKey) === operation &&
             scopeIsCurrent() &&
-            isAgentChatReadable(botId) &&
+            isAgentChatReadable(agentId) &&
             latestMessageId &&
             latestMessageId !== boundary &&
             latestMessageId !== visibleMessageIdAtStart
           ) {
             queueMicrotask(() => {
-              const latestVisibleMessageId = latestVisibleAgentMessageId(liveMessages()[botId]);
+              const latestVisibleMessageId = latestVisibleAgentMessageId(liveMessages()[agentId]);
               if (
                 scopeIsCurrent() &&
-                isAgentChatReadable(botId) &&
+                isAgentChatReadable(agentId) &&
                 latestVisibleMessageId &&
                 latestVisibleMessageId !== boundary &&
                 latestVisibleMessageId !== visibleMessageIdAtStart
               ) {
-                void markAgentMessagesRead(botId, latestVisibleMessageId, serverId).catch((error) =>
-                  appendUiError(botId, error, "Read state failed", serverId),
+                void markAgentMessagesRead(agentId, latestVisibleMessageId, serverId).catch((error) =>
+                  appendUiError(agentId, error, "Read state failed", serverId),
                 );
               }
             });
@@ -745,26 +750,26 @@ const Conversation = createSimpleContext({
       }
     }
 
-    function presentPromptResolution(botId: string, turnId: string, requestId: string | number): void {
+    function presentPromptResolution(agentId: string, turnId: string, requestId: string | number): void {
       const requestKey = promptRequestKey(turnId, requestId);
       if (!requestKey) return;
-      const currentPrompt = pendingPrompts()[botId];
+      const currentPrompt = pendingPrompts()[agentId];
       if (
         currentPrompt?.type !== "prompt" ||
         promptRequestKey(currentPrompt.turnId, currentPrompt.requestId) !== requestKey
       ) {
         return;
       }
-      const persisted = (liveMessages()[botId] ?? []).some(
+      const persisted = (liveMessages()[agentId] ?? []).some(
         (message) => messagePromptRequestKey(message) === requestKey && message.questionPrompt?.resolution !== null,
       );
       if (persisted) {
-        setPendingPrompts((current) => ({ ...current, [botId]: undefined }));
-        setPresentedPromptResolutions((current) => ({ ...current, [botId]: undefined }));
-        setSubmittedPromptRequests((current) => ({ ...current, [botId]: undefined }));
+        setPendingPrompts((current) => ({ ...current, [agentId]: undefined }));
+        setPresentedPromptResolutions((current) => ({ ...current, [agentId]: undefined }));
+        setSubmittedPromptRequests((current) => ({ ...current, [agentId]: undefined }));
         return;
       }
-      setPresentedPromptResolutions((current) => ({ ...current, [botId]: requestKey }));
+      setPresentedPromptResolutions((current) => ({ ...current, [agentId]: requestKey }));
     }
 
     // The scheduler holds a frame handle across the microtask boundary, so the
@@ -776,8 +781,8 @@ const Conversation = createSimpleContext({
     /**
      * Everything here is a projection of one server's threads, so the switch
      * clears all of it - the signals and the four tracking collections that key
-     * work by bot id. `activeServerId` is part of every tracking key, but
-     * `rawAgentMessageBodies` and `conversationPageRequests` are keyed by bot id
+     * work by agent id. `activeServerId` is part of every tracking key, but
+     * `rawAgentMessageBodies` and `conversationPageRequests` are keyed by agent id
      * alone, so clearing them is what keeps a streaming body or an in-flight
      * page request from crossing servers.
      */

@@ -23,35 +23,35 @@ export interface DueRoutineTrigger {
 export class AgentRoutineStore {
   constructor(private readonly database: OpenBotDatabase) {}
 
-  list(botId: string): Routine[] {
+  list(agentId: string): Routine[] {
     return rows(
       this.database.connection
         .prepare(
           `SELECT routine_id, agent_id, name, instruction, active, timezone, created_at, updated_at
            FROM projection_agent_routines WHERE agent_id = ? ORDER BY updated_at DESC, routine_id`,
         )
-        .all(botId),
+        .all(agentId),
     ).map((row) => this.#routine(row));
   }
 
-  get(botId: string, routineId: string): Routine | null {
+  get(agentId: string, routineId: string): Routine | null {
     const row = this.database.connection
       .prepare(
         `SELECT routine_id, agent_id, name, instruction, active, timezone, created_at, updated_at
          FROM projection_agent_routines WHERE routine_id = ? AND agent_id = ?`,
       )
-      .get(routineId, botId);
+      .get(routineId, agentId);
     return isDynamicRecord(row) ? this.#routine(row) : null;
   }
 
-  duplicate(sourceBotId: string, targetBotId: string, now = new Date()): Map<string, Routine> {
+  duplicate(sourceAgentId: string, targetAgentId: string, now = new Date()): Map<string, Routine> {
     const duplicated = new Map<string, Routine>();
-    for (const routine of this.list(sourceBotId)) {
+    for (const routine of this.list(sourceAgentId)) {
       duplicated.set(
         routine.id,
         this.create(
           {
-            botId: targetBotId,
+            agentId: targetAgentId,
             name: routine.name,
             instruction: routine.instruction,
             active: routine.active,
@@ -67,7 +67,7 @@ export class AgentRoutineStore {
 
   create(input: CreateRoutineInput, now = new Date()): Routine {
     this.#validateInput(input.name, input.instruction, input.timezone, input.schedule);
-    if (this.list(input.botId).length >= INPUT_LIMITS.agentRoutines) {
+    if (this.list(input.agentId).length >= INPUT_LIMITS.agentRoutines) {
       throw new Error(`An agent can have at most ${INPUT_LIMITS.agentRoutines} routines.`);
     }
     const routineId = randomUUID();
@@ -84,7 +84,7 @@ export class AgentRoutineStore {
            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           routineId,
-          input.botId,
+          input.agentId,
           input.name.trim(),
           input.instruction.trim(),
           input.active ? 1 : 0,
@@ -94,13 +94,13 @@ export class AgentRoutineStore {
           sequence,
         );
         this.#insertTrigger(db, routineId, input.timezone, schedule, createdAt, sequence, now);
-        return this.#require(routineId, input.botId);
+        return this.#require(routineId, input.agentId);
       },
     );
   }
 
   update(input: UpdateRoutineInput, now = new Date()): Routine {
-    const current = this.get(input.botId, input.routineId);
+    const current = this.get(input.agentId, input.routineId);
     if (!current) throw new Error("This routine no longer exists.");
     const name = input.name ?? current.name;
     const instruction = input.instruction ?? current.instruction;
@@ -125,7 +125,7 @@ export class AgentRoutineStore {
           `UPDATE projection_agent_routines
            SET name = ?, instruction = ?, active = ?, updated_at = ?, last_event_sequence = ?
            WHERE routine_id = ? AND agent_id = ?`,
-        ).run(name.trim(), instruction.trim(), active ? 1 : 0, updatedAt, sequence, input.routineId, input.botId);
+        ).run(name.trim(), instruction.trim(), active ? 1 : 0, updatedAt, sequence, input.routineId, input.agentId);
         if (input.schedule) {
           db.prepare("DELETE FROM projection_routine_triggers WHERE routine_id = ?").run(input.routineId);
           this.#insertTrigger(db, input.routineId, current.timezone, schedule, updatedAt, sequence, now);
@@ -142,24 +142,27 @@ export class AgentRoutineStore {
             input.routineId,
           );
         }
-        return this.#require(input.routineId, input.botId);
+        return this.#require(input.routineId, input.agentId);
       },
     );
   }
 
-  delete(botId: string, routineId: string): void {
-    if (!this.get(botId, routineId)) throw new Error("This routine no longer exists.");
+  delete(agentId: string, routineId: string): void {
+    if (!this.get(agentId, routineId)) throw new Error("This routine no longer exists.");
     this.database.dispatch(
       `routine:delete:${routineId}:${randomUUID()}`,
-      [{ aggregateType: "agent-routine", aggregateId: routineId, eventType: "routine.deleted", payload: { botId } }],
+      [{ aggregateType: "agent-routine", aggregateId: routineId, eventType: "routine.deleted", payload: { agentId } }],
       (db) => {
-        db.prepare("DELETE FROM projection_agent_routines WHERE routine_id = ? AND agent_id = ?").run(routineId, botId);
+        db.prepare("DELETE FROM projection_agent_routines WHERE routine_id = ? AND agent_id = ?").run(
+          routineId,
+          agentId,
+        );
         return null;
       },
     );
   }
 
-  listRuns(botId: string, routineId: string, limit = 50): RoutineRun[] {
+  listRuns(agentId: string, routineId: string, limit = 50): RoutineRun[] {
     const safeLimit = Math.max(1, Math.min(INPUT_LIMITS.routineRunsPage, limit));
     return rows(
       this.database.connection
@@ -170,7 +173,7 @@ export class AgentRoutineStore {
            WHERE routine_id = ? AND agent_id = ?
            ORDER BY created_at DESC, run_id DESC LIMIT ?`,
         )
-        .all(routineId, botId, safeLimit),
+        .all(routineId, agentId, safeLimit),
     ).map(decodeRun);
   }
 
@@ -187,7 +190,7 @@ export class AgentRoutineStore {
     ).map(decodeRun);
   }
 
-  activeRuns(botId: string, routineId: string): RoutineRun[] {
+  activeRuns(agentId: string, routineId: string): RoutineRun[] {
     return rows(
       this.database.connection
         .prepare(
@@ -197,11 +200,11 @@ export class AgentRoutineStore {
            WHERE routine_id = ? AND agent_id = ? AND status IN ('queued', 'running', 'needs-attention')
            ORDER BY created_at, run_id`,
         )
-        .all(routineId, botId),
+        .all(routineId, agentId),
     ).map(decodeRun);
   }
 
-  due(now = new Date(), excludedBotIds: ReadonlySet<string> = new Set()): DueRoutineTrigger[] {
+  due(now = new Date(), excludedAgentIds: ReadonlySet<string> = new Set()): DueRoutineTrigger[] {
     return rows(
       this.database.connection
         .prepare(
@@ -225,10 +228,10 @@ export class AgentRoutineStore {
           schedule,
         };
       })
-      .filter((due) => !excludedBotIds.has(due.routine.botId));
+      .filter((due) => !excludedAgentIds.has(due.routine.agentId));
   }
 
-  nextDueAt(excludedBotIds: ReadonlySet<string> = new Set()): string | null {
+  nextDueAt(excludedAgentIds: ReadonlySet<string> = new Set()): string | null {
     const row = rows(
       this.database.connection
         .prepare(
@@ -239,7 +242,7 @@ export class AgentRoutineStore {
          ORDER BY trigger.next_run_at, trigger.trigger_id`,
         )
         .all(),
-    ).find((candidate) => !excludedBotIds.has(stringColumn(candidate, "agent_id")));
+    ).find((candidate) => !excludedAgentIds.has(stringColumn(candidate, "agent_id")));
     return row && isString(row.next_run_at) ? row.next_run_at : null;
   }
 
@@ -296,7 +299,7 @@ export class AgentRoutineStore {
         ).run(
           runId,
           routine.id,
-          routine.botId,
+          routine.agentId,
           triggerId,
           kind,
           scheduledFor,
@@ -357,7 +360,7 @@ export class AgentRoutineStore {
     const routineId = stringColumn(row, "routine_id");
     return {
       id: routineId,
-      botId: stringColumn(row, "agent_id"),
+      agentId: stringColumn(row, "agent_id"),
       name: stringColumn(row, "name"),
       instruction: stringColumn(row, "instruction"),
       active: numberColumn(row, "active") === 1,
@@ -384,8 +387,8 @@ export class AgentRoutineStore {
     };
   }
 
-  #require(routineId: string, botId: string): Routine {
-    const routine = this.get(botId, routineId);
+  #require(routineId: string, agentId: string): Routine {
+    const routine = this.get(agentId, routineId);
     if (!routine) throw new Error("The routine projection could not be read.");
     return routine;
   }
@@ -461,7 +464,7 @@ function decodeRun(row: DynamicRecord): RoutineRun {
   return {
     id: stringColumn(row, "run_id"),
     routineId: stringColumn(row, "routine_id"),
-    botId: stringColumn(row, "agent_id"),
+    agentId: stringColumn(row, "agent_id"),
     triggerId: nullableStringColumn(row, "trigger_id"),
     kind,
     scheduledFor: stringColumn(row, "scheduled_for"),

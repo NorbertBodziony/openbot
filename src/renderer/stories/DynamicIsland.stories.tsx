@@ -1,6 +1,6 @@
 import type {
   DynamicIslandAction,
-  DynamicIslandBotIdentity,
+  DynamicIslandAgentIdentity,
   DynamicIslandPresentation,
   DynamicIslandPromptItem,
 } from "@openbot/contracts/ipc";
@@ -11,7 +11,7 @@ import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { OpenBotDynamicIsland } from "../src/components/OpenBotDynamicIsland";
 import type { DynamicIslandViewState } from "../src/components/ui";
 import { DynamicIslandDisplayComparison } from "./DynamicIslandDisplayComparison";
-import { STORY_BOTS } from "./fixtures";
+import { STORY_AGENTS } from "./fixtures";
 
 type Scenario = "idle" | "working" | "chat" | "question" | "approval" | "takeover" | "failed";
 type QuestionVariant = "standard" | "short" | "long" | "multiple";
@@ -25,7 +25,7 @@ interface DynamicIslandDemoProps {
   onAction: (action: DynamicIslandAction) => void;
 }
 
-const BOT_IDENTITIES = STORY_BOTS.slice(0, 3).map(toIslandBot);
+const AGENT_IDENTITIES = STORY_AGENTS.slice(0, 3).map(toIslandAgent);
 const SCENARIOS: Scenario[] = ["idle", "working", "chat", "question", "approval", "takeover", "failed"];
 
 function DynamicIslandDemo(props: DynamicIslandDemoProps): JSX.Element {
@@ -57,9 +57,9 @@ function presentationFor(
 ): DynamicIslandPresentation {
   if (scenario === "working") {
     const working = [
-      { bot: BOT_IDENTITIES[0], task: "Planning the launch sequence" },
-      { bot: BOT_IDENTITIES[1], task: "Checking primary sources" },
-      { bot: BOT_IDENTITIES[2], task: "Drafting partner follow-ups" },
+      { agent: AGENT_IDENTITIES[0], task: "Planning the launch sequence" },
+      { agent: AGENT_IDENTITIES[1], task: "Checking primary sources" },
+      { agent: AGENT_IDENTITIES[2], task: "Drafting partner follow-ups" },
     ];
     return {
       serverId: "local",
@@ -73,7 +73,7 @@ function presentationFor(
       mode: "message",
       unreadCount: 2,
       message: {
-        bot: BOT_IDENTITIES[1],
+        agent: AGENT_IDENTITIES[1],
         messageId: "research-reply",
         text: "I found three reliable sources. The market data supports the main claim.",
         createdAt: "2026-08-28T10:42:00.000Z",
@@ -90,7 +90,7 @@ function presentationFor(
       remainingCount: 0,
       item: {
         requestId: "chief-command-approval",
-        bot: BOT_IDENTITIES[0],
+        agent: AGENT_IDENTITIES[0],
         title: "Command needs review",
         detail: "Chief needs to install the verified workspace dependencies before tests can run.",
         truncated: false,
@@ -111,7 +111,7 @@ function presentationFor(
       mode: "takeover",
       item: {
         requestId: "chief-browser-takeover",
-        bot: BOT_IDENTITIES[0],
+        agent: AGENT_IDENTITIES[0],
         title: "Browser step needs you",
         detail: "Complete the sign-in, verification, or consent in the browser.",
       },
@@ -123,7 +123,7 @@ function presentationFor(
       mode: "failed",
       item: {
         turnId: "research-failed-turn",
-        bot: BOT_IDENTITIES[1],
+        agent: AGENT_IDENTITIES[1],
         title: "Task failed",
         detail: "The browser tab closed before Research could finish collecting the sources.",
       },
@@ -140,7 +140,7 @@ function questionFixture(variant: QuestionVariant): DynamicIslandPromptItem {
     ];
     return {
       requestId: "siema-tone-question",
-      bot: { ...BOT_IDENTITIES[1], id: "siema", name: "Siema", avatarSeed: "siema" },
+      agent: { ...AGENT_IDENTITIES[1], id: "siema", name: "Siema", avatarSeed: "siema" },
       title: "Send this version?",
       detail: "The draft is ready.",
       questions: [
@@ -172,8 +172,8 @@ function questionFixture(variant: QuestionVariant): DynamicIslandPromptItem {
     ];
     return {
       requestId: "international-market-research-source-question",
-      bot: {
-        ...BOT_IDENTITIES[1],
+      agent: {
+        ...AGENT_IDENTITIES[1],
         id: "international-market-research",
         name: "International Market Research, Competitive Intelligence, and Strategic Operations",
         avatarSeed: "international-market-research",
@@ -202,7 +202,7 @@ function questionFixture(variant: QuestionVariant): DynamicIslandPromptItem {
     ];
     return {
       requestId: "research-multiple-question",
-      bot: BOT_IDENTITIES[1],
+      agent: AGENT_IDENTITIES[1],
       title: "Choose a source",
       detail: "Which source should I use for the market-size estimate?",
       questions: [
@@ -235,7 +235,7 @@ function questionFixture(variant: QuestionVariant): DynamicIslandPromptItem {
   ];
   return {
     requestId: "research-source-question",
-    bot: BOT_IDENTITIES[1],
+    agent: AGENT_IDENTITIES[1],
     title: "Choose a source",
     detail: "Which source should I use for the market-size estimate?",
     questions: [
@@ -250,13 +250,13 @@ function questionFixture(variant: QuestionVariant): DynamicIslandPromptItem {
   };
 }
 
-function toIslandBot(bot: (typeof STORY_BOTS)[number]): DynamicIslandBotIdentity {
+function toIslandAgent(agent: (typeof STORY_AGENTS)[number]): DynamicIslandAgentIdentity {
   return {
-    id: bot.id,
-    name: bot.name,
-    avatarSeed: bot.avatarSeed,
-    avatarHue: bot.avatarHue,
-    avatarUrl: bot.avatarUrl,
+    id: agent.id,
+    name: agent.name,
+    avatarSeed: agent.avatarSeed,
+    avatarHue: agent.avatarHue,
+    avatarUrl: agent.avatarUrl,
   };
 }
 

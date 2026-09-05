@@ -34,22 +34,22 @@ describe.sequential("DuplicationGate: copying an agent and the pending window", 
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
     const source = await store.getOrCreate("chief", "Research", "Research lead");
-    await store.updateBot({
-      botId: source.id,
+    await store.updateAgent({
+      agentId: source.id,
       description: "Finds primary sources.",
       notifications: false,
       model: "gpt-5.6-sol",
       reasoningEffort: "high",
     });
     await writeFile(join(source.workspacePath, "research.md"), "source workspace\n");
-    service.createMemory({ botId: source.id, text: "Use official documents." });
+    service.createMemory({ agentId: source.id, text: "Use official documents." });
     new AgentMemoryStore(store.database).saveAutomatic({
-      botId: source.id,
+      agentId: source.id,
       text: "The user prefers short briefs.",
       sourceTurnId: "turn-source-memory",
     });
     const activeRoutine = service.createRoutine({
-      botId: source.id,
+      agentId: source.id,
       name: "Morning brief",
       instruction: "Prepare the morning brief.",
       active: true,
@@ -57,7 +57,7 @@ describe.sequential("DuplicationGate: copying an agent and the pending window", 
       schedule: { kind: "daily", time: "09:00" },
     });
     const inactiveRoutine = service.createRoutine({
-      botId: source.id,
+      agentId: source.id,
       name: "Weekly review",
       instruction: "Review the week.",
       active: false,
@@ -73,7 +73,7 @@ describe.sequential("DuplicationGate: copying an agent and the pending window", 
     );
     routineStore.updateRunStatus(oldRun.id, "succeeded");
     service.setMarketplaceSource(source.id, {
-      agentId: "market-research",
+      listingId: "market-research",
       versionId: "market-research-v2",
       version: 2,
       skillIds: ["primary-sources"],
@@ -83,24 +83,24 @@ describe.sequential("DuplicationGate: copying an agent and the pending window", 
     const events: AgentEvent[] = [];
     service.on("event", (event) => events.push(event));
 
-    const duplicate = await service.duplicateBot(source.id);
+    const duplicate = await service.duplicateAgent(source.id);
 
-    expect(service.listBots().some((bot) => bot.id === duplicate.id)).toBe(false);
-    await expect(service.sendMessage({ botId: duplicate.id, text: "Do not start yet." })).rejects.toThrow(
-      `Unknown bot: ${duplicate.id}`,
+    expect(service.listAgents().some((agent) => agent.id === duplicate.id)).toBe(false);
+    await expect(service.sendMessage({ agentId: duplicate.id, text: "Do not start yet." })).rejects.toThrow(
+      `Unknown agent: ${duplicate.id}`,
     );
-    await expect(service.updateBot({ botId: duplicate.id, title: "Hidden copy" })).rejects.toThrow(
-      `Unknown bot: ${duplicate.id}`,
+    await expect(service.updateAgent({ agentId: duplicate.id, title: "Hidden copy" })).rejects.toThrow(
+      `Unknown agent: ${duplicate.id}`,
     );
     expect(service.listQueue(duplicate.id).deliveries).toEqual([]);
     expect(events).toEqual([]);
-    await service.commitBotDuplication(duplicate.id, EMPTY_LAYOUT);
-    expect(service.listBots().some((bot) => bot.id === duplicate.id)).toBe(true);
+    await service.commitAgentDuplication(duplicate.id, EMPTY_LAYOUT);
+    expect(service.listAgents().some((agent) => agent.id === duplicate.id)).toBe(true);
     expect(events).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ type: "bots-changed" }),
-        expect.objectContaining({ type: "memories-changed", botId: duplicate.id }),
-        expect.objectContaining({ type: "routines-changed", botId: duplicate.id }),
+        expect.objectContaining({ type: "agents-changed" }),
+        expect.objectContaining({ type: "memories-changed", agentId: duplicate.id }),
+        expect.objectContaining({ type: "routines-changed", agentId: duplicate.id }),
       ]),
     );
 
@@ -161,23 +161,23 @@ describe.sequential("DuplicationGate: copying an agent and the pending window", 
     );
     expect(duplicateRoutines.map((routine) => routine.id)).not.toEqual(sourceRoutines.map((routine) => routine.id));
     for (const routine of duplicateRoutines) {
-      expect(service.listRoutineRuns({ botId: duplicate.id, routineId: routine.id, limit: 10 })).toEqual([]);
+      expect(service.listRoutineRuns({ agentId: duplicate.id, routineId: routine.id, limit: 10 })).toEqual([]);
     }
     expect(duplicate.marketplaceSource).toMatchObject({
-      agentId: "market-research",
+      listingId: "market-research",
       skillIds: ["primary-sources"],
       routineIds: [duplicateRoutines.find((routine) => routine.name === activeRoutine.name)?.id],
     });
 
     await writeFile(join(duplicate.workspacePath, "research.md"), "duplicate workspace\n");
     await service.updateMemory({
-      botId: duplicate.id,
+      agentId: duplicate.id,
       memoryId: duplicateMemories[0]?.id ?? "missing",
       text: "Changed only in the duplicate.",
     });
     const copiedActiveRoutine = duplicateRoutines.find((routine) => routine.name === activeRoutine.name);
     if (!copiedActiveRoutine) throw new Error("The duplicated active routine is missing.");
-    service.updateRoutine({ botId: duplicate.id, routineId: copiedActiveRoutine.id, active: false });
+    service.updateRoutine({ agentId: duplicate.id, routineId: copiedActiveRoutine.id, active: false });
 
     await expect(readFile(join(source.workspacePath, "research.md"), "utf8")).resolves.toBe("source workspace\n");
     expect(service.listMemories(source.id).some((memory) => memory.text === "Changed only in the duplicate.")).toBe(
@@ -192,10 +192,10 @@ describe.sequential("DuplicationGate: copying an agent and the pending window", 
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
     await store.getOrCreate("chief");
-    await service.sendMessage({ botId: "chief", text: "Keep working.", attachmentDraftIds: [] });
+    await service.sendMessage({ agentId: "chief", text: "Keep working.", attachmentDraftIds: [] });
 
-    await expect(service.duplicateBot("chief")).rejects.toThrow("finish and clear its queue");
-    expect(store.list().map((bot) => bot.id)).toEqual(["chief"]);
+    await expect(service.duplicateAgent("chief")).rejects.toThrow("finish and clear its queue");
+    expect(store.list().map((agent) => agent.id)).toEqual(["chief"]);
   });
 
   it("serializes duplication until the previous copy is committed", async () => {
@@ -204,9 +204,9 @@ describe.sequential("DuplicationGate: copying an agent and the pending window", 
     await service.initialize();
     await store.getOrCreate("chief");
     await store.getOrCreate("research");
-    const first = await service.duplicateBot("chief");
+    const first = await service.duplicateAgent("chief");
     let secondResolved = false;
-    const secondRequest = service.duplicateBot("research").then((duplicate) => {
+    const secondRequest = service.duplicateAgent("research").then((duplicate) => {
       secondResolved = true;
       return duplicate;
     });
@@ -214,10 +214,10 @@ describe.sequential("DuplicationGate: copying an agent and the pending window", 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(secondResolved).toBe(false);
-    await service.commitBotDuplication(first.id, EMPTY_LAYOUT);
+    await service.commitAgentDuplication(first.id, EMPTY_LAYOUT);
     const second = await secondRequest;
-    await service.commitBotDuplication(second.id, EMPTY_LAYOUT);
-    expect(service.listBots().map((bot) => bot.id)).toEqual(
+    await service.commitAgentDuplication(second.id, EMPTY_LAYOUT);
+    expect(service.listAgents().map((agent) => agent.id)).toEqual(
       expect.arrayContaining(["chief", "research", first.id, second.id]),
     );
   });
@@ -230,18 +230,18 @@ describe.sequential("DuplicationGate: copying an agent and the pending window", 
     await service.initialize();
     const source = await store.getOrCreate("chief");
     await writeFile(join(source.workspacePath, "research.md"), "source workspace\n");
-    const duplicateInStore = store.duplicateBot.bind(store);
-    vi.spyOn(store, "duplicateBot").mockImplementationOnce(async (botId, operationId) => {
-      const duplicate = await duplicateInStore(botId, operationId);
+    const duplicateInStore = store.duplicateAgent.bind(store);
+    vi.spyOn(store, "duplicateAgent").mockImplementationOnce(async (agentId, operationId) => {
+      const duplicate = await duplicateInStore(agentId, operationId);
       // A message landing while the workspace is still being copied. The source is muted, so
       // nothing schedules a drain for it and only the mute lifting can start this turn.
-      await service?.sendMessage({ botId: source.id, text: "Anything on the sources?" });
+      await service?.sendMessage({ agentId: source.id, text: "Anything on the sources?" });
       expect(service?.listQueue(source.id).deliveries[0]?.status).toBe("queued");
       return duplicate;
     });
 
-    const duplicate = await service.duplicateBot(source.id);
-    await service.commitBotDuplication(duplicate.id, EMPTY_LAYOUT);
+    const duplicate = await service.duplicateAgent(source.id);
+    await service.commitAgentDuplication(duplicate.id, EMPTY_LAYOUT);
 
     await waitFor(() => service?.listQueue(source.id).deliveries[0]?.status === "completed");
     await expect(readFile(join(duplicate.workspacePath, "research.md"), "utf8")).resolves.toBe("source workspace\n");
@@ -252,16 +252,16 @@ describe.sequential("DuplicationGate: copying an agent and the pending window", 
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
     await store.getOrCreate("chief");
-    const duplicateInStore = store.duplicateBot.bind(store);
-    vi.spyOn(store, "duplicateBot").mockImplementationOnce(async (botId) => {
-      const duplicate = await duplicateInStore(botId);
-      service?.createMemory({ botId, text: "Changed during duplication." });
+    const duplicateInStore = store.duplicateAgent.bind(store);
+    vi.spyOn(store, "duplicateAgent").mockImplementationOnce(async (agentId) => {
+      const duplicate = await duplicateInStore(agentId);
+      service?.createMemory({ agentId, text: "Changed during duplication." });
       return duplicate;
     });
 
-    await expect(service.duplicateBot("chief")).rejects.toThrow("changed while it was being duplicated");
+    await expect(service.duplicateAgent("chief")).rejects.toThrow("changed while it was being duplicated");
 
-    expect(store.list().map((bot) => bot.id)).toEqual(["chief"]);
+    expect(store.list().map((agent) => agent.id)).toEqual(["chief"]);
     expect(service.listMemories("chief")).toEqual([expect.objectContaining({ text: "Changed during duplication." })]);
   });
 });

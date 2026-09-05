@@ -143,12 +143,12 @@ export function registerAttachmentIpcHandlers({
     const parsed = parseOpenWorkspaceFile(scoped.payload);
     return routeToServer<void>(scoped.serverId, {
       local: async () => {
-        const workspaceFile = await service.resolveWorkspaceFile(parsed.botId, parsed.path);
+        const workspaceFile = await service.resolveWorkspaceFile(parsed.agentId, parsed.path);
         await openPath(workspaceFile.path);
       },
       remote: async (serverId) => {
-        const downloaded = await remoteServers.downloadWorkspaceFile(parsed.botId, parsed.path, serverId);
-        const key = `${serverId}:${parsed.botId}:${parsed.path}`;
+        const downloaded = await remoteServers.downloadWorkspaceFile(parsed.agentId, parsed.path, serverId);
+        const key = `${serverId}:${parsed.agentId}:${parsed.path}`;
         const target = await cacheRemoteFile("remote-workspace-files", key, downloaded);
         await openPath(target);
       },
@@ -171,11 +171,11 @@ export function registerAttachmentIpcHandlers({
     const parsed = parseOpenWorkspaceFile(scoped.payload);
     return routeToServer(scoped.serverId, {
       local: async () => {
-        const workspaceFile = await service.resolveWorkspaceFile(parsed.botId, parsed.path);
+        const workspaceFile = await service.resolveWorkspaceFile(parsed.agentId, parsed.path);
         return localFilePreview(workspaceFile.path, workspaceFile.name, workspaceFile.size);
       },
       remote: async (serverId) => {
-        const downloaded = await remoteServers.downloadWorkspaceFile(parsed.botId, parsed.path, serverId);
+        const downloaded = await remoteServers.downloadWorkspaceFile(parsed.agentId, parsed.path, serverId);
         return filePreviewFromBytes(downloaded.name, downloaded.bytes);
       },
     });

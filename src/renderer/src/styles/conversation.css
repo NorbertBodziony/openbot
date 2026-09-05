@@ -43,7 +43,7 @@
 }
 
 .direct-conversation-person .person-avatar {
-  --bot-avatar-optical-offset: -8px;
+  --agent-avatar-optical-offset: -8px;
 
   width: 30px;
   height: 30px;
@@ -1160,12 +1160,12 @@
   background: transparent;
 }
 
-.agent-settings-avatar .bot-avatar {
+.agent-settings-avatar .agent-avatar {
   width: 62px;
   height: 62px;
 }
 
-.agent-settings-avatar .bot-avatar > svg {
+.agent-settings-avatar .agent-avatar > svg {
   width: 128%;
   height: 128%;
 }
@@ -2554,8 +2554,8 @@
   opacity: 0.55;
 }
 
-.agent-picker-option .bot-avatar {
-  --bot-avatar-optical-offset: -2px;
+.agent-picker-option .agent-avatar {
+  --agent-avatar-optical-offset: -2px;
 
   width: 24px;
   height: 24px;
@@ -3265,7 +3265,7 @@
   animation: message-in var(--openbot-duration-normal) cubic-bezier(0.23, 1, 0.32, 1) forwards;
 }
 
-.message-entry-bot {
+.message-entry-agent {
   width: 100%;
 }
 
@@ -3711,7 +3711,7 @@
 }
 
 .agent-activity-avatar {
-  --bot-avatar-optical-offset: -2px;
+  --agent-avatar-optical-offset: -2px;
 
   width: 32px;
   height: 32px;
@@ -3863,7 +3863,7 @@ button.chat-action-target:active,
 }
 
 .chat-action-agent-avatar {
-  --bot-avatar-optical-offset: -2px;
+  --agent-avatar-optical-offset: -2px;
 
   position: relative;
   width: var(--openbot-chat-marker-avatar);
@@ -3968,21 +3968,21 @@ button.chat-action-target:active,
   letter-spacing: -0.15px;
 }
 
-.message-entry-bot .ui-bubble {
+.message-entry-agent .ui-bubble {
   max-width: min(720px, calc(100% - var(--message-actions-inline-size) - 5px));
 }
 
-.message-entry-bot .ui-bubble:has(.choice-card) {
+.message-entry-agent .ui-bubble:has(.choice-card) {
   width: min(500px, calc(100% - var(--message-actions-inline-size) - 5px));
   max-width: min(500px, calc(100% - var(--message-actions-inline-size) - 5px));
 }
 
-.message-entry-bot .ui-bubble:has(.image-generation) {
+.message-entry-agent .ui-bubble:has(.image-generation) {
   width: min(420px, calc(100% - var(--message-actions-inline-size) - 5px));
   max-width: min(420px, calc(100% - var(--message-actions-inline-size) - 5px));
 }
 
-.message-entry-bot
+.message-entry-agent
   .ui-bubble-variant-ghost:has(:is(.choice-card, .image-generation, .message-code-block, .message-data-table-scroll))
   > .ui-bubble-content {
   width: 100%;
@@ -4911,16 +4911,16 @@ button.chat-action-target:active,
   }
 }
 
-.message-entry-bot .ui-bubble:has(:is(.message-data-table-scroll, .message-code-block)) {
+.message-entry-agent .ui-bubble:has(:is(.message-data-table-scroll, .message-code-block)) {
   width: min(720px, calc(100% - var(--message-actions-inline-size) - 5px));
   max-width: min(720px, calc(100% - var(--message-actions-inline-size) - 5px));
 }
 
-.message-entry-bot .ui-bubble:has(.message-data-table-scroll) > .ui-bubble-content {
+.message-entry-agent .ui-bubble:has(.message-data-table-scroll) > .ui-bubble-content {
   width: 100%;
 }
 
-.message-entry-bot .message-shell:has(.message-data-table-scroll) {
+.message-entry-agent .message-shell:has(.message-data-table-scroll) {
   align-items: flex-end;
 }
 
@@ -5580,8 +5580,8 @@ button.chat-action-target:active,
   background: var(--openbot-shadow-popover-ambient);
 }
 
-.message-agent-tag .bot-avatar {
-  --bot-avatar-optical-offset: -2px;
+.message-agent-tag .agent-avatar {
+  --agent-avatar-optical-offset: -2px;
 
   width: 16px;
   height: 16px;
@@ -5963,7 +5963,7 @@ button.chat-action-target:active,
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .bot-row-thinking-dots i,
+  .agent-row-thinking-dots i,
   .team-typing-dots i,
   .image-generation-dots,
   .image-generation-glow,
@@ -5993,7 +5993,7 @@ button.chat-action-target:active,
 }
 
 @media (max-width: 620px) {
-  .message-entry-bot .ui-bubble:has(.image-generation) {
+  .message-entry-agent .ui-bubble:has(.image-generation) {
     width: calc(100% - var(--message-actions-inline-size) - 5px);
     max-width: calc(100% - var(--message-actions-inline-size) - 5px);
   }
@@ -6457,8 +6457,8 @@ button.chat-action-target:active,
   background: var(--openbot-bg-surface);
 }
 
-.mention-picker-option .bot-avatar {
-  --bot-avatar-optical-offset: -2px;
+.mention-picker-option .agent-avatar {
+  --agent-avatar-optical-offset: -2px;
 
   width: 23px;
   height: 23px;
@@ -7208,9 +7208,9 @@ button.chat-action-target:active,
   .agent-activity-content,
   .agent-activity-avatar,
   .agent-activity-dots i,
-  .bot-row-thinking-dots i,
-  .bot-row-agent-status-responded,
-  .bot-row-agent-status-unread,
+  .agent-row-thinking-dots i,
+  .agent-row-agent-status-responded,
+  .agent-row-agent-status-unread,
   .agent-settings-panel,
   .agent-picker-menu,
   .thinking-summary,

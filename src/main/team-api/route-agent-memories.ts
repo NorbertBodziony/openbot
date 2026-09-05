@@ -15,27 +15,27 @@ export interface AgentMemoryRouteDependencies {
 
 export async function routeAgentMemories(
   context: TeamApiRequestContext,
-  { botId, action }: AgentRouteTarget,
+  { agentId, action }: AgentRouteTarget,
   { agents }: AgentMemoryRouteDependencies,
 ): Promise<RouteOutcome> {
   const { method, request, json, empty } = context;
 
   if (action === "memories") {
     if (method === "GET") {
-      return json(200, agents.listMemories(botId));
+      return json(200, agents.listMemories(agentId));
     }
     if (method === "POST") {
       const body = await readJson(request);
       return json(
         201,
         agents.createMemory({
-          botId,
+          agentId,
           text: stringField(body, "text", false, INPUT_LIMITS.agentMemoryText),
         }),
       );
     }
     if (method === "DELETE") {
-      agents.clearMemories(botId);
+      agents.clearMemories(agentId);
       return empty(204);
     }
   }
@@ -47,14 +47,14 @@ export async function routeAgentMemories(
       return json(
         200,
         agents.updateMemory({
-          botId,
+          agentId,
           memoryId,
           text: stringField(body, "text", false, INPUT_LIMITS.agentMemoryText),
         }),
       );
     }
     if (method === "DELETE") {
-      agents.deleteMemory({ botId, memoryId });
+      agents.deleteMemory({ agentId, memoryId });
       return empty(204);
     }
   }

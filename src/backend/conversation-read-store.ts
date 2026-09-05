@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { BotSummary, ConversationReadState, ConversationSnapshot } from "@openbot/contracts/ipc";
+import type { AgentSummary, ConversationReadState, ConversationSnapshot } from "@openbot/contracts/ipc";
 import {
   HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX,
   ROUTINE_EVENT_ITEM_TYPE_PREFIX,
@@ -19,10 +19,12 @@ export class ConversationReadStore {
 
   listStates(
     memberId: string,
-    bots: BotSummary[],
+    agents: AgentSummary[],
     options: ConversationMarkerExclusions = {},
   ): Record<string, ConversationReadState> {
-    return Object.fromEntries(bots.map((bot) => [bot.id, this.readStateForThread(memberId, bot.threadId, options)]));
+    return Object.fromEntries(
+      agents.map((agent) => [agent.id, this.readStateForThread(memberId, agent.threadId, options)]),
+    );
   }
 
   readStateForThread(

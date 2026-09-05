@@ -200,7 +200,7 @@ export async function prepareSite(sourcePath: string, allowedRoots?: readonly st
   if (allowedRoots?.length) {
     const roots = await Promise.all(allowedRoots.map((candidate) => realpath(resolve(candidate))));
     if (!roots.some((candidate) => isInside(candidate, root))) {
-      throw new Error("The site must be inside this bot's workspace or OpenBot Shared.");
+      throw new Error("The site must be inside this agent's workspace or OpenBot Shared.");
     }
   }
   const framework = await detectFramework(root);

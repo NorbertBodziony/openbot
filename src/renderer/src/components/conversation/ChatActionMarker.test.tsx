@@ -1,9 +1,9 @@
 import { fireEvent, render, screen } from "@solidjs/testing-library";
 import { describe, expect, it, vi } from "vitest";
-import type { BotProfile, ChatActionMarkerModel } from "../../data";
+import type { AgentProfile, ChatActionMarkerModel } from "../../data";
 import { ChatActionMarker } from "./ChatActionMarker";
 
-const bots: BotProfile[] = [bot("research", "Research"), bot("sales", "Sales")];
+const agents: AgentProfile[] = [agent("research", "Research"), agent("sales", "Sales")];
 
 describe("ChatActionMarker", () => {
   it("lists each target state for a multi-agent message", async () => {
@@ -16,7 +16,7 @@ describe("ChatActionMarker", () => {
           ],
           "partial",
         )}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
       />
     ));
@@ -33,7 +33,7 @@ describe("ChatActionMarker", () => {
     const { unmount } = render(() => (
       <ChatActionMarker
         marker={agentMarker([{ agentId: "missing", status: "failed" }], "failed")}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
       />
     ));
@@ -44,7 +44,7 @@ describe("ChatActionMarker", () => {
     render(() => (
       <ChatActionMarker
         marker={routineMarker("cancelled")}
-        bots={bots}
+        agents={agents}
         routineAvailable={false}
         onSelectAgent={vi.fn()}
         onOpenRoutine={vi.fn()}
@@ -59,7 +59,7 @@ describe("ChatActionMarker", () => {
     render(() => (
       <ChatActionMarker
         marker={routineMarker("needs-attention")}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenRoutine={onOpenRoutine}
       />
@@ -76,7 +76,7 @@ describe("ChatActionMarker", () => {
     const { unmount } = render(() => (
       <ChatActionMarker
         marker={siteMarker("publish", "succeeded")}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenHostedSite={onOpenHostedSite}
       />
@@ -93,7 +93,7 @@ describe("ChatActionMarker", () => {
     render(() => (
       <ChatActionMarker
         marker={siteMarker("replace", "failed")}
-        bots={bots}
+        agents={agents}
         announce
         onSelectAgent={vi.fn()}
         onOpenHostedSite={onOpenHostedSite}
@@ -153,7 +153,7 @@ function siteMarker(
   };
 }
 
-function bot(id: string, name: string): BotProfile {
+function agent(id: string, name: string): AgentProfile {
   return {
     id,
     name,

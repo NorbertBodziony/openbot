@@ -7,7 +7,7 @@ const tab = (id: string): BrowserTab => ({
   url: `https://example.test/${id}`,
   loading: false,
   ownerThreadId: null,
-  ownerBotId: null,
+  ownerAgentId: null,
 });
 
 describe("activeTabAfterLoad", () => {

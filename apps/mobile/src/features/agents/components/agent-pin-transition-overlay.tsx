@@ -1,14 +1,13 @@
 import Animated, { interpolate, type SharedValue, useAnimatedStyle } from "react-native-reanimated";
+import type { AgentPinTransitionState } from "@/features/agents/components/agent-pin-transition";
+import { BloubAvatar } from "@/features/agents/components/bloub-avatar";
 
-import { BloubAvatar } from "@/features/bots/components/bloub-avatar";
-import type { BotPinTransitionState } from "@/features/bots/components/bot-pin-transition";
-
-interface BotPinTransitionOverlayProps {
+interface AgentPinTransitionOverlayProps {
   progress: SharedValue<number>;
-  transition: BotPinTransitionState | null;
+  transition: AgentPinTransitionState | null;
 }
 
-export function BotPinTransitionOverlay({ progress, transition }: BotPinTransitionOverlayProps) {
+export function AgentPinTransitionOverlay({ progress, transition }: AgentPinTransitionOverlayProps) {
   const overlayStyle = useAnimatedStyle(() => {
     if (!transition) return { opacity: 0 };
 

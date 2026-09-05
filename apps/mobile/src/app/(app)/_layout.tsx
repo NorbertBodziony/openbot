@@ -1,8 +1,7 @@
 import { Stack } from "expo-router/stack";
 import { useThemeColor } from "heroui-native/hooks";
-
+import { AgentPinTransitionProvider } from "@/features/agents/components/agent-pin-transition";
 import { useMobileSession } from "@/features/auth/context/mobile-session-context";
-import { BotPinTransitionProvider } from "@/features/bots/components/bot-pin-transition";
 import { AppDrawerShell } from "@/features/servers/components/app-drawer-shell";
 import { MobileWorkspaceProvider } from "@/features/workspace/context/mobile-workspace-context";
 import { isIOS } from "@/shared/lib/platform";
@@ -24,7 +23,7 @@ function AuthenticatedStack() {
     >
       <Stack.Screen name="connected" options={{ animation: "fade", gestureEnabled: false, title: "" }} />
       <Stack.Screen
-        name="chat/[botId]"
+        name="chat/[agentId]"
         options={{
           animation: "slide_from_right",
           contentStyle: { backgroundColor: background },
@@ -34,7 +33,7 @@ function AuthenticatedStack() {
         }}
       />
       <Stack.Screen
-        name="add-bot"
+        name="add-agent"
         options={{
           contentStyle: { backgroundColor: background },
           headerStyle: { backgroundColor: background },
@@ -42,11 +41,11 @@ function AuthenticatedStack() {
           presentation: "formSheet",
           sheetAllowedDetents: "fitToContents",
           sheetGrabberVisible: true,
-          title: "Add bot",
+          title: "Add agent",
         }}
       />
       <Stack.Screen
-        name="edit-bot/[botId]"
+        name="edit-agent/[agentId]"
         options={{
           contentStyle: { backgroundColor: background },
           headerStyle: { backgroundColor: background },
@@ -54,7 +53,7 @@ function AuthenticatedStack() {
           presentation: "formSheet",
           sheetAllowedDetents: "fitToContents",
           sheetGrabberVisible: true,
-          title: "Edit bot",
+          title: "Edit agent",
         }}
       />
       <Stack.Screen
@@ -68,7 +67,7 @@ function AuthenticatedStack() {
         }}
       />
       <Stack.Screen
-        name="search-bots"
+        name="search-agents"
         options={{
           contentStyle: { backgroundColor: background },
           headerShown: false,
@@ -108,11 +107,11 @@ export default function AuthenticatedLayout() {
 
   return (
     <MobileWorkspaceProvider key={workspaceKey}>
-      <BotPinTransitionProvider>
+      <AgentPinTransitionProvider>
         <AppDrawerShell>
           <AuthenticatedStack />
         </AppDrawerShell>
-      </BotPinTransitionProvider>
+      </AgentPinTransitionProvider>
     </MobileWorkspaceProvider>
   );
 }

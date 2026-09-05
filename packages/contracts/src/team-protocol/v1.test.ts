@@ -16,6 +16,7 @@ import {
 } from "./v1";
 import {
   decodeTeamProtocolV1CurrentEvent,
+  decodeTeamProtocolV1CurrentHttpRequest,
   encodeTeamProtocolV1CurrentEvent,
   encodeTeamProtocolV1CurrentHttpRequest,
   encodeTeamProtocolV1CurrentHttpResponse,
@@ -64,6 +65,69 @@ describe("Team protocol v1", () => {
 
     expect(message.text).toBe("Ask @Research to use Sources (skill).");
     expect(queueUpdate.text).toBe("Follow up with @Research.");
+  });
+
+  it("keeps a dynamic map's keys out of the vocabulary translation", () => {
+    // `responses` is answers by question id, and a question id is any nonempty string its author chose.
+    // Renaming that key would leave the answer filed under `botId` while the question it belongs to still
+    // says `agentId`, and the client could no longer pair them.
+    const conversation = JSON.parse(
+      encodeTeamProtocolV1CurrentHttpResponse("GET", "/v1/agents/agent-1/conversation", 200, {
+        agentId: "agent-1",
+        threadId: "thread-1",
+        activeTurnId: null,
+        revision: 1,
+        readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+        messages: [
+          {
+            id: "message-1",
+            text: "Which one?",
+            createdAt: "2026-08-30T12:00:00.000Z",
+            author: "agent",
+            status: "completed",
+            questionPrompt: {
+              requestId: "request-1",
+              questions: [{ id: "agentId", header: "Agent", question: "Which agent?", isSecret: false, options: null }],
+              resolution: { status: "answered", responses: { agentId: { status: "answered", answers: ["chief"] } } },
+            },
+          },
+        ],
+      }),
+    );
+
+    expect(conversation.botId).toBe("agent-1");
+    expect(conversation.messages[0].questionPrompt.questions[0].id).toBe("agentId");
+    expect(Object.keys(conversation.messages[0].questionPrompt.resolution.responses)).toEqual(["agentId"]);
+
+    // The answer travels back keyed by the same question id, so the request body is the other half of the
+    // same pairing -- and the half that would strand a real answer the host cannot match to its question.
+    const respond = JSON.parse(
+      encodeTeamProtocolV1CurrentHttpRequest("POST", "/v1/prompts/respond", {
+        requestId: "request-1",
+        answers: { agentId: ["chief"] },
+      }),
+    );
+
+    expect(Object.keys(respond.answers)).toEqual(["agentId"]);
+    expect(decodeTeamProtocolV1CurrentHttpRequest("POST", "/v1/prompts/respond", respond)).toEqual({
+      requestId: "request-1",
+      answers: { agentId: ["chief"] },
+    });
+
+    // The key is data, so it is not context either: a question id that happens to spell a discriminant
+    // must not decide what the answer under it means. Here the user answered the literal word "agent".
+    const answered = JSON.parse(
+      encodeTeamProtocolV1CurrentHttpRequest("POST", "/v1/prompts/respond", {
+        requestId: "request-1",
+        answers: { kind: ["agent"] },
+      }),
+    );
+
+    expect(answered.answers).toEqual({ kind: ["agent"] });
+    expect(decodeTeamProtocolV1CurrentHttpRequest("POST", "/v1/prompts/respond", answered)).toEqual({
+      requestId: "request-1",
+      answers: { kind: ["agent"] },
+    });
   });
 
   it("decodes bounded compatibility metadata and finds the highest common version", () => {
@@ -130,9 +194,14 @@ describe("Team protocol v1", () => {
       detail: "Searching for current information…",
     };
 
+    // The wire keeps `botId`; in-app the same event says `agentId`. This asymmetry is the proof that the
+    // vocabulary shim also runs on the branch that bypasses the frozen codec.
+    const { botId, ...rest } = activity;
+    const currentActivity = { ...rest, agentId: botId };
+
     expect(decodeTeamProtocolV1Event(activity)).toEqual({ kind: "unknown", type: "turn-progress" });
-    expect(decodeTeamProtocolV1CurrentEvent(activity)).toEqual({ kind: "known", event: activity });
-    expect(JSON.parse(encodeTeamProtocolV1CurrentEvent(activity) ?? "null")).toEqual(activity);
+    expect(decodeTeamProtocolV1CurrentEvent(activity)).toEqual({ kind: "known", event: currentActivity });
+    expect(JSON.parse(encodeTeamProtocolV1CurrentEvent(currentActivity) ?? "null")).toEqual(activity);
   });
 
   it("accepts the frozen minimal runtime snapshot", () => {
@@ -151,7 +220,10 @@ describe("Team protocol v1", () => {
       },
     };
 
-    expect(decodeTeamProtocolV1CurrentEvent(event)).toEqual({ kind: "known", event });
+    const { bots, ...snapshot } = event.snapshot;
+    const currentEvent = { ...event, snapshot: { ...snapshot, agents: bots } };
+
+    expect(decodeTeamProtocolV1CurrentEvent(event)).toEqual({ kind: "known", event: currentEvent });
   });
 
   it("rejects unregistered HTTP routes and malformed known payloads", () => {

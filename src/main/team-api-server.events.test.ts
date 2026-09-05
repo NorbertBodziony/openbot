@@ -5,7 +5,7 @@
 
 import { EventEmitter } from "node:events";
 import { join } from "node:path";
-import type { BotSummary } from "@openbot/contracts/ipc";
+import type { AgentSummary } from "@openbot/contracts/ipc";
 import {
   AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT,
   hostedSiteConversationEventItemType,
@@ -47,7 +47,7 @@ describe("TeamApiServer events", () => {
     const sidebarLayout = new SidebarLayoutStore(join(root, "sidebar-layout.json"));
     await sidebarLayout.initialize();
     const getRuntimeSnapshot = vi.fn<TeamApiAgents["getRuntimeSnapshot"]>(() => ({
-      bots: [],
+      agents: [],
       activeTurns: [],
       work: [],
       latestMessages: [],
@@ -62,7 +62,7 @@ describe("TeamApiServer events", () => {
       on: (event, listener) => agentEvents.on(event, listener),
       off: (event, listener) => agentEvents.off(event, listener),
       getRuntimeSnapshot,
-      listBots: () => [
+      listAgents: () => [
         {
           id: "chief",
           provider: "codex",
@@ -79,7 +79,7 @@ describe("TeamApiServer events", () => {
           avatarSeed: "chief",
           avatarHue: null,
           avatarUrl: null,
-        } satisfies BotSummary,
+        } satisfies AgentSummary,
       ],
     });
     let now = 0;
@@ -109,7 +109,7 @@ describe("TeamApiServer events", () => {
     const conversation = {
       type: "conversation",
       snapshot: {
-        botId: "chief",
+        agentId: "chief",
         threadId: "thread-chief",
         activeTurnId: null,
         revision: 1,
@@ -126,13 +126,13 @@ describe("TeamApiServer events", () => {
     };
     getRuntimeSnapshot.mockReturnValueOnce({
       ...createAgents().getRuntimeSnapshot(),
-      latestMessages: [{ botId: "chief", id: "reply-1", text: "Done", createdAt: "2026-08-29T10:00:00.000Z" }],
+      latestMessages: [{ agentId: "chief", id: "reply-1", text: "Done", createdAt: "2026-08-29T10:00:00.000Z" }],
     });
     const boundedEvents = nextJsonEvents(socket, 2);
     agentEvents.emit("event", conversation);
     agentEvents.emit("event", {
       type: "turn-completed",
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-chief",
       turnId: "turn-1",
       status: "completed",
@@ -165,18 +165,18 @@ describe("TeamApiServer events", () => {
       revision: 1,
     });
     const queueEvent = nextJsonEvent(socket);
-    agentEvents.emit("event", { type: "queue-changed", snapshot: { botId: "chief", deliveries: [] } });
+    agentEvents.emit("event", { type: "queue-changed", snapshot: { agentId: "chief", deliveries: [] } });
     await expect(queueEvent).resolves.toEqual({ type: "queue-invalidated", botId: "chief" });
 
     const eventAfterUnsupportedActivity = nextJsonEvent(socket);
     agentEvents.emit("event", {
       type: "turn-progress",
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-chief",
       turnId: "turn-1",
       detail: "Searching for current information…",
     });
-    agentEvents.emit("event", { type: "bots-changed", bots: [] });
+    agentEvents.emit("event", { type: "agents-changed", agents: [] });
     await expect(eventAfterUnsupportedActivity).resolves.toMatchObject({ type: "bots-changed" });
 
     const eventsAfterOversizedConversation = nextJsonEvents(socket, 2);
@@ -187,7 +187,7 @@ describe("TeamApiServer events", () => {
         messages: [{ ...conversation.snapshot.messages[0], text: "x".repeat(1024 * 1024) }],
       },
     });
-    agentEvents.emit("event", { type: "bots-changed", bots: [] });
+    agentEvents.emit("event", { type: "agents-changed", agents: [] });
     await expect(eventsAfterOversizedConversation).resolves.toEqual([
       expect.objectContaining({ type: "conversation-invalidated" }),
       expect.objectContaining({ type: "bots-changed" }),
@@ -242,12 +242,12 @@ describe("TeamApiServer events", () => {
     );
     now = 1_000;
     getRuntimeSnapshot.mockImplementation(() => ({
-      bots: [],
+      agents: [],
       activeTurns: [],
       work: [],
       latestMessages: [
         {
-          botId: "chief",
+          agentId: "chief",
           id: "oversized",
           text: "x".repeat(AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT),
           createdAt: "2026-08-29T10:00:00.000Z",
@@ -285,14 +285,14 @@ describe("TeamApiServer events", () => {
       expect(socket.protocol).toBe("openbot-events");
       const supportedEvent = nextJsonEvent(socket);
       agentEvents.emit("event", { type: "runtime-snapshot", snapshot: createAgents().getRuntimeSnapshot() });
-      agentEvents.emit("event", { type: "bots-changed", bots: [] });
+      agentEvents.emit("event", { type: "agents-changed", agents: [] });
       await expect(supportedEvent).resolves.toMatchObject({ type: "bots-changed" });
 
       const conversationEvent = nextJsonEvent(socket);
       agentEvents.emit("event", {
         type: "conversation",
         snapshot: {
-          botId: "chief",
+          agentId: "chief",
           threadId: "thread-chief",
           activeTurnId: null,
           revision: 2,

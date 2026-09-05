@@ -396,6 +396,7 @@ describe("TeamWebRtcHostGateway", () => {
       encodeTeamProtocolV2Frame({ version: 2, type: "event-ack", throughSequence: 0 }),
     );
     await vi.waitFor(() => expect(eventsServer.clients.size).toBe(2));
+    // The events server stands in for the host, so the frame it sends is frozen wire JSON: `botId`.
     for (const client of eventsServer.clients)
       client.send(JSON.stringify({ type: "queue-invalidated", botId: "bot-1" }));
     await vi.waitFor(() =>

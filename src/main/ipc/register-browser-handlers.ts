@@ -30,7 +30,7 @@ export function registerBrowserIpcHandlers({
 }: BrowserIpcDependencies): void {
   handleTrusted(IPC_CHANNELS.browserOpen, parseBrowserOpen, (parsed) =>
     routeToServer(remoteServers.activeServerId, {
-      local: () => browser.open(parsed.url, parsed.ownerThreadId ?? null, parsed.ownerBotId ?? null, parsed.focus),
+      local: () => browser.open(parsed.url, parsed.ownerThreadId ?? null, parsed.ownerAgentId ?? null, parsed.focus),
       remote: (serverId) =>
         remoteServers.request(serverId, TEAM_API_ROUTES.browser.open, decodeBrowserTab, {
           method: "POST",

@@ -112,12 +112,12 @@
   margin: 0 0 26px;
 }
 
-.onboarding-hero-avatar .bot-avatar {
+.onboarding-hero-avatar .agent-avatar {
   width: 86px;
   height: 86px;
 }
 
-.onboarding-hero-avatar .bot-avatar > svg {
+.onboarding-hero-avatar .agent-avatar > svg {
   width: 128%;
   height: 128%;
 }
@@ -289,12 +289,12 @@
   animation: onboarding-computer-avatar-drag 4.6s var(--openbot-ease-in-out) infinite;
 }
 
-.onboarding-computer-avatar .bot-avatar {
+.onboarding-computer-avatar .agent-avatar {
   width: 34px;
   height: 34px;
 }
 
-.onboarding-computer-avatar .bot-avatar > svg {
+.onboarding-computer-avatar .agent-avatar > svg {
   width: 128%;
   height: 128%;
   filter: drop-shadow(0 2px 4px var(--openbot-shadow-popover-key));
@@ -428,12 +428,12 @@
   right: 3%;
 }
 
-.onboarding-job-avatar.bot-avatar {
+.onboarding-job-avatar.agent-avatar {
   width: 76px;
   height: 76px;
 }
 
-.onboarding-job-avatar.bot-avatar > svg {
+.onboarding-job-avatar.agent-avatar > svg {
   width: 128%;
   height: 128%;
 }
@@ -491,7 +491,7 @@
     height: 30px;
   }
 
-  .onboarding-computer-avatar .bot-avatar {
+  .onboarding-computer-avatar .agent-avatar {
     width: 30px;
     height: 30px;
   }

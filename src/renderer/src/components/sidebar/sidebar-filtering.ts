@@ -4,7 +4,7 @@
  */
 
 import type { DirectThreadSummary, TeamPresenceMember } from "@openbot/contracts/ipc";
-import type { BotProfile } from "../../data";
+import type { AgentProfile } from "../../data";
 import type { SidebarAgentState } from "../Sidebar";
 import { teamMemberName } from "../TeamPersonAvatar";
 
@@ -30,8 +30,8 @@ export function sidebarMessageTime(value: string): string {
   }).format(date);
 }
 
-export function botMatchesQuery(bot: BotProfile, query: string): boolean {
-  return !query || `${bot.name} ${bot.title} ${bot.description} ${bot.preview}`.toLowerCase().includes(query);
+export function agentMatchesQuery(agent: AgentProfile, query: string): boolean {
+  return !query || `${agent.name} ${agent.title} ${agent.description} ${agent.preview}`.toLowerCase().includes(query);
 }
 
 export function personMatchesQuery(

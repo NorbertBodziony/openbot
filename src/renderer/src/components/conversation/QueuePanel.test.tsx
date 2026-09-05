@@ -27,7 +27,7 @@ function delivery(position: number, overrides: Partial<QueueDelivery> = {}): Que
   return {
     id: `delivery-${position}`,
     messageId: `message-${position}`,
-    recipientBotId: "chief",
+    recipientAgentId: "chief",
     sender: { kind: "user" },
     text: `Queued task ${position}`,
     attachments: [],

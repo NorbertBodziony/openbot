@@ -108,7 +108,7 @@ export function decodeConversationReadState(value: unknown): ConversationReadSta
 export function decodeConversationReadStates(value: unknown): Record<string, ConversationReadState> {
   const record = decodeRecord(value, "conversation read states");
   return Object.fromEntries(
-    Object.entries(record).map(([botId, state]) => [botId, decodeConversationReadState(state)]),
+    Object.entries(record).map(([agentId, state]) => [agentId, decodeConversationReadState(state)]),
   );
 }
 
@@ -122,7 +122,7 @@ export function decodeConversationWithReadState(value: unknown): ConversationWit
 export function decodeConversationPageFromHost(value: unknown): ConversationPage {
   const record = decodeRecord(value, "agent conversation page");
   return {
-    botId: requiredString(record, "botId"),
+    agentId: requiredString(record, "agentId"),
     threadId: nullableString(record, "threadId"),
     activeTurnId: nullableString(record, "activeTurnId"),
     revision: requiredNumber(record, "revision"),
@@ -140,7 +140,7 @@ export function decodeConversationSearchPageFromHost(value: unknown): Conversati
     results: record.results.map((value) => {
       const result = decodeRecord(value, "conversation search result");
       return {
-        botId: requiredString(result, "botId"),
+        agentId: requiredString(result, "agentId"),
         message: decodeConversationMessage(result.message, "conversation search message"),
       };
     }),

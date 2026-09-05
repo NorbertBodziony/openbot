@@ -2,8 +2,8 @@ import { readFile } from "node:fs/promises";
 import type {
   AgentPublicationPreview,
   AgentSubmission,
+  AgentSummary,
   AvatarImageInput,
-  BotSummary,
   InstallMarketplaceAgentInput,
   InstallMarketplaceAgentResult,
   MarketplaceAgentDetail,
@@ -25,34 +25,34 @@ interface AgentMarketplaceAuth {
 }
 
 interface AgentMarketplaceAgents {
-  listBots(): BotSummary[];
-  listRoutines(botId: string): Array<{
+  listAgents(): AgentSummary[];
+  listRoutines(agentId: string): Array<{
     id: string;
     name: string;
     instruction: string;
     active: boolean;
     trigger: { schedule: RoutineSchedule };
   }>;
-  resolveAvatar(botId: string): { path: string; mimeType: AvatarImageInput["mimeType"] } | null;
-  createBotProfile(input: {
+  resolveAvatar(agentId: string): { path: string; mimeType: AvatarImageInput["mimeType"] } | null;
+  createAgentProfile(input: {
     name: string;
     title?: string;
     description: string;
     avatarSeed: string;
     avatarHue: MarketplaceAgentDetail["avatarHue"];
-  }): Promise<BotSummary>;
-  updateBot(input: {
-    botId: string;
+  }): Promise<AgentSummary>;
+  updateAgent(input: {
+    agentId: string;
     name: string;
     title: string;
     description: string;
     avatarSeed: string;
     avatarHue: MarketplaceAgentDetail["avatarHue"];
-  }): Promise<BotSummary>;
-  setAvatar(botId: string, image: AvatarImageInput | null): Promise<BotSummary>;
+  }): Promise<AgentSummary>;
+  setAvatar(agentId: string, image: AvatarImageInput | null): Promise<AgentSummary>;
   createRoutine(
     input: {
-      botId: string;
+      agentId: string;
       name: string;
       instruction: string;
       active: boolean;
@@ -62,17 +62,17 @@ interface AgentMarketplaceAgents {
     options?: { recordConversationEvent?: boolean },
   ): { id: string };
   deleteRoutine(
-    input: { botId: string; routineId: string },
+    input: { agentId: string; routineId: string },
     options?: { recordConversationEvent?: boolean },
   ): Promise<void>;
-  setMarketplaceSource(botId: string, source: NonNullable<BotSummary["marketplaceSource"]>): BotSummary;
-  deleteBot(botId: string): Promise<void>;
+  setMarketplaceSource(agentId: string, source: NonNullable<AgentSummary["marketplaceSource"]>): AgentSummary;
+  deleteAgent(agentId: string): Promise<void>;
 }
 
 interface AgentMarketplaceSkills {
-  listPublishable(botId: string): Promise<MarketplaceAgentSkill[]>;
-  installVersion(input: { botId: string; skillId: string; versionId: string }): Promise<unknown>;
-  uninstall(input: { botId: string; skillId: string }): Promise<void>;
+  listPublishable(agentId: string): Promise<MarketplaceAgentSkill[]>;
+  installVersion(input: { agentId: string; skillId: string; versionId: string }): Promise<unknown>;
+  uninstall(input: { agentId: string; skillId: string }): Promise<void>;
 }
 
 export class AgentMarketplaceService {
@@ -97,9 +97,9 @@ export class AgentMarketplaceService {
     return { ...page, agents: page.agents.map((agent) => this.withAbsoluteAvatar(agent)) };
   }
 
-  async get(agentId: string): Promise<MarketplaceAgentDetail> {
+  async get(listingId: string): Promise<MarketplaceAgentDetail> {
     const detail = await this.auth.requestAuthorized(
-      `/v1/marketplace/agents/${encodeURIComponent(agentId)}`,
+      `/v1/marketplace/agents/${encodeURIComponent(listingId)}`,
       { method: "GET" },
       decodeAgentDetail,
     );
@@ -115,35 +115,36 @@ export class AgentMarketplaceService {
     return values.map((value) => this.withAbsoluteAvatar(value));
   }
 
-  async preview(botId: string): Promise<AgentPublicationPreview> {
-    const bot = this.agents.listBots().find((candidate) => candidate.id === botId);
-    if (!bot) throw new Error("Choose a local agent first.");
-    const skills = await this.skills.listPublishable(botId);
-    const routines = this.agents.listRoutines(botId).map(({ name, instruction, active, trigger }) => ({
+  async preview(agentId: string): Promise<AgentPublicationPreview> {
+    const agent = this.agents.listAgents().find((candidate) => candidate.id === agentId);
+    if (!agent) throw new Error("Choose a local agent first.");
+    const skills = await this.skills.listPublishable(agentId);
+    const routines = this.agents.listRoutines(agentId).map(({ name, instruction, active, trigger }) => ({
       name,
       instruction,
       active,
       schedule: trigger.schedule,
     }));
     return {
-      botId,
-      name: bot.name,
-      title: bot.title,
-      description: bot.description,
-      avatarSeed: bot.avatarSeed,
-      avatarHue: bot.avatarHue,
-      avatarUrl: bot.avatarUrl,
+      agentId: agentId,
+      name: agent.name,
+      title: agent.title,
+      description: agent.description,
+      avatarSeed: agent.avatarSeed,
+      avatarHue: agent.avatarHue,
+      avatarUrl: agent.avatarUrl,
       skills,
       routines,
     };
   }
 
   async submit(input: SubmitMarketplaceAgentInput): Promise<AgentSubmission> {
-    const snapshot = await this.preview(input.botId);
+    const snapshot = await this.preview(input.agentId);
     const form = new FormData();
-    form.set("snapshot", JSON.stringify({ ...snapshot, avatarUrl: null }));
-    if (input.agentId) form.set("agentId", input.agentId);
-    const avatar = this.agents.resolveAvatar(input.botId);
+    form.set("snapshot", JSON.stringify(toMarketplaceSnapshotWire(snapshot)));
+    // The multipart field names the marketplace listing being updated, and is the deployed spelling.
+    if (input.listingId) form.set("agentId", input.listingId);
+    const avatar = this.agents.resolveAvatar(input.agentId);
     if (avatar) {
       const bytes = new Uint8Array(await readFile(avatar.path));
       form.set("avatar", new Blob([toArrayBuffer(bytes)], { type: avatar.mimeType }), "avatar");
@@ -159,13 +160,15 @@ export class AgentMarketplaceService {
 
   async install(input: InstallMarketplaceAgentInput): Promise<InstallMarketplaceAgentResult> {
     if (!validTimezone(input.timezone)) throw new Error("The local timezone is invalid.");
-    const detail = await this.get(input.agentId);
-    const existing = input.botId ? this.agents.listBots().find((candidate) => candidate.id === input.botId) : undefined;
-    if (input.botId && !existing) throw new Error("The installed agent no longer exists.");
-    if (existing?.marketplaceSource?.agentId !== detail.id) {
+    const detail = await this.get(input.listingId);
+    const existing = input.agentId
+      ? this.agents.listAgents().find((candidate) => candidate.id === input.agentId)
+      : undefined;
+    if (input.agentId && !existing) throw new Error("The installed agent no longer exists.");
+    if (existing?.marketplaceSource?.listingId !== detail.id) {
       if (existing) throw new Error("This local agent was installed from a different marketplace agent.");
     }
-    if (existing?.marketplaceSource?.versionId === detail.versionId) return { bot: existing };
+    if (existing?.marketplaceSource?.versionId === detail.versionId) return { agent: existing };
 
     let avatar: AvatarImageInput | null = null;
     if (detail.avatarUrl) {
@@ -174,9 +177,9 @@ export class AgentMarketplaceService {
       if (!mimeType) throw new Error("The marketplace agent avatar is invalid.");
       avatar = { mimeType, bytes };
     }
-    let bot =
+    let agent =
       existing ??
-      (await this.agents.createBotProfile({
+      (await this.agents.createAgentProfile({
         name: detail.name,
         title: detail.title,
         description: detail.description,
@@ -186,12 +189,12 @@ export class AgentMarketplaceService {
     const createdRoutineIds: string[] = [];
     try {
       for (const skill of detail.skills) {
-        await this.skills.installVersion({ botId: bot.id, skillId: skill.skillId, versionId: skill.versionId });
+        await this.skills.installVersion({ agentId: agent.id, skillId: skill.skillId, versionId: skill.versionId });
       }
       for (const routine of detail.routines) {
         const created = this.agents.createRoutine(
           {
-            botId: bot.id,
+            agentId: agent.id,
             name: routine.name,
             instruction: routine.instruction,
             active: routine.active,
@@ -203,8 +206,8 @@ export class AgentMarketplaceService {
         createdRoutineIds.push(created.id);
       }
       if (existing) {
-        bot = await this.agents.updateBot({
-          botId: bot.id,
+        agent = await this.agents.updateAgent({
+          agentId: agent.id,
           name: detail.name,
           title: detail.title,
           description: detail.description,
@@ -212,13 +215,13 @@ export class AgentMarketplaceService {
           avatarHue: detail.avatarHue,
         });
       }
-      bot = await this.agents.setAvatar(bot.id, avatar);
+      agent = await this.agents.setAvatar(agent.id, avatar);
       const nextSkillIds = new Set(detail.skills.map((skill) => skill.skillId));
       for (const skillId of existing?.marketplaceSource?.skillIds ?? []) {
-        if (!nextSkillIds.has(skillId)) await this.skills.uninstall({ botId: bot.id, skillId });
+        if (!nextSkillIds.has(skillId)) await this.skills.uninstall({ agentId: agent.id, skillId });
       }
-      bot = this.agents.setMarketplaceSource(bot.id, {
-        agentId: detail.id,
+      agent = this.agents.setMarketplaceSource(agent.id, {
+        listingId: detail.id,
         versionId: detail.versionId,
         version: detail.version,
         skillIds: [...nextSkillIds],
@@ -226,7 +229,7 @@ export class AgentMarketplaceService {
       });
       for (const routineId of existing?.marketplaceSource?.routineIds ?? []) {
         await this.agents
-          .deleteRoutine({ botId: bot.id, routineId }, { recordConversationEvent: false })
+          .deleteRoutine({ agentId: agent.id, routineId }, { recordConversationEvent: false })
           .catch(() => undefined);
       }
     } catch (error) {
@@ -234,12 +237,12 @@ export class AgentMarketplaceService {
         await Promise.all(
           createdRoutineIds.map((routineId) =>
             this.agents
-              .deleteRoutine({ botId: bot.id, routineId }, { recordConversationEvent: false })
+              .deleteRoutine({ agentId: agent.id, routineId }, { recordConversationEvent: false })
               .catch(() => undefined),
           ),
         );
       } else {
-        await this.agents.deleteBot(bot.id).catch(() => undefined);
+        await this.agents.deleteAgent(agent.id).catch(() => undefined);
       }
       throw error;
     }
@@ -254,7 +257,7 @@ export class AgentMarketplaceService {
         decodeInstallReceipt,
       );
     }
-    return { bot };
+    return { agent: agent };
   }
 
   private withAbsoluteAvatar<T extends { avatarUrl: string | null }>(value: T): T {
@@ -287,7 +290,7 @@ function decodeAgentPage(value: unknown): MarketplaceAgentPage {
   if (
     !isDynamicRecord(value) ||
     !Array.isArray(value.agents) ||
-    !value.agents.every(isAgentSummary) ||
+    !value.agents.every(isMarketplaceAgentSummary) ||
     (value.nextCursor !== null && !isString(value.nextCursor))
   )
     throw new Error("Invalid agent marketplace response.");
@@ -295,7 +298,7 @@ function decodeAgentPage(value: unknown): MarketplaceAgentPage {
 }
 
 function decodeAgentDetail(value: unknown): MarketplaceAgentDetail {
-  if (!isAgentSummary(value)) throw new Error("Invalid marketplace agent detail.");
+  if (!isMarketplaceAgentSummary(value)) throw new Error("Invalid marketplace agent detail.");
   if (!isDynamicRecord(value)) throw new Error("Invalid marketplace agent detail.");
   const item = value;
   if (
@@ -331,13 +334,17 @@ function agentRoutine(value: unknown): MarketplaceAgentRoutine {
 }
 
 function decodeAgentSubmissions(value: unknown): AgentSubmission[] {
-  if (!Array.isArray(value) || !value.every(isAgentSubmission)) throw new Error("Invalid agent submissions.");
-  return value;
+  if (!Array.isArray(value) || !value.every(isAgentSubmissionWire)) throw new Error("Invalid agent submissions.");
+  return value.map(toCurrentSubmission);
 }
 
 function decodeAgentSubmission(value: unknown): AgentSubmission {
-  if (!isAgentSubmission(value)) throw new Error("Invalid agent submission.");
-  return value;
+  if (!isAgentSubmissionWire(value)) throw new Error("Invalid agent submission.");
+  return toCurrentSubmission(value);
+}
+
+function toCurrentSubmission({ agentId, ...rest }: AgentSubmissionWire): AgentSubmission {
+  return { ...rest, listingId: agentId };
 }
 
 function decodeInstallReceipt(value: unknown): { installed: true } {
@@ -345,7 +352,21 @@ function decodeInstallReceipt(value: unknown): { installed: true } {
   return { installed: true };
 }
 
-function isAgentSummary(value: unknown): value is MarketplaceAgentSummary {
+/**
+ * The published snapshot and the submission the account Worker returns still spell the two ids the way
+ * the deployed Worker does: `agentId` for the local agent inside a snapshot, `agentId` for the
+ * marketplace listing. A Worker deploy can land either side of a desktop release, so the two
+ * converters here are the only place the desktop's `agentId`/`listingId` vocabulary meets that wire.
+ */
+type AgentSubmissionWire = Omit<AgentSubmission, "listingId"> & { agentId: string };
+
+type MarketplaceSnapshotWire = Omit<AgentPublicationPreview, "agentId"> & { botId: string };
+
+function toMarketplaceSnapshotWire({ agentId, ...rest }: AgentPublicationPreview): MarketplaceSnapshotWire {
+  return { ...rest, botId: agentId, avatarUrl: null };
+}
+
+function isMarketplaceAgentSummary(value: unknown): value is MarketplaceAgentSummary {
   return (
     isDynamicRecord(value) &&
     isString(value.id) &&
@@ -366,7 +387,7 @@ function isAgentSummary(value: unknown): value is MarketplaceAgentSummary {
   );
 }
 
-function isAgentSubmission(value: unknown): value is AgentSubmission {
+function isAgentSubmissionWire(value: unknown): value is AgentSubmissionWire {
   return (
     isDynamicRecord(value) &&
     isString(value.id) &&

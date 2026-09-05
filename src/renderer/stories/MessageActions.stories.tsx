@@ -1,11 +1,11 @@
 import { expect, fn, waitFor, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { MessageActions } from "../src/components/conversation/MessageRendering";
-import type { BotMessage } from "../src/data";
+import type { AgentMessage } from "../src/data";
 
-const message: BotMessage = {
+const message: AgentMessage = {
   id: "message-actions-1",
-  author: "bot",
+  author: "agent",
   body: "A message with available actions.",
   time: "10:00",
 };

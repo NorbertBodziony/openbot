@@ -15,14 +15,14 @@ import { useSettings } from "./settings";
 import { useTurns } from "./turns";
 
 /**
- * The transcript of the active Bot, with everything the composer needs to send
+ * The transcript of the active Agent, with everything the composer needs to send
  * to it. The widest pane by props because `Conversation` is where the browser,
  * the queue, prompts, approvals and search all surface, and each of those is a
  * domain of its own.
  *
- * Everything here is a projection of the active Bot, so the whole component
- * reads `activeBot()` and hands `Conversation` the slice for that id. It stays
- * mounted across a Bot change on purpose - `Conversation` owns the scroll and
+ * Everything here is a projection of the active Agent, so the whole component
+ * reads `activeAgent()` and hands `Conversation` the slice for that id. It stays
+ * mounted across an Agent change on purpose - `Conversation` owns the scroll and
  * composer state that survives one - which is why the id is read per prop
  * rather than captured once.
  */
@@ -40,7 +40,8 @@ export function WorkspaceConversation(props: { account: () => CentralAuthUser })
     connectClaude,
     connectGrok,
   } = useProviders();
-  const { agentStatus, botList, activeBot, modelOptions, settingsRequest, updateBot, setAgentAvatar } = useAgents();
+  const { agentStatus, agentList, activeAgent, modelOptions, settingsRequest, updateAgent, setAgentAvatar } =
+    useAgents();
   const {
     activeQueue,
     activeRoutineIds,
@@ -84,17 +85,17 @@ export function WorkspaceConversation(props: { account: () => CentralAuthUser })
   } = useBrowserTabs();
   const { activeRemoteDesktopSession, remoteDesktopWorkspaceVisible, openRemoteDesktopWorkspace } = useRemoteDesktop();
   const { teamPresence } = usePresence();
-  const { selectBot, openAgentMessage, messageFocusRequest, globalSearchOpen } = useNavigation();
+  const { selectAgent, openAgentMessage, messageFocusRequest, globalSearchOpen } = useNavigation();
 
   const activePrompt = createMemo(() => {
-    const bot = activeBot();
-    const event = bot ? pendingPrompts()[bot.id] : undefined;
+    const agent = activeAgent();
+    const event = agent ? pendingPrompts()[agent.id] : undefined;
     return event?.type === "prompt" ? event : undefined;
   });
 
   const activeBrowserTakeover = createMemo(() => {
-    const bot = activeBot();
-    const event = bot ? pendingPrompts()[bot.id] : undefined;
+    const agent = activeAgent();
+    const event = agent ? pendingPrompts()[agent.id] : undefined;
     return event?.type === "browser-takeover-requested" ? event.request : undefined;
   });
 
@@ -115,25 +116,25 @@ export function WorkspaceConversation(props: { account: () => CentralAuthUser })
               provider === "codex" ? connectChatGPT() : provider === "claude" ? connectClaude() : connectGrok()
           : undefined
       }
-      bot={activeBot()}
-      bots={botList()}
+      agent={activeAgent()}
+      agents={agentList()}
       availableRoutineIds={activeRoutineIds()}
       modelOptions={modelOptions()}
       messages={activeMessages()}
-      messageReferences={activeBot() ? (conversationReferences()[activeBot()?.id ?? ""] ?? {}) : {}}
-      unreadCount={activeBot() ? (conversationReads()[activeBot()?.id ?? ""]?.unreadCount ?? 0) : 0}
+      messageReferences={activeAgent() ? (conversationReferences()[activeAgent()?.id ?? ""] ?? {}) : {}}
+      unreadCount={activeAgent() ? (conversationReads()[activeAgent()?.id ?? ""]?.unreadCount ?? 0) : 0}
       firstUnreadMessageId={
-        activeBot() ? (conversationReads()[activeBot()?.id ?? ""]?.firstUnreadMessageId ?? null) : null
+        activeAgent() ? (conversationReads()[activeAgent()?.id ?? ""]?.firstUnreadMessageId ?? null) : null
       }
-      loaded={activeBot() ? conversationLoaded()[activeBot()?.id ?? ""] === true : false}
+      loaded={activeAgent() ? conversationLoaded()[activeAgent()?.id ?? ""] === true : false}
       hasOlder={
-        activeServerSupportsCapability("conversation-pagination") && activeBot()
-          ? (conversationPages()[activeBot()?.id ?? ""]?.hasOlder ?? false)
+        activeServerSupportsCapability("conversation-pagination") && activeAgent()
+          ? (conversationPages()[activeAgent()?.id ?? ""]?.hasOlder ?? false)
           : false
       }
-      discontinuous={activeBot() ? conversationWindowModes()[activeBot()?.id ?? ""] === "around" : false}
-      loadingOlder={activeBot() ? conversationOlderLoading()[activeBot()?.id ?? ""] === true : false}
-      olderError={activeBot() ? (conversationOlderErrors()[activeBot()?.id ?? ""] ?? null) : null}
+      discontinuous={activeAgent() ? conversationWindowModes()[activeAgent()?.id ?? ""] === "around" : false}
+      loadingOlder={activeAgent() ? conversationOlderLoading()[activeAgent()?.id ?? ""] === true : false}
+      olderError={activeAgent() ? (conversationOlderErrors()[activeAgent()?.id ?? ""] ?? null) : null}
       queue={activeQueue()}
       browserTabs={browserTabs()}
       activeBrowserTabId={activeBrowserTabId()}
@@ -147,28 +148,30 @@ export function WorkspaceConversation(props: { account: () => CentralAuthUser })
       remoteDesktopVisible={remoteDesktopWorkspaceVisible()}
       remoteDesktopEnabled={!platform.landingPreview && activeServerSupportsCapability("remote-desktop")}
       prompt={activePrompt()}
-      approval={activeBot() ? pendingApprovals()[activeBot()?.id ?? ""] : undefined}
+      approval={activeAgent() ? pendingApprovals()[activeAgent()?.id ?? ""] : undefined}
       browserTakeover={activeBrowserTakeover()}
-      activeTurnId={activeBot() ? activeTurns()[activeBot()?.id ?? ""] : null}
-      activityDetail={activeBot() ? turnProgress()[activeBot()?.id ?? ""]?.detail : undefined}
+      activeTurnId={activeAgent() ? activeTurns()[activeAgent()?.id ?? ""] : null}
+      activityDetail={activeAgent() ? turnProgress()[activeAgent()?.id ?? ""]?.detail : undefined}
       skillsMarketplaceOpen={skillsMarketplaceOpen()}
       globalOverlayOpen={
         globalSearchOpen() || joinServerOpen() || serverSettingsOpen() || appSettingsOpen() || skillsMarketplaceOpen()
       }
       settingsRequest={settingsRequest()}
       messageFocusRequest={messageFocusRequest()}
-      onSelectAgent={selectBot}
-      onUpdateBot={updateBot}
+      onSelectAgent={selectAgent}
+      onUpdateAgent={updateAgent}
       onSetAgentAvatar={setAgentAvatar}
       onSendMessage={sendMessage}
       onMarkRead={() => markAgentMessagesRead()}
       onLoadOlder={() => void loadOlderAgentMessages()}
-      onLoadLatest={() => (activeBot() ? loadLatestAgentMessages(activeBot()?.id ?? "") : Promise.resolve())}
+      onLoadLatest={() => (activeAgent() ? loadLatestAgentMessages(activeAgent()?.id ?? "") : Promise.resolve())}
       onSearchMessages={(query) =>
-        activeBot() ? searchAgentMessages(activeBot()?.id ?? "", query) : Promise.resolve({ messageIds: [], total: 0 })
+        activeAgent()
+          ? searchAgentMessages(activeAgent()?.id ?? "", query)
+          : Promise.resolve({ messageIds: [], total: 0 })
       }
       onOpenSearchMessage={(messageId) =>
-        activeBot() ? openAgentMessage(activeBot()?.id ?? "", messageId) : Promise.resolve()
+        activeAgent() ? openAgentMessage(activeAgent()?.id ?? "", messageId) : Promise.resolve()
       }
       onTypingChange={setTeamTyping}
       onAnswerPrompt={answerPrompt}

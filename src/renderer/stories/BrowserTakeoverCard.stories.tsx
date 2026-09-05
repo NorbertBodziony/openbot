@@ -10,7 +10,7 @@ const tab: BrowserTab = {
   url: "https://accounts.example.com/login",
   loading: false,
   ownerThreadId: "thread-chief",
-  ownerBotId: "chief",
+  ownerAgentId: "chief",
 };
 
 const preview: BrowserPreview = {
@@ -23,7 +23,7 @@ const meta = {
   title: "Conversation/BrowserTakeoverCard",
   component: BrowserTakeoverCard,
   args: {
-    botName: "Chief",
+    agentName: "Chief",
     tab,
     preview,
     previewStatus: "ready",

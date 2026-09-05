@@ -7,29 +7,29 @@ import { useMemo } from "react";
 import { ActivityIndicator, FlatList, Pressable, View } from "react-native";
 import Animated, { Easing, FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 
-import { BotListRow } from "@/features/bots/components/bot-list-row";
-import { useBotPinTransition } from "@/features/bots/components/bot-pin-transition";
-import { PinnedBotsStrip } from "@/features/bots/components/pinned-bots-strip";
+import { AgentListRow } from "@/features/agents/components/agent-list-row";
+import { useAgentPinTransition } from "@/features/agents/components/agent-pin-transition";
+import { PinnedAgentsStrip } from "@/features/agents/components/pinned-agents-strip";
 import { useAppDrawer } from "@/features/servers/components/app-drawer-shell";
 import { ConnectionStatus } from "@/features/workspace/components/connection-status";
-import { type MobileBot, useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
+import { type MobileAgent, useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 import { isAndroid, isIOS } from "@/shared/lib/platform";
 
 const EASE_OUT = Easing.bezier(0.23, 1, 0.32, 1);
 const EASE_IN_OUT = Easing.bezier(0.77, 0, 0.175, 1);
 const ROW_ENTER = FadeIn.duration(180).easing(EASE_IN_OUT).reduceMotion(ReduceMotion.System);
 const ROW_EXIT = FadeOut.duration(120).easing(EASE_OUT).reduceMotion(ReduceMotion.System);
-// Bot search is not available in the current mobile release, so keep its entry points hidden until it is ready.
-const IS_BOT_SEARCH_ENABLED = false;
+// Agent search is not available in the current mobile release, so keep its entry points hidden until it is ready.
+const IS_AGENT_SEARCH_ENABLED = false;
 
-function TransitioningBotRow({ bot }: { bot: MobileBot }) {
-  const { transition } = useBotPinTransition();
-  const isTarget = transition?.botId === bot.id && transition.target === "row";
-  const isSource = transition?.botId === bot.id && transition.source === "row";
+function TransitioningAgentRow({ agent }: { agent: MobileAgent }) {
+  const { transition } = useAgentPinTransition();
+  const isTarget = transition?.agentId === agent.id && transition.target === "row";
+  const isSource = transition?.agentId === agent.id && transition.source === "row";
 
   return (
     <Animated.View entering={isTarget ? ROW_ENTER : undefined} exiting={isSource ? ROW_EXIT : undefined}>
-      <BotListRow bot={bot} leftInset={15} rightInset={24} />
+      <AgentListRow agent={agent} leftInset={15} rightInset={24} />
     </Animated.View>
   );
 }
@@ -59,10 +59,10 @@ function HeaderIconButton({
 export function ConnectedScreen() {
   const { openDrawer } = useAppDrawer();
   const {
-    activeBots,
+    activeAgents,
     activeServer,
-    hiddenBots,
-    pinnedBotIds,
+    hiddenAgents,
+    pinnedAgentIds,
     refreshServers,
     serverDirectoryError,
     serverDirectoryState,
@@ -72,16 +72,16 @@ export function ConnectedScreen() {
   const iconColor = String(foreground);
   const mutedColor = String(muted);
   const hasSelectedServer = servers.some((server) => server.id === activeServer.id);
-  const pinnedBots = pinnedBotIds
-    .map((botId) => activeBots.find((bot) => bot.id === botId))
-    .filter((bot): bot is (typeof activeBots)[number] => Boolean(bot));
-  const unpinnedBots = activeBots.filter((bot) => !pinnedBotIds.includes(bot.id));
+  const pinnedAgents = pinnedAgentIds
+    .map((agentId) => activeAgents.find((agent) => agent.id === agentId))
+    .filter((agent): agent is (typeof activeAgents)[number] => Boolean(agent));
+  const unpinnedAgents = activeAgents.filter((agent) => !pinnedAgentIds.includes(agent.id));
   const optionsActions = useMemo<MenuAction[]>(
     () => [
-      { id: "add-bot", title: "Add bot" },
-      ...(hiddenBots.length > 0 ? [{ id: "hidden-chats", title: "Hidden chats" }] : []),
+      { id: "add-agent", title: "Add agent" },
+      ...(hiddenAgents.length > 0 ? [{ id: "hidden-chats", title: "Hidden chats" }] : []),
     ],
-    [hiddenBots.length],
+    [hiddenAgents.length],
   );
 
   return (
@@ -90,12 +90,12 @@ export function ConnectedScreen() {
         className="flex-1 bg-background"
         contentContainerClassName="grow pb-safe-offset-8 pt-3"
         contentInsetAdjustmentBehavior="automatic"
-        data={unpinnedBots}
-        keyExtractor={(bot) => bot.id}
-        renderItem={({ item }) => <TransitioningBotRow bot={item} />}
+        data={unpinnedAgents}
+        keyExtractor={(agent) => agent.id}
+        renderItem={({ item }) => <TransitioningAgentRow agent={item} />}
         ListHeaderComponent={
           <>
-            <PinnedBotsStrip bots={pinnedBots} />
+            <PinnedAgentsStrip agents={pinnedAgents} />
             {hasSelectedServer ? <ConnectionStatus server={activeServer} /> : null}
           </>
         }
@@ -139,20 +139,20 @@ export function ConnectedScreen() {
                 <Button.Label>Open servers</Button.Label>
               </Button>
             </View>
-          ) : activeBots.length === 0 ? (
+          ) : activeAgents.length === 0 ? (
             <View className="flex-1 items-center justify-center gap-5 px-8 py-16">
               <View className="size-16 items-center justify-center rounded-3xl bg-control">
                 <Bot color={mutedColor} size={30} strokeWidth={1.6} />
               </View>
               <View className="items-center gap-1.5">
-                <Typography.Heading type="h4">No bots on this server</Typography.Heading>
+                <Typography.Heading type="h4">No agents on this server</Typography.Heading>
                 <Typography.Paragraph align="center" className="text-text-secondary">
-                  Add a bot to start working from your phone.
+                  Add an agent to start working from your phone.
                 </Typography.Paragraph>
               </View>
-              <Button size="md" variant="secondary" onPress={() => router.push("/add-bot")}>
+              <Button size="md" variant="secondary" onPress={() => router.push("/add-agent")}>
                 <Plus color={iconColor} size={18} strokeWidth={2} />
-                <Button.Label>Add bot</Button.Label>
+                <Button.Label>Add agent</Button.Label>
               </Button>
             </View>
           ) : null
@@ -171,15 +171,15 @@ export function ConnectedScreen() {
           headerRight: isAndroid
             ? () => (
                 <View className="flex-row items-center gap-1">
-                  {IS_BOT_SEARCH_ENABLED ? (
-                    <HeaderIconButton accessibilityLabel="Search bots" onPress={() => router.push("/search-bots")}>
+                  {IS_AGENT_SEARCH_ENABLED ? (
+                    <HeaderIconButton accessibilityLabel="Search agents" onPress={() => router.push("/search-agents")}>
                       <Search color={iconColor} size={22} strokeWidth={1.9} />
                     </HeaderIconButton>
                   ) : null}
                   <MenuView
                     actions={optionsActions}
                     onPressAction={(event) => {
-                      if (event.nativeEvent.event === "add-bot") router.push("/add-bot");
+                      if (event.nativeEvent.event === "add-agent") router.push("/add-agent");
                       if (event.nativeEvent.event === "hidden-chats") router.push("/hidden-chats");
                     }}
                     style={{ height: 44, width: 44 }}
@@ -207,14 +207,14 @@ export function ConnectedScreen() {
             <Stack.Toolbar.Button icon="square.stack.3d.up.fill" onPress={openDrawer} />
           </Stack.Toolbar>
           <Stack.Toolbar placement="right">
-            {IS_BOT_SEARCH_ENABLED ? (
-              <Stack.Toolbar.Button icon="magnifyingglass" onPress={() => router.push("/search-bots")} />
+            {IS_AGENT_SEARCH_ENABLED ? (
+              <Stack.Toolbar.Button icon="magnifyingglass" onPress={() => router.push("/search-agents")} />
             ) : null}
             <Stack.Toolbar.Menu icon="ellipsis">
-              <Stack.Toolbar.MenuAction icon="plus.circle" onPress={() => router.push("/add-bot")}>
-                Add bot
+              <Stack.Toolbar.MenuAction icon="plus.circle" onPress={() => router.push("/add-agent")}>
+                Add agent
               </Stack.Toolbar.MenuAction>
-              {hiddenBots.length > 0 ? (
+              {hiddenAgents.length > 0 ? (
                 <Stack.Toolbar.MenuAction icon="eye.slash" onPress={() => router.push("/hidden-chats")}>
                   Hidden chats
                 </Stack.Toolbar.MenuAction>

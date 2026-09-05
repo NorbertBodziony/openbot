@@ -2,7 +2,7 @@ import type { QueueDeliveryStatus } from "@openbot/contracts/ipc";
 import { Dynamic } from "@solidjs/web";
 import { For, Show } from "solid-js";
 import { avatarHeadColor } from "../../bloub-avatar";
-import type { BotProfile, ChatActionMarkerModel, ChatActionMarkerStatus } from "../../data";
+import type { AgentProfile, ChatActionMarkerModel, ChatActionMarkerStatus } from "../../data";
 import { AgentAvatar } from "../AgentAvatar";
 import {
   Button,
@@ -23,10 +23,10 @@ import {
 
 interface ChatActionMarkerProps {
   marker: ChatActionMarkerModel;
-  bots: BotProfile[];
+  agents: AgentProfile[];
   announce?: boolean;
   routineAvailable?: boolean;
-  onSelectAgent: (botId: string) => void;
+  onSelectAgent: (agentId: string) => void;
   onOpenRoutine?: (routine: { routineId: string; name: string }) => void;
   onOpenHostedSite?: (url: string) => void;
 }
@@ -50,12 +50,12 @@ export function ChatActionMarker(props: ChatActionMarkerProps) {
       class={`chat-action-marker chat-action-marker-${props.marker.kind}`}
       role={props.announce ? "status" : "group"}
       aria-live={props.announce ? "polite" : "off"}
-      aria-label={markerAccessibleLabel(props.marker, props.bots)}
+      aria-label={markerAccessibleLabel(props.marker, props.agents)}
     >
       <MarkerContent class="chat-action-marker-content">
         <span class="chat-action-marker-label">{label()}</span>
         <Show when={props.marker.kind === "agent-message" && props.marker}>
-          {(marker) => <AgentTarget marker={marker()} bots={props.bots} onSelectAgent={props.onSelectAgent} />}
+          {(marker) => <AgentTarget marker={marker()} agents={props.agents} onSelectAgent={props.onSelectAgent} />}
         </Show>
         <Show when={props.marker.kind === "routine-lifecycle" && props.marker}>
           {(marker) => (
@@ -131,27 +131,27 @@ function HostedSiteTarget(props: {
 
 function AgentTarget(props: {
   marker: Extract<ChatActionMarkerModel, { kind: "agent-message" }>;
-  bots: BotProfile[];
-  onSelectAgent: (botId: string) => void;
+  agents: AgentProfile[];
+  onSelectAgent: (agentId: string) => void;
 }) {
-  const source = () => props.bots.find((bot) => bot.id === props.marker.sourceAgentId);
+  const source = () => props.agents.find((agent) => agent.id === props.marker.sourceAgentId);
   const recipients = () => props.marker.targetDeliveries;
   const singleRecipient = () => {
     const delivery = recipients()[0];
-    return delivery ? props.bots.find((bot) => bot.id === delivery.agentId) : undefined;
+    return delivery ? props.agents.find((agent) => agent.id === delivery.agentId) : undefined;
   };
   return (
     <Show
       when={props.marker.direction === "outgoing"}
       fallback={
-        <AgentButton bot={source()} fallbackId={props.marker.sourceAgentId} onSelectAgent={props.onSelectAgent} />
+        <AgentButton agent={source()} fallbackId={props.marker.sourceAgentId} onSelectAgent={props.onSelectAgent} />
       }
     >
       <Show
         when={recipients().length > 1}
         fallback={
           <AgentButton
-            bot={singleRecipient()}
+            agent={singleRecipient()}
             fallbackId={recipients()[0]?.agentId}
             onSelectAgent={props.onSelectAgent}
           />
@@ -161,14 +161,14 @@ function AgentTarget(props: {
           <DropdownMenu.Trigger
             class="chat-action-target chat-action-agent-menu-trigger"
             style={agentTargetsStyle(
-              recipients().map((delivery) => props.bots.find((bot) => bot.id === delivery.agentId)),
+              recipients().map((delivery) => props.agents.find((agent) => agent.id === delivery.agentId)),
             )}
           >
             <span class="chat-action-avatar-stack" aria-hidden="true">
               <For each={recipients().slice(0, 3)}>
                 {(delivery) => (
                   <AgentAvatar
-                    bot={props.bots.find((bot) => bot.id === delivery.agentId)}
+                    agent={props.agents.find((agent) => agent.id === delivery.agentId)}
                     class="chat-action-agent-avatar"
                   />
                 )}
@@ -179,15 +179,15 @@ function AgentTarget(props: {
           <DropdownMenu.Content class="chat-action-agent-menu">
             <For each={recipients()}>
               {(delivery) => {
-                const bot = () => props.bots.find((candidate) => candidate.id === delivery.agentId);
+                const agent = () => props.agents.find((candidate) => candidate.id === delivery.agentId);
                 return (
                   <DropdownMenu.Item
                     class="chat-action-agent-menu-item"
-                    disabled={!bot()}
+                    disabled={!agent()}
                     onSelect={() => props.onSelectAgent(delivery.agentId)}
                   >
-                    <AgentAvatar bot={bot()} class="chat-action-agent-avatar" />
-                    <span>{bot()?.name ?? "Unavailable agent"}</span>
+                    <AgentAvatar agent={agent()} class="chat-action-agent-avatar" />
+                    <span>{agent()?.name ?? "Unavailable agent"}</span>
                     <span class="chat-action-agent-menu-status">{deliveryStatusLabel(delivery.status)}</span>
                   </DropdownMenu.Item>
                 );
@@ -201,13 +201,13 @@ function AgentTarget(props: {
 }
 
 function AgentButton(props: {
-  bot: BotProfile | undefined;
+  agent: AgentProfile | undefined;
   fallbackId: string | undefined;
-  onSelectAgent: (botId: string) => void;
+  onSelectAgent: (agentId: string) => void;
 }) {
   return (
     <Show
-      when={props.bot}
+      when={props.agent}
       fallback={
         <span class="chat-action-target chat-action-target-unavailable" title={props.fallbackId}>
           <AgentAvatar class="chat-action-agent-avatar" />
@@ -215,17 +215,17 @@ function AgentButton(props: {
         </span>
       }
     >
-      {(bot) => (
+      {(agent) => (
         <Button
           variant="ghost"
           type="button"
           class="chat-action-target"
-          style={agentTargetStyle(bot())}
-          aria-label={`Open chat with ${bot().name}`}
-          onClick={() => props.onSelectAgent(bot().id)}
+          style={agentTargetStyle(agent())}
+          aria-label={`Open chat with ${agent().name}`}
+          onClick={() => props.onSelectAgent(agent().id)}
         >
-          <AgentAvatar bot={bot()} class="chat-action-agent-avatar" />
-          <span>{bot().name}</span>
+          <AgentAvatar agent={agent()} class="chat-action-agent-avatar" />
+          <span>{agent().name}</span>
         </Button>
       )}
     </Show>
@@ -314,12 +314,12 @@ function markerLabel(marker: ChatActionMarkerModel): string {
   return "Cancelled routine";
 }
 
-function agentTargetStyle(bot: BotProfile | undefined): string | undefined {
-  return bot ? `--chat-action-agent-color: ${avatarHeadColor(bot.avatarSeed, bot.avatarHue)}` : undefined;
+function agentTargetStyle(agent: AgentProfile | undefined): string | undefined {
+  return agent ? `--chat-action-agent-color: ${avatarHeadColor(agent.avatarSeed, agent.avatarHue)}` : undefined;
 }
 
-function agentTargetsStyle(bots: Array<BotProfile | undefined>): string | undefined {
-  const colors = bots.flatMap((bot) => (bot ? [avatarHeadColor(bot.avatarSeed, bot.avatarHue)] : []));
+function agentTargetsStyle(agents: Array<AgentProfile | undefined>): string | undefined {
+  const colors = agents.flatMap((agent) => (agent ? [avatarHeadColor(agent.avatarSeed, agent.avatarHue)] : []));
   const mixedColor = colors.reduce<string | undefined>((mix, color, index) => {
     if (!mix) return color;
     const previousColorsWeight = Math.round((index / (index + 1)) * 10_000) / 100;
@@ -328,15 +328,15 @@ function agentTargetsStyle(bots: Array<BotProfile | undefined>): string | undefi
   return mixedColor ? `--chat-action-agent-color: ${mixedColor}` : undefined;
 }
 
-function markerAccessibleLabel(marker: ChatActionMarkerModel, bots: BotProfile[]): string {
+function markerAccessibleLabel(marker: ChatActionMarkerModel, agents: AgentProfile[]): string {
   const label = markerLabel(marker);
   if (marker.kind === "unavailable") return label;
   if (marker.kind === "agent-message") {
     const agentLabel =
       marker.direction === "incoming"
-        ? (bots.find((bot) => bot.id === marker.sourceAgentId)?.name ?? "Unavailable agent")
+        ? (agents.find((agent) => agent.id === marker.sourceAgentId)?.name ?? "Unavailable agent")
         : marker.targetDeliveries.length === 1
-          ? (bots.find((bot) => bot.id === marker.targetDeliveries[0]?.agentId)?.name ?? "Unavailable agent")
+          ? (agents.find((agent) => agent.id === marker.targetDeliveries[0]?.agentId)?.name ?? "Unavailable agent")
           : `${marker.targetDeliveries.length} agents`;
     return `${label} ${agentLabel}, ${STATUS_LABELS[marker.status]}`;
   }

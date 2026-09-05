@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { BotSummary } from "@openbot/contracts/ipc";
+import type { AgentSummary } from "@openbot/contracts/ipc";
 import { afterEach, describe, expect, it } from "vitest";
 import { ManagedSkillService } from "./managed-skill-service";
 
@@ -20,9 +20,9 @@ describe("managed site hosting skill", () => {
     await writeFile(source, content);
     const workspacePath = join(root, "workspace");
     await mkdir(workspacePath);
-    const managedBot = bot(workspacePath);
+    const managedAgent = agent(workspacePath);
 
-    await new ManagedSkillService(source).syncBot(managedBot);
+    await new ManagedSkillService(source).syncAgent(managedAgent);
 
     await expect(
       readFile(join(workspacePath, ".agents", "skills", "openbot-site-hosting", "SKILL.md"), "utf8"),
@@ -33,7 +33,7 @@ describe("managed site hosting skill", () => {
 
     const updated = content.replace("Rules", "Updated rules");
     await writeFile(source, updated);
-    await new ManagedSkillService(source).syncBot(managedBot);
+    await new ManagedSkillService(source).syncAgent(managedAgent);
     await expect(
       readFile(join(workspacePath, ".agents", "skills", "openbot-site-hosting", "SKILL.md"), "utf8"),
     ).resolves.toBe(updated);
@@ -52,7 +52,7 @@ describe("managed site hosting skill", () => {
     await writeFile(userTarget, userContent);
     const collisions: string[] = [];
 
-    await new ManagedSkillService(source, (target) => collisions.push(target)).syncBot(bot(workspacePath));
+    await new ManagedSkillService(source, (target) => collisions.push(target)).syncAgent(agent(workspacePath));
 
     await expect(readFile(userTarget, "utf8")).resolves.toBe(userContent);
     await expect(
@@ -79,7 +79,7 @@ describe("managed site hosting skill", () => {
       (target) => failures.push(target),
     );
 
-    await expect(service.syncAll([bot(blockedWorkspace), bot(healthyWorkspace)])).resolves.toBeUndefined();
+    await expect(service.syncAll([agent(blockedWorkspace), agent(healthyWorkspace)])).resolves.toBeUndefined();
 
     await expect(
       readFile(join(blockedWorkspace, ".claude", "skills", "openbot-site-hosting", "SKILL.md"), "utf8"),
@@ -111,7 +111,7 @@ describe("managed site hosting skill", () => {
       source,
       () => undefined,
       (target) => failures.push(target),
-    ).syncBot(bot(workspacePath));
+    ).syncAgent(agent(workspacePath));
 
     await expect(readFile(join(outside, "SKILL.md"), "utf8")).rejects.toMatchObject({
       code: "ENOENT",
@@ -123,7 +123,7 @@ describe("managed site hosting skill", () => {
   });
 });
 
-function bot(workspacePath: string): BotSummary {
+function agent(workspacePath: string): AgentSummary {
   return {
     id: "bot-1",
     provider: "codex",

@@ -10,7 +10,7 @@ import {
   type SidebarLayoutAction,
   type TeamPresenceMember,
 } from "@openbot/contracts/ipc";
-import type { BotProfile } from "../../../data";
+import type { AgentProfile } from "../../../data";
 import { type SidebarPinnedItem, sidebarPinnedItemKey } from "../../../sidebar-pins";
 import type { SidebarProps } from "../../Sidebar";
 import { teamMemberName } from "../../TeamPersonAvatar";
@@ -27,10 +27,10 @@ export function createSidebarLayoutActions(deps: {
   announce: (message: string) => void;
   announceError: (cause: unknown) => void;
   assignedSectionId: (agentId: string) => string;
-  botById: () => Map<string, BotProfile>;
+  agentById: () => Map<string, AgentProfile>;
   canPinDraggedSidebarItem: () => boolean;
   draggedSidebarItem: () => SidebarPinnedItem | null;
-  filteredBotsBySection: () => Map<string, BotProfile[]>;
+  filteredAgentsBySection: () => Map<string, AgentProfile[]>;
   filteredPeople: () => TeamPresenceMember[];
   layoutMutable: () => boolean;
   orderedPeople: () => TeamPresenceMember[];
@@ -45,10 +45,10 @@ export function createSidebarLayoutActions(deps: {
     announce,
     announceError,
     assignedSectionId,
-    botById,
+    agentById,
     canPinDraggedSidebarItem,
     draggedSidebarItem,
-    filteredBotsBySection,
+    filteredAgentsBySection,
     filteredPeople,
     layoutMutable,
     orderedPeople,
@@ -100,8 +100,8 @@ export function createSidebarLayoutActions(deps: {
   }
 
   function moveDraggedAgent(agentId: string, target: AgentDropTarget): void {
-    const sectionBots = filteredBotsBySection().get(target.sectionId) ?? [];
-    const idsWithoutSource = sectionBots.map((bot) => bot.id).filter((candidate) => candidate !== agentId);
+    const sectionAgents = filteredAgentsBySection().get(target.sectionId) ?? [];
+    const idsWithoutSource = sectionAgents.map((agent) => agent.id).filter((candidate) => candidate !== agentId);
     const targetIndex = idsWithoutSource.indexOf(target.agentId);
     if (targetIndex < 0) return;
     const beforeAgentId = target.placement === "before" ? target.agentId : (idsWithoutSource[targetIndex + 1] ?? null);
@@ -113,7 +113,7 @@ export function createSidebarLayoutActions(deps: {
         beforeAgentId,
       })
       .then(
-        () => announce(`Moved ${botById().get(agentId)?.name ?? "agent"} in ${sectionLabel(target.sectionId)}.`),
+        () => announce(`Moved ${agentById().get(agentId)?.name ?? "agent"} in ${sectionLabel(target.sectionId)}.`),
         announceError,
       );
   }
@@ -148,14 +148,14 @@ export function createSidebarLayoutActions(deps: {
     const item = draggedSidebarItem();
     if (!item || !canPinDraggedSidebarItem()) return false;
     props.onPin(item);
-    const name = botById().get(item.id)?.name ?? "agent";
+    const name = agentById().get(item.id)?.name ?? "agent";
     announce(`Pinned ${name}.`);
     return true;
   }
 
   function moveAgentAction(agentId: string, target: AgentDropTarget): SidebarLayoutAction | null {
-    const sectionBots = filteredBotsBySection().get(target.sectionId) ?? [];
-    const idsWithoutSource = sectionBots.map((bot) => bot.id).filter((candidate) => candidate !== agentId);
+    const sectionAgents = filteredAgentsBySection().get(target.sectionId) ?? [];
+    const idsWithoutSource = sectionAgents.map((agent) => agent.id).filter((candidate) => candidate !== agentId);
     const targetIndex = idsWithoutSource.indexOf(target.agentId);
     if (targetIndex < 0) return null;
     return {
@@ -195,7 +195,7 @@ export function createSidebarLayoutActions(deps: {
     try {
       if (action) await props.onMutateLayout(action);
       props.onUnpin({ kind: "agent", id: source.id });
-      announce(`Moved ${botById().get(source.id)?.name ?? "agent"} to ${sectionLabel(sectionId)}.`);
+      announce(`Moved ${agentById().get(source.id)?.name ?? "agent"} to ${sectionLabel(sectionId)}.`);
     } catch (error) {
       announceError(error);
     }
@@ -223,7 +223,8 @@ export function createSidebarLayoutActions(deps: {
         void props
           .onMutateLayout(appendAgentAction(source.id, target.sectionId))
           .then(
-            () => announce(`Moved ${botById().get(source.id)?.name ?? "agent"} to ${sectionLabel(target.sectionId)}.`),
+            () =>
+              announce(`Moved ${agentById().get(source.id)?.name ?? "agent"} to ${sectionLabel(target.sectionId)}.`),
             announceError,
           );
       }

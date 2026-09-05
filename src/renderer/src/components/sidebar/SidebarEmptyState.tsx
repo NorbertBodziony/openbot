@@ -15,33 +15,35 @@ export function SidebarEmptyState() {
     <Show
       when={!query().trim() && props.emptyAction}
       fallback={
-        <p class="empty-search">{query().trim() ? "No matches" : props.bots.length ? "No matches" : "No agents yet"}</p>
+        <p class="empty-search">
+          {query().trim() ? "No matches" : props.agents.length ? "No matches" : "No agents yet"}
+        </p>
       }
     >
       {(action) => (
-        <div class="sidebar-first-bot-state">
+        <div class="sidebar-first-agent-state">
           <Button
             variant="ghost"
             type="button"
-            class="bot-row bot-row-active sidebar-first-bot-action"
+            class="agent-row-active sidebar-first-agent-action"
             aria-label={action().label}
             aria-pressed="true"
             data-avatar-seed={action().avatarSeed}
             data-avatar-hue={action().avatarHue ?? "automatic"}
             onClick={action().onSelect}
           >
-            <span class="bot-row-avatar">
+            <span class="agent-row-avatar">
               <AgentAvatar seed={action().avatarSeed} hue={action().avatarHue} motion="hover" />
             </span>
-            <span class="bot-row-copy">
-              <span class="bot-row-heading">
-                <span class="bot-row-title">
+            <span class="agent-row-copy">
+              <span class="agent-row-heading">
+                <span class="agent-row-title">
                   <strong>{action().label}</strong>
                 </span>
               </span>
             </span>
           </Button>
-          <p class="sidebar-first-bot-empty">No chats yet</p>
+          <p class="sidebar-first-agent-empty">No chats yet</p>
         </div>
       )}
     </Show>

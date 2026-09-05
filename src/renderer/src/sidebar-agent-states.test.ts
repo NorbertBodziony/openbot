@@ -1,11 +1,11 @@
 import type { QueueDelivery, QueueDeliveryStatus, QueueSnapshot } from "@openbot/contracts/ipc";
 import { computeSidebarAgentStates, type SidebarAgentStatesInput } from "./sidebar-agent-states";
 
-function queue(botId: string, ...statuses: QueueDeliveryStatus[]): QueueSnapshot {
+function queue(agentId: string, ...statuses: QueueDeliveryStatus[]): QueueSnapshot {
   const deliveries: QueueDelivery[] = statuses.map((status, index) => ({
     id: `delivery-${index}`,
     messageId: `message-${index}`,
-    recipientBotId: botId,
+    recipientAgentId: agentId,
     sender: { kind: "user" },
     text: "Do the thing",
     attachments: [],
@@ -16,12 +16,12 @@ function queue(botId: string, ...statuses: QueueDeliveryStatus[]): QueueSnapshot
     error: null,
     createdAt: "2026-08-12T10:00:00.000Z",
   }));
-  return { botId, deliveries };
+  return { agentId, deliveries };
 }
 
 function input(overrides: Partial<SidebarAgentStatesInput> = {}): SidebarAgentStatesInput {
   return {
-    botIds: ["chief"],
+    agentIds: ["chief"],
     activeTurns: {},
     queues: {},
     unreadReplies: {},
@@ -68,7 +68,7 @@ describe("computeSidebarAgentStates", () => {
   it("leaves an idle agent out of the result rather than describing it", () => {
     const states = computeSidebarAgentStates(
       input({
-        botIds: ["chief", "sales"],
+        agentIds: ["chief", "sales"],
         activeTurns: { sales: null },
         queues: { sales: queue("sales", "completed") },
         unreadReplies: { chief: 1 },
@@ -79,7 +79,7 @@ describe("computeSidebarAgentStates", () => {
   });
 
   it("describes only the agents it was given", () => {
-    const states = computeSidebarAgentStates(input({ botIds: [], activeTurns: { chief: "turn-1" } }));
+    const states = computeSidebarAgentStates(input({ agentIds: [], activeTurns: { chief: "turn-1" } }));
 
     expect(states).toEqual({});
   });

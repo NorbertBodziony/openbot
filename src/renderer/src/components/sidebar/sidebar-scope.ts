@@ -29,11 +29,11 @@ export function createSidebarScope(props: SidebarProps) {
   const {
     agentPinnedItems,
     assignedSectionId,
-    botById,
+    agentById,
     customSectionById,
     directThreadByMember,
-    filteredBots,
-    filteredBotsBySection,
+    filteredAgents,
+    filteredAgentsBySection,
     filteredPeople,
     orderedPeople,
     personById,
@@ -63,7 +63,7 @@ export function createSidebarScope(props: SidebarProps) {
     startRenameSection,
     updateSectionEditorName,
   } = createSidebarPendingStore({ customSectionById, props });
-  let botList: HTMLElement | undefined;
+  let agentList: HTMLElement | undefined;
 
   const dragState = createSidebarDragStateStore({ agentPinnedItems, sectionAcceptsAgent });
   const { assignAgentSection, commitSidebarDrop, movePersonByKeyboard, movePinnedItem, moveSection } =
@@ -72,10 +72,10 @@ export function createSidebarScope(props: SidebarProps) {
       announce,
       announceError,
       assignedSectionId,
-      botById,
+      agentById,
       canPinDraggedSidebarItem: dragState.canPinDraggedSidebarItem,
       draggedSidebarItem: dragState.draggedSidebarItem,
-      filteredBotsBySection,
+      filteredAgentsBySection,
       filteredPeople,
       layoutMutable,
       orderedPeople,
@@ -103,9 +103,9 @@ export function createSidebarScope(props: SidebarProps) {
     canPinDraggedItem: dragState.canPinDraggedSidebarItem,
     commitSidebarDrop,
     dragState,
-    filteredBotsBySection,
+    filteredAgentsBySection,
     filteredPeople,
-    getBotList: () => botList,
+    getAgentList: () => agentList,
     props,
     scrollFades,
     sectionAcceptsAgent,
@@ -119,15 +119,15 @@ export function createSidebarScope(props: SidebarProps) {
   });
 
   createEffect(
-    () => [resolvedPinnedItems(), filteredBots(), filteredPeople()],
+    () => [resolvedPinnedItems(), filteredAgents(), filteredPeople()],
     () => {
       scrollFades.remeasure();
     },
   );
 
   /** The two statements the list's `ref` used to run inline, in the same order. */
-  const setBotListElement = (element: HTMLElement) => {
-    botList = element;
+  const setAgentListElement = (element: HTMLElement) => {
+    agentList = element;
     scrollFades.bind(element);
   };
 
@@ -156,8 +156,8 @@ export function createSidebarScope(props: SidebarProps) {
     emptyPinnedDropVisible: dragState.emptyPinnedDropVisible,
     endAgentDragging,
     expandToSearch,
-    filteredBots,
-    filteredBotsBySection,
+    filteredAgents,
+    filteredAgentsBySection,
     filteredPeople,
     handleListDragLeave,
     handlePinnedTransitionEnd,
@@ -180,7 +180,7 @@ export function createSidebarScope(props: SidebarProps) {
     sectionDragClasses: dragState.sectionDragClasses,
     sectionIsCollapsed,
     sectionPosition,
-    setBotListElement,
+    setAgentListElement,
     setQuery,
     setSearchInputElement,
     setSectionNameInput,

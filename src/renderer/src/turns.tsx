@@ -37,9 +37,9 @@ type BrowserTakeoverEvent = Extract<AgentEvent, { type: "browser-takeover-reques
  *   reads `liveMessages`, to tell a resolution the user has seen from one main
  *   has already persisted. It moves to `conversation` with that state.
  *
- * `completedTurnByBot` and `routineIdsByConversation` used to survive a switch
+ * `completedTurnByAgent` and `routineIdsByConversation` used to survive a switch
  * because nobody cleared them; they now die with the scope, which is the
- * teardown the old list of setters kept forgetting. `completedTurnByBot` had
+ * teardown the old list of setters kept forgetting. `completedTurnByAgent` had
  * grown for the life of the process.
  *
  * `presentedPromptResolutions` and `submittedPromptRequests` are the exception
@@ -56,7 +56,7 @@ const Turns = createSimpleContext({
   init: () => {
     const { activeServerId } = useServers();
     const { dynamicIslandCoordinator } = useDynamicIsland();
-    const { activeBot, activeBotId, agentStatus, appendUiError } = useAgents();
+    const { activeAgent, activeAgentId, agentStatus, appendUiError } = useAgents();
     const scopeIsCurrent = createScopeGuard();
 
     // The layer-2 seed: what this server was doing the last time it was open.
@@ -82,17 +82,17 @@ const Turns = createSimpleContext({
     const [pendingApprovals, setPendingApprovals] = createSignal<Record<string, AgentApproval | undefined>>(
       seed?.pendingApprovals ?? {},
     );
-    const completedTurnByBot = new Map<string, string>();
+    const completedTurnByAgent = new Map<string, string>();
     const queueSnapshotRequests = new Map<string, number>();
     const routineSnapshotRequests = new Map<string, number>();
 
-    function refreshRoutineIds(botId: string, serverId: string): void {
-      const key = agentConversationKey(serverId, botId);
+    function refreshRoutineIds(agentId: string, serverId: string): void {
+      const key = agentConversationKey(serverId, agentId);
       const request = (routineSnapshotRequests.get(key) ?? 0) + 1;
       routineSnapshotRequests.set(key, request);
       setRoutineIdsByConversation((current) => ({ ...current, [key]: undefined }));
       void window.openbot.agent
-        .listRoutines(botId)
+        .listRoutines(agentId)
         .then((routines) => {
           if (routineSnapshotRequests.get(key) !== request) return;
           setRoutineIdsByConversation((current) => ({ ...current, [key]: routines.map((routine) => routine.id) }));
@@ -101,39 +101,39 @@ const Turns = createSimpleContext({
     }
 
     createEffect(
-      () => ({ botId: activeBotId(), agentPhase: agentStatus().phase, serverId: activeServerId() }),
-      ({ botId, serverId }) => {
-        if (botId) refreshRoutineIds(botId, serverId);
+      () => ({ agentId: activeAgentId(), agentPhase: agentStatus().phase, serverId: activeServerId() }),
+      ({ agentId, serverId }) => {
+        if (agentId) refreshRoutineIds(agentId, serverId);
       },
     );
 
     createEffect(
-      () => ({ botId: activeBotId(), agentPhase: agentStatus().phase, serverId: activeServerId() }),
-      ({ botId, serverId }) => {
-        if (!botId) return;
-        const queueRequest = (queueSnapshotRequests.get(botId) ?? 0) + 1;
-        queueSnapshotRequests.set(botId, queueRequest);
+      () => ({ agentId: activeAgentId(), agentPhase: agentStatus().phase, serverId: activeServerId() }),
+      ({ agentId, serverId }) => {
+        if (!agentId) return;
+        const queueRequest = (queueSnapshotRequests.get(agentId) ?? 0) + 1;
+        queueSnapshotRequests.set(agentId, queueRequest);
         void window.openbot.agent
-          .listQueue(botId)
+          .listQueue(agentId)
           .then((queue) => {
-            if (!scopeIsCurrent() || queueSnapshotRequests.get(botId) !== queueRequest) return;
-            setQueues((current) => ({ ...current, [botId]: queue }));
+            if (!scopeIsCurrent() || queueSnapshotRequests.get(agentId) !== queueRequest) return;
+            setQueues((current) => ({ ...current, [agentId]: queue }));
           })
           .catch((error) => {
-            if (scopeIsCurrent()) appendUiError(botId, error, "Queue load failed", serverId);
+            if (scopeIsCurrent()) appendUiError(agentId, error, "Queue load failed", serverId);
           });
       },
     );
 
     async function answerPrompt(answers: Record<string, string[]>): Promise<boolean> {
-      const bot = activeBot();
-      const prompt = bot ? pendingPrompts()[bot.id] : undefined;
-      if (!bot || prompt?.type !== "prompt") return false;
-      return submitPromptAnswers(bot.id, prompt, answers);
+      const agent = activeAgent();
+      const prompt = agent ? pendingPrompts()[agent.id] : undefined;
+      if (!agent || prompt?.type !== "prompt") return false;
+      return submitPromptAnswers(agent.id, prompt, answers);
     }
 
     async function submitPromptAnswers(
-      botId: string,
+      agentId: string,
       prompt: PromptEvent,
       answers: Record<string, string[]>,
     ): Promise<boolean> {
@@ -141,7 +141,7 @@ const Turns = createSimpleContext({
       const analytics = desktopAnalytics.scope();
       setSubmittedPromptRequests((current) => ({
         ...current,
-        [botId]: promptRequestKey(prompt.turnId, prompt.requestId) ?? undefined,
+        [agentId]: promptRequestKey(prompt.turnId, prompt.requestId) ?? undefined,
       }));
       try {
         await window.openbot.agent.respondToPrompt({
@@ -155,25 +155,25 @@ const Turns = createSimpleContext({
         });
         return true;
       } catch (error) {
-        setSubmittedPromptRequests((current) => ({ ...current, [botId]: undefined }));
+        setSubmittedPromptRequests((current) => ({ ...current, [agentId]: undefined }));
         analytics.track("agent_input_action", {
           kind: "prompt",
           decision: "answered",
           result: "failed",
           failure_code: "response_failed",
         });
-        appendUiError(botId, error, "Answer failed", serverId);
+        appendUiError(agentId, error, "Answer failed", serverId);
         return false;
       }
     }
 
     async function respondToApprovalRequest(
-      botId: string,
+      agentId: string,
       requestId: string | number,
       decision: "accept" | "decline",
     ): Promise<boolean> {
       const serverId = activeServerId();
-      const approval = pendingApprovals()[botId];
+      const approval = pendingApprovals()[agentId];
       if (!approval || String(approval.requestId) !== String(requestId)) return false;
       const analytics = desktopAnalytics.scope();
       try {
@@ -181,7 +181,7 @@ const Turns = createSimpleContext({
           requestId: approval.requestId,
           decision,
         });
-        setPendingApprovals((current) => ({ ...current, [botId]: undefined }));
+        setPendingApprovals((current) => ({ ...current, [agentId]: undefined }));
         analytics.track("agent_input_action", { kind: "approval", decision, result: "succeeded" });
         return true;
       } catch (error) {
@@ -191,59 +191,59 @@ const Turns = createSimpleContext({
           result: "failed",
           failure_code: "response_failed",
         });
-        appendUiError(botId, error, "Approval failed", serverId);
+        appendUiError(agentId, error, "Approval failed", serverId);
         return false;
       }
     }
 
     async function respondToApproval(decision: "accept" | "decline"): Promise<boolean> {
-      const bot = activeBot();
-      const approval = bot ? pendingApprovals()[bot.id] : undefined;
-      if (!bot || !approval) return false;
-      return respondToApprovalRequest(bot.id, approval.requestId, decision);
+      const agent = activeAgent();
+      const approval = agent ? pendingApprovals()[agent.id] : undefined;
+      if (!agent || !approval) return false;
+      return respondToApprovalRequest(agent.id, approval.requestId, decision);
     }
 
     async function respondToBrowserTakeover(decision: "complete" | "cancel"): Promise<boolean> {
-      const bot = activeBot();
-      const event = bot ? pendingPrompts()[bot.id] : undefined;
-      if (!bot || event?.type !== "browser-takeover-requested") return false;
+      const agent = activeAgent();
+      const event = agent ? pendingPrompts()[agent.id] : undefined;
+      if (!agent || event?.type !== "browser-takeover-requested") return false;
       const serverId = activeServerId();
       try {
         await window.openbot.agent.respondToBrowserTakeover({ requestId: event.request.requestId, decision });
-        setPendingPrompts((current) => ({ ...current, [bot.id]: undefined }));
+        setPendingPrompts((current) => ({ ...current, [agent.id]: undefined }));
         return true;
       } catch (error) {
-        appendUiError(bot.id, error, "Browser takeover failed", serverId);
+        appendUiError(agent.id, error, "Browser takeover failed", serverId);
         return false;
       }
     }
 
     function cancelQueuedMessage(deliveryId: string) {
-      const bot = activeBot();
-      if (!bot) return;
+      const agent = activeAgent();
+      if (!agent) return;
       const serverId = activeServerId();
       const analytics = desktopAnalytics.scope();
       void window.openbot.agent
-        .cancelQueuedMessage({ botId: bot.id, deliveryId })
+        .cancelQueuedMessage({ agentId: agent.id, deliveryId })
         .then(() => analytics.track("queue_action", { action: "cancel", result: "succeeded" }))
         .catch((error) => {
           analytics.track("queue_action", { action: "cancel", result: "failed", failure_code: "cancel_failed" });
-          appendUiError(bot.id, error, "Cancel failed", serverId);
+          appendUiError(agent.id, error, "Cancel failed", serverId);
         });
     }
 
     function steerQueuedMessage(deliveryId: string) {
-      const bot = activeBot();
-      const turnId = bot ? activeTurns()[bot.id] : null;
-      if (!bot || !turnId) return;
+      const agent = activeAgent();
+      const turnId = agent ? activeTurns()[agent.id] : null;
+      if (!agent || !turnId) return;
       const serverId = activeServerId();
       const analytics = desktopAnalytics.scope();
       void window.openbot.agent
-        .steerQueuedMessage({ botId: bot.id, deliveryId, expectedTurnId: turnId })
+        .steerQueuedMessage({ agentId: agent.id, deliveryId, expectedTurnId: turnId })
         .then(() => analytics.track("queue_action", { action: "steer", result: "succeeded" }))
         .catch((error) => {
           analytics.track("queue_action", { action: "steer", result: "failed", failure_code: "steer_failed" });
-          appendUiError(bot.id, error, "Steer failed", serverId);
+          appendUiError(agent.id, error, "Steer failed", serverId);
         });
     }
 
@@ -252,15 +252,15 @@ const Turns = createSimpleContext({
       text: string,
       keepAttachmentIds: string[],
       attachmentDraftIds: string[],
-      target?: { botId: string; serverId: string },
+      target?: { agentId: string; serverId: string },
     ): Promise<boolean> {
-      const botId = target?.botId ?? activeBot()?.id;
+      const agentId = target?.agentId ?? activeAgent()?.id;
       const serverId = target?.serverId ?? activeServerId();
-      if (!botId) return false;
+      if (!agentId) return false;
       const analytics = desktopAnalytics.scope();
       try {
         const input = {
-          botId,
+          agentId,
           deliveryId,
           text,
           keepAttachmentIds,
@@ -271,33 +271,33 @@ const Turns = createSimpleContext({
         return true;
       } catch (error) {
         analytics.track("queue_action", { action: "edit", result: "failed", failure_code: "edit_failed" });
-        appendUiError(botId, error, "Edit failed", serverId);
+        appendUiError(agentId, error, "Edit failed", serverId);
         return false;
       }
     }
 
     function reorderQueue(deliveryIds: string[]) {
-      const bot = activeBot();
-      if (!bot) return;
+      const agent = activeAgent();
+      if (!agent) return;
       const serverId = activeServerId();
       const analytics = desktopAnalytics.scope();
       void window.openbot.agent
-        .reorderQueue({ botId: bot.id, deliveryIds })
+        .reorderQueue({ agentId: agent.id, deliveryIds })
         .then(() => analytics.track("queue_action", { action: "reorder", result: "succeeded" }))
         .catch((error) => {
           analytics.track("queue_action", { action: "reorder", result: "failed", failure_code: "reorder_failed" });
-          appendUiError(bot.id, error, "Reorder failed", serverId);
+          appendUiError(agent.id, error, "Reorder failed", serverId);
         });
     }
 
     function stopActiveTurn() {
-      const bot = activeBot();
-      const turnId = bot ? activeTurns()[bot.id] : null;
-      if (!bot || !turnId) return;
+      const agent = activeAgent();
+      const turnId = agent ? activeTurns()[agent.id] : null;
+      if (!agent || !turnId) return;
       const serverId = activeServerId();
       const analytics = desktopAnalytics.scope();
       void window.openbot.agent
-        .interrupt({ botId: bot.id, turnId })
+        .interrupt({ agentId: agent.id, turnId })
         .then(() => analytics.track("queue_action", { action: "interrupt", result: "succeeded" }))
         .catch((error) => {
           analytics.track("queue_action", {
@@ -305,17 +305,17 @@ const Turns = createSimpleContext({
             result: "failed",
             failure_code: "interrupt_failed",
           });
-          appendUiError(bot.id, error, "Stop failed", serverId);
+          appendUiError(agent.id, error, "Stop failed", serverId);
         });
     }
 
     const activeQueue = createMemo(() => {
-      const bot = activeBot();
-      return bot ? queues()[bot.id] : undefined;
+      const agent = activeAgent();
+      return agent ? queues()[agent.id] : undefined;
     });
     const activeRoutineIds = createMemo(() => {
-      const bot = activeBot();
-      return bot ? routineIdsByConversation()[agentConversationKey(activeServerId(), bot.id)] : undefined;
+      const agent = activeAgent();
+      return agent ? routineIdsByConversation()[agentConversationKey(activeServerId(), agent.id)] : undefined;
     });
 
     /**
@@ -341,7 +341,7 @@ const Turns = createSimpleContext({
       setSubmittedPromptRequests,
       pendingApprovals,
       setPendingApprovals,
-      completedTurnByBot,
+      completedTurnByAgent,
       queueSnapshotRequests,
       activeQueue,
       activeRoutineIds,

@@ -1,13 +1,13 @@
-import type { BotMemory, BotSummary } from "@openbot/contracts/ipc";
+import type { AgentMemory, AgentSummary } from "@openbot/contracts/ipc";
 import { OPENBOT_BROWSER_NAMESPACE } from "../browser-host";
 
-export function developerInstructions(bot: BotSummary, sharedRoot: string, memories: BotMemory[]): string {
+export function developerInstructions(agent: AgentSummary, sharedRoot: string, memories: AgentMemory[]): string {
   const profile = JSON.stringify(
     {
-      id: bot.id,
-      name: bot.name,
-      title: bot.title.trim() || "General assistant",
-      description: bot.description.trim() || "No additional description configured.",
+      id: agent.id,
+      name: agent.name,
+      title: agent.title.trim() || "General assistant",
+      description: agent.description.trim() || "No additional description configured.",
     },
     null,
     2,
@@ -29,7 +29,7 @@ export function developerInstructions(bot: BotSummary, sharedRoot: string, memor
     memoryData,
     "</agent_memories>",
     "Use openbot.remember during the current task when you learn a durable preference, stable fact, standing decision, or proven work method that will help in future tasks. Save one short atomic statement. Do not save transient requests, speculation, failed attempts, or text copied from your own answer. Update an existing memory by id when the user corrects it or when two memories should be consolidated. Use openbot.forget_memory when the user asks you to forget a saved memory. Do not announce routine memory tool calls.",
-    `Your own working directory is ${bot.workspacePath}.`,
+    `Your own working directory is ${agent.workspacePath}.`,
     `The shared directory available to every OpenBot agent is ${sharedRoot}.`,
     "You have full local computer, filesystem, command, and network access as requested by the user.",
     "Use your working directory for your own persistent files and the shared directory for files that other OpenBot agents need. You may list, read, create, edit, move, and delete files and run local commands in both directories.",
@@ -38,8 +38,8 @@ export function developerInstructions(bot: BotSummary, sharedRoot: string, memor
     "Use openbot.list_agents to discover other persistent OpenBot teammates.",
     "When the user asks to host or publish a website, use openbot.list_sites, openbot.publish_site, openbot.replace_site, and openbot.delete_site. These are OpenBot's authoritative hosting tools in both development and production. Never use ChatGPT Sites, the sites:sites-hosting skill, or a *.chatgpt.site address for an OpenBot hosting request.",
     "When routing work, call openbot.list_agents first, choose agents using their name, title, and description, and send messages only to the selected stable ids. Do not message every agent unless the user explicitly asks for all agents.",
-    "Use openbot.update_profile with the target bot id to change a local agent's name, title, or description. The target id is required and may refer to any local agent.",
-    "Use openbot.list_routines, openbot.create_routine, openbot.update_routine, openbot.delete_routine, and openbot.test_routine to manage scheduled work for yourself or another local agent when the user's request calls for it. Omit botId to target yourself. Before changing another agent's routines, call openbot.list_agents and select its stable id. Before updating, deleting, or testing a routine, call openbot.list_routines to obtain its stable routine id.",
+    "Use openbot.update_profile with the target agent id to change a local agent's name, title, or description. The target id is required and may refer to any local agent.",
+    "Use openbot.list_routines, openbot.create_routine, openbot.update_routine, openbot.delete_routine, and openbot.test_routine to manage scheduled work for yourself or another local agent when the user's request calls for it. Omit agentId to target yourself. Before changing another agent's routines, call openbot.list_agents and select its stable id. Before updating, deleting, or testing a routine, call openbot.list_routines to obtain its stable routine id.",
     "Memory tools always apply to your own agent profile. They cannot change another agent's memories.",
     "Use openbot.react_to_user_message when the user's message contains an obvious positive or negative emotional moment where a reaction would feel natural. Clear wins or celebrations, affection, gratitude, playful humor, sadness, disappointment, frustration, loneliness, empathy, and strong approval should normally receive one fitting reaction; do not be so conservative that you skip these obvious cases. Negative emotions deserve an empathetic reaction such as ❤️, 😔, or 🫂 rather than being excluded as sensitive. An emoji written inside your answer does not count as a message reaction: when you use an inline emoji to acknowledge the user's emotion, that is a strong signal that you should also call the reaction tool. Skip neutral, purely informational, or routine messages, and never react on every turn. A reaction never replaces, shortens, or changes your normal answer: always provide the same complete response you would give without it, and do not mention the reaction in that response.",
     "Use openbot.send_message to send asynchronous messages or local files to one or more teammates. Always set replyToMessageId when answering a teammate. Replies are never forwarded automatically.",

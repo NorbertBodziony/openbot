@@ -1,9 +1,9 @@
-import type { BotSummary, BrowserTab, ServerSummary } from "@openbot/contracts/ipc";
+import type { AgentSummary, BrowserTab, ServerSummary } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { expect, it, vi } from "vitest";
 import { App } from "./App";
 import {
-  BOTS,
+  AGENTS,
   confirmOnboardingModel,
   emitAgentEvent,
   emitBrowserPictureInPicture,
@@ -28,7 +28,7 @@ describe("OpenBot connected desktop shell", () => {
           url: "https://example.com/pip",
           loading: false,
           ownerThreadId: "thread-chief",
-          ownerBotId: "chief",
+          ownerAgentId: "chief",
         },
       ],
       activeTabId: "tab-pip",
@@ -74,7 +74,7 @@ describe("OpenBot connected desktop shell", () => {
       url: "https://www.google.com",
       loading: false,
       ownerThreadId: "thread-chief",
-      ownerBotId: "chief",
+      ownerAgentId: "chief",
     };
     const substackTab: BrowserTab = {
       id: "tab-substack",
@@ -82,7 +82,7 @@ describe("OpenBot connected desktop shell", () => {
       url: "https://substack.com/chat",
       loading: false,
       ownerThreadId: "thread-chief",
-      ownerBotId: "chief",
+      ownerAgentId: "chief",
     };
     let resolveInitialState: (state: { tabs: BrowserTab[]; activeTabId: string | null }) => void = () => undefined;
     vi.mocked(window.openbot.browser.getDisplayState).mockReturnValueOnce(
@@ -120,7 +120,7 @@ describe("OpenBot connected desktop shell", () => {
       url: "https://example.com/first",
       loading: false,
       ownerThreadId: "thread-chief",
-      ownerBotId: "chief",
+      ownerAgentId: "chief",
     };
     const activeTab: BrowserTab = {
       id: "tab-active",
@@ -128,7 +128,7 @@ describe("OpenBot connected desktop shell", () => {
       url: "https://example.com/active",
       loading: false,
       ownerThreadId: "thread-chief",
-      ownerBotId: "chief",
+      ownerAgentId: "chief",
     };
     vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
     vi.mocked(window.openbot.servers.select).mockImplementation(async (serverId) => [
@@ -181,7 +181,7 @@ describe("OpenBot connected desktop shell", () => {
           url: "https://example.com",
           loading: false,
           ownerThreadId: "thread-chief",
-          ownerBotId: "chief",
+          ownerAgentId: "chief",
         },
       ],
       activeTabId: "tab-pip-restore",
@@ -233,7 +233,7 @@ describe("OpenBot connected desktop shell", () => {
           url: "http://127.0.0.1:4321",
           loading: false,
           ownerThreadId: "thread-chief",
-          ownerBotId: "chief",
+          ownerAgentId: "chief",
         },
         {
           id: "tab-2",
@@ -241,7 +241,7 @@ describe("OpenBot connected desktop shell", () => {
           url: "https://example.com/second",
           loading: false,
           ownerThreadId: "thread-chief",
-          ownerBotId: "chief",
+          ownerAgentId: "chief",
         },
         {
           id: "tab-3",
@@ -249,7 +249,7 @@ describe("OpenBot connected desktop shell", () => {
           url: "https://example.com/third",
           loading: false,
           ownerThreadId: "thread-chief",
-          ownerBotId: "chief",
+          ownerAgentId: "chief",
         },
       ],
       activeTabId: "tab-1",
@@ -288,7 +288,7 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.browser.open).toHaveBeenCalledWith({
       url: "https://www.google.com",
       ownerThreadId: "thread-chief",
-      ownerBotId: "chief",
+      ownerAgentId: "chief",
       focus: true,
     });
     expect(screen.queryByText("Typing…")).not.toBeInTheDocument();
@@ -358,7 +358,7 @@ describe("OpenBot connected desktop shell", () => {
       url: "https://www.google.com",
       loading: false,
       ownerThreadId: "thread-chief",
-      ownerBotId: "chief",
+      ownerAgentId: "chief",
     };
     let resolveOpen: ((tab: BrowserTab) => void) | undefined;
     vi.mocked(window.openbot.browser.open).mockImplementationOnce(
@@ -407,7 +407,7 @@ describe("OpenBot connected desktop shell", () => {
       url: "https://www.google.com/",
       loading: true,
       ownerThreadId: "thread-chief",
-      ownerBotId: "chief",
+      ownerAgentId: "chief",
     };
     let resolveFirstOpen: ((tab: BrowserTab) => void) | undefined;
     vi.mocked(window.openbot.browser.open).mockImplementationOnce(
@@ -451,7 +451,7 @@ describe("OpenBot connected desktop shell", () => {
           url: "https://example.com",
           loading: false,
           ownerThreadId: "thread-chief",
-          ownerBotId: "chief",
+          ownerAgentId: "chief",
         },
         {
           id: "tab-login",
@@ -459,7 +459,7 @@ describe("OpenBot connected desktop shell", () => {
           url: "https://example.com/login",
           loading: false,
           ownerThreadId: "thread-chief",
-          ownerBotId: "chief",
+          ownerAgentId: "chief",
         },
       ],
       activeTabId: "tab-public",
@@ -468,7 +468,7 @@ describe("OpenBot connected desktop shell", () => {
       type: "browser-takeover-requested",
       request: {
         requestId: "takeover-1",
-        botId: "chief",
+        agentId: "chief",
         threadId: "thread-chief",
         turnId: "turn-1",
         tabId: "tab-login",
@@ -514,7 +514,7 @@ describe("OpenBot connected desktop shell", () => {
           url: "https://example.com/login",
           loading: false,
           ownerThreadId: "thread-chief",
-          ownerBotId: "chief",
+          ownerAgentId: "chief",
         },
       ],
       activeTabId: "tab-login",
@@ -523,7 +523,7 @@ describe("OpenBot connected desktop shell", () => {
       type: "browser-takeover-requested",
       request: {
         requestId: "takeover-preview-failed",
-        botId: "chief",
+        agentId: "chief",
         threadId: "thread-chief",
         turnId: "turn-preview-failed",
         tabId: "tab-login",
@@ -560,7 +560,7 @@ describe("OpenBot connected desktop shell", () => {
       url: "https://example.com/first",
       loading: false,
       ownerThreadId: "thread-chief",
-      ownerBotId: "chief",
+      ownerAgentId: "chief",
     };
     const secondTab = {
       id: "tab-shortcut-2",
@@ -568,7 +568,7 @@ describe("OpenBot connected desktop shell", () => {
       url: "https://example.com/second",
       loading: false,
       ownerThreadId: "thread-chief",
-      ownerBotId: "chief",
+      ownerAgentId: "chief",
     };
     emitAgentEvent?.({
       type: "browser-changed",
@@ -608,7 +608,7 @@ describe("OpenBot connected desktop shell", () => {
       url: "https://example.com/first",
       loading: false,
       ownerThreadId: "thread-chief",
-      ownerBotId: "chief",
+      ownerAgentId: "chief",
     };
     const secondTab = {
       id: "tab-activation-closing",
@@ -616,7 +616,7 @@ describe("OpenBot connected desktop shell", () => {
       url: "https://example.com/closing",
       loading: false,
       ownerThreadId: "thread-chief",
-      ownerBotId: "chief",
+      ownerAgentId: "chief",
     };
     emitAgentEvent?.({
       type: "browser-changed",
@@ -661,7 +661,7 @@ describe("OpenBot connected desktop shell", () => {
       url: "https://example.com/first",
       loading: false,
       ownerThreadId: "thread-chief",
-      ownerBotId: "chief",
+      ownerAgentId: "chief",
     };
     const closingTab = {
       id: "tab-switch-closing",
@@ -669,7 +669,7 @@ describe("OpenBot connected desktop shell", () => {
       url: "https://example.com/closing",
       loading: false,
       ownerThreadId: "thread-chief",
-      ownerBotId: "chief",
+      ownerAgentId: "chief",
     };
     emitAgentEvent?.({
       type: "browser-changed",
@@ -714,7 +714,7 @@ describe("OpenBot connected desktop shell", () => {
       url: "https://example.com/closing",
       loading: false,
       ownerThreadId: "thread-chief",
-      ownerBotId: "chief",
+      ownerAgentId: "chief",
     };
     const replacementTab = {
       id: "tab-replacement",
@@ -722,7 +722,7 @@ describe("OpenBot connected desktop shell", () => {
       url: "https://example.com/replacement",
       loading: false,
       ownerThreadId: "thread-chief",
-      ownerBotId: "chief",
+      ownerAgentId: "chief",
     };
     emitAgentEvent?.({ type: "browser-changed", tabs: [closingTab], activeTabId: closingTab.id });
     await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
@@ -758,7 +758,7 @@ describe("OpenBot connected desktop shell", () => {
           url: "https://example.com/local",
           loading: false,
           ownerThreadId: "thread-chief",
-          ownerBotId: "chief",
+          ownerAgentId: "chief",
         },
       ],
       activeTabId: "local-tab",
@@ -785,7 +785,7 @@ describe("OpenBot connected desktop shell", () => {
           url: "https://example.com/remote",
           loading: false,
           ownerThreadId: "thread-chief",
-          ownerBotId: "chief",
+          ownerAgentId: "chief",
         },
       ],
       activeTabId: "remote-tab",
@@ -831,7 +831,7 @@ describe("OpenBot connected desktop shell", () => {
           url: "https://example.com/remote",
           loading: false,
           ownerThreadId: "thread-chief",
-          ownerBotId: "chief",
+          ownerAgentId: "chief",
         },
       ],
       activeTabId: "remote-tab-during-switch",
@@ -894,7 +894,7 @@ describe("OpenBot connected desktop shell", () => {
           url: "https://example.com/local",
           loading: false,
           ownerThreadId: "thread-chief",
-          ownerBotId: "chief",
+          ownerAgentId: "chief",
         },
       ],
       activeTabId: "local-tab",
@@ -940,22 +940,22 @@ describe("OpenBot connected desktop shell", () => {
 
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
-    let resolveStudioBots: ((bots: BotSummary[]) => void) | undefined;
-    vi.mocked(window.openbot.agent.listBots)
+    let resolveStudioAgents: ((agents: AgentSummary[]) => void) | undefined;
+    vi.mocked(window.openbot.agent.listAgents)
       .mockImplementationOnce(
         () =>
           new Promise((resolve) => {
-            resolveStudioBots = resolve;
+            resolveStudioAgents = resolve;
           }),
       )
-      .mockResolvedValueOnce([{ ...BOTS[0], name: "Office Chief" }]);
+      .mockResolvedValueOnce([{ ...AGENTS[0], name: "Office Chief" }]);
 
     await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
-    await waitFor(() => expect(resolveStudioBots).toBeDefined());
+    await waitFor(() => expect(resolveStudioAgents).toBeDefined());
     await fireEvent.click(screen.getByRole("button", { name: "Office PC server" }));
 
     expect(await screen.findByRole("heading", { name: "Office Chief" })).toBeInTheDocument();
-    resolveStudioBots?.([{ ...BOTS[0], name: "Studio Chief" }]);
+    resolveStudioAgents?.([{ ...AGENTS[0], name: "Studio Chief" }]);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(screen.getByRole("button", { name: "Office PC server" })).toHaveAttribute("aria-pressed", "true");
@@ -992,7 +992,7 @@ describe("OpenBot connected desktop shell", () => {
 
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
-    vi.mocked(window.openbot.agent.listBots).mockResolvedValueOnce([{ ...BOTS[0], name: "Studio Chief" }]);
+    vi.mocked(window.openbot.agent.listAgents).mockResolvedValueOnce([{ ...AGENTS[0], name: "Studio Chief" }]);
 
     await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
     await waitFor(() => expect(resolveStudioSelection).toBeDefined());
@@ -1020,7 +1020,7 @@ describe("OpenBot connected desktop shell", () => {
           url: "https://example.com",
           loading: false,
           ownerThreadId: "thread-chief",
-          ownerBotId: "chief",
+          ownerAgentId: "chief",
         },
       ],
       activeTabId: "tab-embedded-shortcut",
@@ -1035,15 +1035,15 @@ describe("OpenBot connected desktop shell", () => {
   });
 
   it("opens workspace Markdown in the right sidebar and keeps external opening explicit", async () => {
-    const workspacePath = "/tmp/OpenBot/Bots/chief/recipe-tomato-basil-pasta.md";
+    const workspacePath = "/tmp/OpenBot/Agents/chief/recipe-tomato-basil-pasta.md";
     const sharedPath = "/tmp/OpenBot/Shared/menu.txt";
-    vi.mocked(window.openbot.agent.readConversation).mockImplementation(async (botId) => ({
-      botId,
-      threadId: botId === "chief" ? "thread-chief" : null,
+    vi.mocked(window.openbot.agent.readConversation).mockImplementation(async (agentId) => ({
+      agentId,
+      threadId: agentId === "chief" ? "thread-chief" : null,
       activeTurnId: null,
       revision: 1,
       messages:
-        botId === "chief"
+        agentId === "chief"
           ? [
               {
                 id: "message-file-preview",
@@ -1079,12 +1079,12 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByRole("complementary", { name: "File preview" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 1, name: "Tomato Basil Pasta" })).toBeInTheDocument();
     expect(screen.getByText("fresh basil").tagName).toBe("STRONG");
-    expect(window.openbot.agent.previewWorkspaceFile).toHaveBeenCalledWith({ botId: "chief", path: workspacePath });
+    expect(window.openbot.agent.previewWorkspaceFile).toHaveBeenCalledWith({ agentId: "chief", path: workspacePath });
     expect(window.openbot.agent.openWorkspaceFile).not.toHaveBeenCalled();
     expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({ visible: false });
 
     await fireEvent.click(screen.getByRole("button", { name: "Open file externally" }));
-    expect(window.openbot.agent.openWorkspaceFile).toHaveBeenCalledWith({ botId: "chief", path: workspacePath });
+    expect(window.openbot.agent.openWorkspaceFile).toHaveBeenCalledWith({ agentId: "chief", path: workspacePath });
     await fireEvent.click(screen.getByRole("button", { name: "Close file preview" }));
     expect(screen.queryByRole("complementary", { name: "File preview" })).not.toBeInTheDocument();
 

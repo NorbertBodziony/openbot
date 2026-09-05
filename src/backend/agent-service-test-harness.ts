@@ -10,7 +10,7 @@ import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contract
 import { expect, vi } from "vitest";
 import type { AgentClient, AgentProvider } from "./agent-client";
 import type { AgentService } from "./agent-service";
-import { BotStore } from "./bot-store";
+import { AgentStore } from "./agent-store";
 import { MailboxStore } from "./mailbox-store";
 import {
   type AppServerNotification,
@@ -22,8 +22,8 @@ import {
 } from "./protocol";
 import { HARNESS_WAIT_TIMEOUT_MS } from "./test-deadlines";
 
-export const CREATE_BOT_INPUT = {
-  name: "Planning Bot",
+export const CREATE_AGENT_INPUT = {
+  name: "Planning Agent",
   description: "Builds clear plans for everyday tasks.",
   avatarSeed: "setup:planning",
   avatarHue: 215,
@@ -314,8 +314,8 @@ export function inputRecords(value: unknown): DynamicRecord[] {
   return Array.isArray(input) ? input.filter(isDynamicRecord) : [];
 }
 
-export function stores(root: string): { store: BotStore; mailbox: MailboxStore } {
-  const store = new BotStore(join(root, "user-data"), join(root, "home"));
+export function stores(root: string): { store: AgentStore; mailbox: MailboxStore } {
+  const store = new AgentStore(join(root, "user-data"), join(root, "home"));
   return { store, mailbox: new MailboxStore(join(root, "user-data"), store.sharedRoot, store.database) };
 }
 
@@ -330,10 +330,10 @@ export function fakeBrowser(tabs: BrowserTab[] = []) {
   };
 }
 
-export function nextRoutinesChanged(agentService: AgentService, botId: string): Promise<void> {
+export function nextRoutinesChanged(agentService: AgentService, agentId: string): Promise<void> {
   return new Promise((resolve) => {
     const listener = (event: AgentEvent) => {
-      if (event.type !== "routines-changed" || event.botId !== botId) return;
+      if (event.type !== "routines-changed" || event.agentId !== agentId) return;
       agentService.off("event", listener);
       resolve();
     };
@@ -448,7 +448,7 @@ process.stdin.on("data", (chunk) => {
         }
         write({ method: "item/agentMessage/delta", params: { threadId: message.params.threadId, turnId, itemId: "message-" + turnId, delta: "Streaming" } });
         if (process.env.OPENBOT_FAKE_AGENT_TOOL === "1" && turnCounter === 1) {
-          setTimeout(() => write({ id: "agent-tool-1", method: "item/tool/call", params: { threadId: message.params.threadId, turnId, callId: "call-1", namespace: "openbot", tool: "send_message", arguments: { recipientBotIds: ["sales-outbound", "inbox-manager"], text: "Please prepare your reports.", paths: JSON.parse(process.env.OPENBOT_FAKE_AGENT_TOOL_PATHS || "[]") } } }), 30);
+          setTimeout(() => write({ id: "agent-tool-1", method: "item/tool/call", params: { threadId: message.params.threadId, turnId, callId: "call-1", namespace: "openbot", tool: "send_message", arguments: { recipientAgentIds: ["sales-outbound", "inbox-manager"], text: "Please prepare your reports.", paths: JSON.parse(process.env.OPENBOT_FAKE_AGENT_TOOL_PATHS || "[]") } } }), 30);
         }
         if (process.env.OPENBOT_FAKE_AGENT_TOOL_CALLS && turnCounter === 1) {
           const calls = JSON.parse(process.env.OPENBOT_FAKE_AGENT_TOOL_CALLS);

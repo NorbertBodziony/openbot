@@ -53,36 +53,51 @@ export function createTeamProtocolV2Event(
   });
 }
 
+/**
+ * Outbound. The result goes on the wire, so it ends in the frozen vocabulary -- `botId`, not `agentId`.
+ * This is the half that used to share an implementation with {@link decodeTeamProtocolV2CurrentHttpRequest};
+ * once the two vocabularies stopped being the same words, one function could no longer serve both
+ * directions, because whichever end it was written for silently broke the other.
+ */
 export function encodeTeamProtocolV2CurrentHttpRequest(
   method: string,
   path: string,
   value: unknown,
   options: { preserveSemanticTags?: boolean } = {},
 ): TeamProtocolV2Json {
-  return decodeV2HttpRequest(method, path, value, options);
+  const normalized = normalizeV2HttpRequest(method, path, value);
+  if (normalized.done) return normalized.value;
+  return wireJson(JSON.parse(encodeTeamProtocolV1CurrentHttpRequest(method, path, normalized.value, options)));
 }
 
+/** Inbound. The result reaches a handler, so it ends in the current vocabulary the handler reads. */
 export function decodeTeamProtocolV2CurrentHttpRequest(
   method: string,
   path: string,
   value: unknown,
   options: { preserveSemanticTags?: boolean } = {},
 ): TeamProtocolV2Json {
-  return decodeV2HttpRequest(method, path, value, options);
+  const normalized = normalizeV2HttpRequest(method, path, value);
+  if (normalized.done) return normalized.value;
+  if (options.preserveSemanticTags) {
+    return wireJson(decodeTeamProtocolV1CurrentHttpRequest(method, path, normalized.value));
+  }
+  // The encode call is only here to expand semantic tags, and it leaves the object in wire vocabulary.
+  // Decoding its output is what brings the keys back to the current spelling the handlers read.
+  const expanded = JSON.parse(encodeTeamProtocolV1CurrentHttpRequest(method, path, normalized.value));
+  return wireJson(decodeTeamProtocolV1CurrentHttpRequest(method, path, expanded));
 }
 
-function decodeV2HttpRequest(
+/** The route handling both directions share: the two bodies that never reach the v1 codec at all. */
+function normalizeV2HttpRequest(
   method: string,
   path: string,
   value: unknown,
-  options: { preserveSemanticTags?: boolean },
-): TeamProtocolV2Json {
+): { done: true; value: TeamProtocolV2Json } | { done: false; value: TeamProtocolV2Json } {
   const normalized = value === undefined ? null : wireJson(value);
-  if (isRemoteViewerRoute(path)) return isEmptyRequest(normalized) ? {} : normalized;
-  if (isEmptyRequest(normalized) && isTeamProtocolV2NoBodyRoute(method, path)) return {};
-  return options.preserveSemanticTags
-    ? wireJson(decodeTeamProtocolV1CurrentHttpRequest(method, path, normalized))
-    : wireJson(JSON.parse(encodeTeamProtocolV1CurrentHttpRequest(method, path, normalized)));
+  if (isRemoteViewerRoute(path)) return { done: true, value: isEmptyRequest(normalized) ? {} : normalized };
+  if (isEmptyRequest(normalized) && isTeamProtocolV2NoBodyRoute(method, path)) return { done: true, value: {} };
+  return { done: false, value: normalized };
 }
 
 function isEmptyRequest(value: unknown): boolean {

@@ -14,7 +14,7 @@ export function createSkillsStore(deps: SkillsStoreDeps) {
   let installedSkillsSourceId: string | undefined;
   let failedInstalledSkillsAttempt: { serverId: string; sourceId: string; connectionSequence: number } | undefined;
   const installedSkillsSource = createMemo(() =>
-    installedSkillsRequestKey(deps.props.bot?.id, deps.props.server, deps.props.skillsMarketplaceOpen === true),
+    installedSkillsRequestKey(deps.props.agent?.id, deps.props.server, deps.props.skillsMarketplaceOpen === true),
   );
   createEffect(
     () => `${deps.props.server?.id ?? "local"}\0${deps.props.server?.connectionSequence ?? 0}`,
@@ -23,7 +23,7 @@ export function createSkillsStore(deps: SkillsStoreDeps) {
       const failedAttempt = failedInstalledSkillsAttempt;
       if (
         failedAttempt?.serverId === serverId &&
-        failedAttempt.sourceId === `${serverId}\0${untrack(() => deps.props.bot?.id) ?? ""}` &&
+        failedAttempt.sourceId === `${serverId}\0${untrack(() => deps.props.agent?.id) ?? ""}` &&
         failedAttempt.connectionSequence !== Number(connectionSequenceText)
       ) {
         setInstalledSkillsRetry((retry) => retry + 1);
@@ -34,15 +34,15 @@ export function createSkillsStore(deps: SkillsStoreDeps) {
     () => `${installedSkillsSource()}\0${installedSkillsRetry()}`,
     (source) => {
       const request = ++installedSkillsRequest;
-      const [serverId, botId, support, visibility] = source.split("\0");
-      if (!botId) {
+      const [serverId, agentId, support, visibility] = source.split("\0");
+      if (!agentId) {
         installedSkillsSourceId = undefined;
         failedInstalledSkillsAttempt = undefined;
         setInstalledSkills([]);
         return;
       }
       if (visibility === "hidden") return;
-      const sourceId = `${serverId}\0${botId}`;
+      const sourceId = `${serverId}\0${agentId}`;
       if (installedSkillsSourceId !== sourceId) {
         installedSkillsSourceId = sourceId;
         setInstalledSkills([]);
@@ -55,7 +55,7 @@ export function createSkillsStore(deps: SkillsStoreDeps) {
       const connectionSequence = untrack(() => deps.props.server?.connectionSequence) ?? 0;
       failedInstalledSkillsAttempt = undefined;
       void window.openbot.agent
-        .listInstalledSkills(botId)
+        .listInstalledSkills(agentId)
         .then((skills) => {
           if (request !== installedSkillsRequest) return;
           failedInstalledSkillsAttempt = undefined;

@@ -23,19 +23,19 @@ export function WorkspaceAccountDock(props: { account: () => CentralAuthUser }) 
   const auth = useAuth();
   const setup = useSetup();
   const updates = useUpdates();
-  const { activeBot, agentStatus } = useAgents();
+  const { activeAgent, agentStatus } = useAgents();
   const { activeServerId, activeServerSupportsCapability } = useServers();
   const { openAppSettings, setSkillsMarketplaceOpen } = useSettings();
   const usageReady = createMemo(() => {
-    const bot = activeBot();
-    if (!bot || agentStatus().phase !== "ready") return false;
-    const provider = agentStatus().providers?.find((candidate) => candidate.id === bot.provider);
+    const agent = activeAgent();
+    if (!agent || agentStatus().phase !== "ready") return false;
+    const provider = agentStatus().providers?.find((candidate) => candidate.id === agent.provider);
     return provider ? provider.state === "available" && provider.connectionState !== "connecting" : true;
   });
   const usageTargetKey = createMemo(() => {
-    const bot = activeBot();
-    if (!bot || !usageReady() || !activeServerSupportsCapability("model-scoped-usage")) return null;
-    return JSON.stringify([activeServerId(), bot.provider, bot.model]);
+    const agent = activeAgent();
+    if (!agent || !usageReady() || !activeServerSupportsCapability("model-scoped-usage")) return null;
+    return JSON.stringify([activeServerId(), agent.provider, agent.model]);
   });
 
   createEffect(
@@ -66,9 +66,9 @@ export function WorkspaceAccountDock(props: { account: () => CentralAuthUser }) 
         compact={layout.leftPanelCompact()}
         withServerRail={platform.serverRailVisible()}
         onRefreshUsage={() => {
-          const bot = activeBot();
+          const agent = activeAgent();
           const targetKey = usageTargetKey();
-          return bot && targetKey ? auth.refreshAccountUsage(bot.id, targetKey) : Promise.resolve({ limits: [] });
+          return agent && targetKey ? auth.refreshAccountUsage(agent.id, targetKey) : Promise.resolve({ limits: [] });
         }}
         onUpdateAction={updates.runAction}
         onLogout={platform.landingPreview ? undefined : auth.logoutCentralAccount}

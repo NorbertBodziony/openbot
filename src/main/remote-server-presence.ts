@@ -62,7 +62,7 @@ export class RemotePresenceCache {
       members: current.members.map((member) => ({
         ...member,
         online: false,
-        typingBotId: null,
+        typingAgentId: null,
       })),
       updatedAt: new Date().toISOString(),
     });

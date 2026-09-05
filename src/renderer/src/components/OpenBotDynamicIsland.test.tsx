@@ -1,11 +1,15 @@
-import type { DynamicIslandAction, DynamicIslandBotIdentity, DynamicIslandPresentation } from "@openbot/contracts/ipc";
+import type {
+  DynamicIslandAction,
+  DynamicIslandAgentIdentity,
+  DynamicIslandPresentation,
+} from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { createSignal, flush } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import { OpenBotDynamicIsland } from "./OpenBotDynamicIsland";
 import type { DynamicIslandViewState } from "./ui";
 
-const BOT: DynamicIslandBotIdentity = {
+const AGENT: DynamicIslandAgentIdentity = {
   id: "research",
   name: "Research",
   avatarSeed: "research",
@@ -64,7 +68,7 @@ describe("OpenBotDynamicIsland mode transitions", () => {
     expect(onAction).toHaveBeenCalledWith({
       type: "open-message",
       serverId: "local",
-      botId: "research",
+      agentId: "research",
       messageId: "reply-2",
     });
   });
@@ -77,7 +81,7 @@ describe("OpenBotDynamicIsland mode transitions", () => {
     expect(onAction).toHaveBeenCalledWith({
       type: "review-attention",
       serverId: "local",
-      botId: "research",
+      agentId: "research",
       requestId: "approval-1",
     });
 
@@ -85,7 +89,7 @@ describe("OpenBotDynamicIsland mode transitions", () => {
     expect(onAction).toHaveBeenCalledWith({
       type: "respond-approval",
       serverId: "local",
-      botId: "research",
+      agentId: "research",
       requestId: "approval-1",
       decision: "decline",
     });
@@ -94,7 +98,7 @@ describe("OpenBotDynamicIsland mode transitions", () => {
     expect(onAction).toHaveBeenCalledWith({
       type: "respond-approval",
       serverId: "local",
-      botId: "research",
+      agentId: "research",
       requestId: "approval-1",
       decision: "accept",
     });
@@ -163,7 +167,7 @@ function workingPresentation(): DynamicIslandPresentation {
   return {
     serverId: "local",
     mode: "working",
-    working: [{ bot: BOT, task: "Checking sources" }],
+    working: [{ agent: AGENT, task: "Checking sources" }],
   };
 }
 
@@ -173,7 +177,7 @@ function messagePresentation(messageId: string): DynamicIslandPresentation {
     mode: "message",
     unreadCount: 1,
     message: {
-      bot: BOT,
+      agent: AGENT,
       messageId,
       text: "The source check is ready.",
       createdAt: "2026-08-29T10:42:00.000Z",
@@ -192,7 +196,7 @@ function questionPresentation(): Extract<DynamicIslandPresentation, { mode: "que
     remainingCount: 0,
     item: {
       requestId: "source-question",
-      bot: BOT,
+      agent: AGENT,
       title: "Choose a source",
       detail: "Which source should I use?",
       questions: [
@@ -215,7 +219,7 @@ function approvalPresentation(): Extract<DynamicIslandPresentation, { mode: "app
     remainingCount: 0,
     item: {
       requestId: "approval-1",
-      bot: BOT,
+      agent: AGENT,
       title: "Command needs review",
       detail: "Install the locked dependencies.",
       truncated: false,

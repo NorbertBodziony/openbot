@@ -328,12 +328,12 @@ function ServerRailButton(props: {
             <ServerMark server={props.server} />
           </ContextMenu.Trigger>
           <ContextMenu.Portal>
-            <ContextMenu.Content class="bot-context-menu" aria-label="Server actions">
+            <ContextMenu.Content class="agent-context-menu" aria-label="Server actions">
               <ContextMenu.Item onSelect={() => props.onOpenSettings(props.server.id, trigger)}>
                 <svg
                   aria-hidden="true"
                   viewBox="0 0 20 20"
-                  class="bot-context-icon"
+                  class="agent-context-icon"
                   fill="none"
                   stroke="currentColor"
                   stroke-width="1.35"

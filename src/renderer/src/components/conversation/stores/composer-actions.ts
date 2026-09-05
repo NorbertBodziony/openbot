@@ -9,8 +9,8 @@ export interface ComposerActionsDeps {
   agentReady: () => boolean;
   drafts: () => Record<string, ComposerDraft>;
   setDrafts: (update: (current: Record<string, ComposerDraft>) => Record<string, ComposerDraft>) => void;
-  editingBotId: () => string | null;
-  setEditingBotId: (id: string | null) => void;
+  editingAgentId: () => string | null;
+  setEditingAgentId: (id: string | null) => void;
   editingServerId: () => string | null;
   setEditingServerId: (id: string | null) => void;
   editingDeliveryId: () => string | null;
@@ -31,14 +31,14 @@ export interface ComposerActionsDeps {
   presentedQueueDeliveries: () => QueueDelivery[];
   typing: {
     idleTimer: ReturnType<typeof setTimeout> | undefined;
-    botId: string | null;
+    agentId: string | null;
   };
   voice: {
-    botId: string | undefined;
+    agentId: string | undefined;
     serverId: string | undefined;
     submitRequest:
       | {
-          botId: string;
+          agentId: string;
           serverId: string;
           draft: ComposerDraft;
           queuedEdit: { deliveryId: string; originalAttachmentIds: string[] } | undefined;
@@ -60,15 +60,15 @@ export interface ComposerActionsDeps {
 
 export function createComposerActions(deps: ComposerActionsDeps) {
   function updateTeamTyping(text: string): void {
-    const botId = deps.props.bot?.id;
+    const agentId = deps.props.agent?.id;
     if (deps.typing.idleTimer) clearTimeout(deps.typing.idleTimer);
-    if (!botId || !text.trim()) {
+    if (!agentId || !text.trim()) {
       stopTeamTyping();
       return;
     }
-    if (deps.typing.botId && deps.typing.botId !== botId) deps.props.onTypingChange(deps.typing.botId, false);
-    deps.typing.botId = botId;
-    deps.props.onTypingChange(botId, true);
+    if (deps.typing.agentId && deps.typing.agentId !== agentId) deps.props.onTypingChange(deps.typing.agentId, false);
+    deps.typing.agentId = agentId;
+    deps.props.onTypingChange(agentId, true);
     deps.typing.idleTimer = setTimeout(stopTeamTyping, 3_000);
   }
 
@@ -111,12 +111,12 @@ export function createComposerActions(deps: ComposerActionsDeps) {
   }
 
   function editQueuedMessage(delivery: QueueDelivery) {
-    const botId = deps.props.bot?.id;
+    const agentId = deps.props.agent?.id;
     const serverId = deps.props.server?.id ?? "local";
-    if (!botId || delivery.status !== "queued") return;
+    if (!agentId || delivery.status !== "queued") return;
     if (deps.editingDeliveryId()) cancelQueuedMessageEdit();
-    deps.clearConversationError({ botId, serverId });
-    deps.setEditingBotId(botId);
+    deps.clearConversationError({ agentId, serverId });
+    deps.setEditingAgentId(agentId);
     deps.setEditingServerId(serverId);
     deps.setEditingDraftBackup({
       text: deps.currentDraft().text,
@@ -127,7 +127,7 @@ export function createComposerActions(deps: ComposerActionsDeps) {
     deps.setEditingDeliveryId(delivery.id);
     deps.setDrafts((current) => ({
       ...current,
-      [composerDraftKey({ botId, serverId })]: {
+      [composerDraftKey({ agentId, serverId })]: {
         text: delivery.text,
         attachments: [...delivery.attachments],
         replyToMessageId: delivery.replyToMessageId,
@@ -139,9 +139,9 @@ export function createComposerActions(deps: ComposerActionsDeps) {
   }
 
   function cancelQueuedMessageEdit() {
-    const botId = deps.editingBotId() ?? deps.props.bot?.id;
+    const agentId = deps.editingAgentId() ?? deps.props.agent?.id;
     const serverId = deps.editingServerId() ?? deps.props.server?.id ?? "local";
-    const target = botId ? { botId, serverId } : undefined;
+    const target = agentId ? { agentId, serverId } : undefined;
     const backup = deps.editingDraftBackup();
     const draft = target ? (deps.drafts()[composerDraftKey(target)] ?? EMPTY_DRAFT) : EMPTY_DRAFT;
     const preservedAttachmentIds = new Set([
@@ -156,7 +156,7 @@ export function createComposerActions(deps: ComposerActionsDeps) {
     if (target) {
       deps.setDrafts((current) => ({ ...current, [composerDraftKey(target)]: backup ?? EMPTY_DRAFT }));
     }
-    deps.setEditingBotId(null);
+    deps.setEditingAgentId(null);
     deps.setEditingServerId(null);
     deps.setEditingDeliveryId(null);
     deps.setEditingDraftBackup(null);
@@ -168,11 +168,11 @@ export function createComposerActions(deps: ComposerActionsDeps) {
     target?: ConversationTarget & { deliveryId: string; originalAttachmentIds: string[] },
     submittedSnapshot?: ComposerDraft,
   ): Promise<boolean> {
-    const botId = target?.botId ?? deps.editingBotId() ?? deps.props.bot?.id;
+    const agentId = target?.agentId ?? deps.editingAgentId() ?? deps.props.agent?.id;
     const serverId = target?.serverId ?? deps.editingServerId() ?? deps.props.server?.id ?? "local";
     const deliveryId = target?.deliveryId ?? deps.editingDeliveryId();
     const draft = draftOverride ?? deps.currentDraft();
-    if (!botId || !deliveryId || deps.submitting()) return false;
+    if (!agentId || !deliveryId || deps.submitting()) return false;
     const delivery = target ? undefined : deps.props.queue?.deliveries.find((item) => item.id === deliveryId);
     if (!target && delivery?.status !== "queued") {
       deps.setComposerError("This queued message is no longer available.");
@@ -201,7 +201,7 @@ export function createComposerActions(deps: ComposerActionsDeps) {
         text,
         keepAttachmentIds,
         attachmentDraftIds,
-        target ?? (botId ? { botId, serverId } : undefined),
+        target ?? (agentId ? { agentId, serverId } : undefined),
       );
     } catch (error) {
       deps.setComposerError(error instanceof Error ? error.message : String(error));
@@ -209,16 +209,16 @@ export function createComposerActions(deps: ComposerActionsDeps) {
       deps.setSubmitting(false);
     }
     if (!saved) return false;
-    const savedTarget = { botId, serverId };
+    const savedTarget = { agentId, serverId };
     deps.clearConversationError(savedTarget);
     if (submittedSnapshot) deps.clearSubmittedDraft(savedTarget, submittedSnapshot);
     else deps.setDrafts((current) => ({ ...current, [composerDraftKey(savedTarget)]: EMPTY_DRAFT }));
     if (
-      deps.editingBotId() === botId &&
+      deps.editingAgentId() === agentId &&
       deps.editingServerId() === serverId &&
       deps.editingDeliveryId() === deliveryId
     ) {
-      deps.setEditingBotId(null);
+      deps.setEditingAgentId(null);
       deps.setEditingServerId(null);
       deps.setEditingDeliveryId(null);
       deps.setEditingDraftBackup(null);
@@ -256,12 +256,12 @@ export function createComposerActions(deps: ComposerActionsDeps) {
     if (!draftOverride && deps.currentEditingDeliveryId()) {
       return saveQueuedMessageEdit();
     }
-    const botId = targetOverride?.botId ?? deps.props.bot?.id;
-    const target = targetOverride ?? (botId ? { botId, serverId: deps.props.server?.id ?? "local" } : undefined);
+    const agentId = targetOverride?.agentId ?? deps.props.agent?.id;
+    const target = targetOverride ?? (agentId ? { agentId, serverId: deps.props.server?.id ?? "local" } : undefined);
     const draft = draftOverride ?? deps.currentDraft();
     const text = expandComposerMentions(draft.text);
     const attachments = draft.attachments;
-    if (!botId || !target || deps.submitting() || (!text.trim() && attachments.length === 0)) return false;
+    if (!agentId || !target || deps.submitting() || (!text.trim() && attachments.length === 0)) return false;
     stopTeamTyping();
     deps.setStickToLatest(true);
     deps.setSubmitting(true);
@@ -284,15 +284,15 @@ export function createComposerActions(deps: ComposerActionsDeps) {
   function submitComposer(): void {
     const phase = deps.voicePhase();
     if (phase === "recording") {
-      const botId = deps.voice.botId;
+      const agentId = deps.voice.agentId;
       const serverId = deps.voice.serverId;
-      if (!botId || !serverId) return;
-      const target = { botId, serverId };
+      if (!agentId || !serverId) return;
+      const target = { agentId, serverId };
       const draft = copyComposerDraft(deps.drafts()[composerDraftKey(target)] ?? EMPTY_DRAFT);
       const deliveryId =
-        deps.editingBotId() === botId && deps.editingServerId() === serverId ? deps.editingDeliveryId() : null;
+        deps.editingAgentId() === agentId && deps.editingServerId() === serverId ? deps.editingDeliveryId() : null;
       const activeTarget = deps.currentTarget();
-      const targetIsActive = activeTarget?.botId === target.botId && activeTarget.serverId === target.serverId;
+      const targetIsActive = activeTarget?.agentId === target.agentId && activeTarget.serverId === target.serverId;
       const delivery =
         deliveryId && targetIsActive ? deps.props.queue?.deliveries.find((item) => item.id === deliveryId) : undefined;
       if (deliveryId && targetIsActive && delivery?.status !== "queued") {
@@ -301,7 +301,7 @@ export function createComposerActions(deps: ComposerActionsDeps) {
         return;
       }
       deps.voice.submitRequest = {
-        botId,
+        agentId,
         serverId,
         draft,
         queuedEdit: deliveryId
@@ -321,7 +321,7 @@ export function createComposerActions(deps: ComposerActionsDeps) {
   }
 
   async function sendSelectionInstruction(messageId: string, body: string): Promise<boolean> {
-    if (!deps.props.bot || deps.submitting() || deps.selectionSending() || !deps.agentReady()) {
+    if (!deps.props.agent || deps.submitting() || deps.selectionSending() || !deps.agentReady()) {
       return false;
     }
     deps.setSelectionSending(true);

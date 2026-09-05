@@ -1,6 +1,6 @@
 import type { StateId } from "@norbert_bodziony/bloub";
 import { For } from "solid-js";
-import type { BotMessage, BotProfile } from "../../data";
+import type { AgentMessage, AgentProfile } from "../../data";
 import { AgentAvatar } from "../AgentAvatar";
 import { Button } from "../ui/button";
 import { ChevronDown, Sparkles } from "../ui/icons";
@@ -46,7 +46,7 @@ export function nextAgentActivityPresentation(
 }
 
 export function AgentActivityIndicator(props: {
-  bot: BotProfile | undefined;
+  agent: AgentProfile | undefined;
   detail?: string | null;
   presentation: AgentActivityPresentation;
   phase?: "active" | "exiting";
@@ -59,11 +59,11 @@ export function AgentActivityIndicator(props: {
         role="status"
         aria-live="polite"
         aria-atomic="true"
-        aria-label={`${props.bot?.name ?? "Agent"} is working: ${label()}`}
+        aria-label={`${props.agent?.name ?? "Agent"} is working: ${label()}`}
       />
       <section class="agent-activity-content" aria-label="Current activity">
         <AgentAvatar
-          bot={props.bot}
+          agent={props.agent}
           url={null}
           motion="working"
           animationState={props.presentation.animation}
@@ -94,7 +94,7 @@ function pickActivityLabel(
 }
 
 export function ThinkingDisclosure(props: {
-  message: BotMessage;
+  message: AgentMessage;
   working: boolean;
   open: boolean | undefined;
   onOpenChange: (open: boolean) => void;

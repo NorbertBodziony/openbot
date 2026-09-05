@@ -1,11 +1,11 @@
 import type {
-  BotAvatarHue,
+  AvatarHue,
   DirectThreadSummary,
   SidebarLayoutAction,
   SidebarLayoutSnapshot,
   TeamPresenceMember,
 } from "@openbot/contracts/ipc";
-import type { BotProfile } from "../data";
+import type { AgentProfile } from "../data";
 import type { SidebarPinnedItem } from "../sidebar-pins";
 import { SidebarDialogs } from "./sidebar/SidebarDialogs";
 import { SidebarNav } from "./sidebar/SidebarNav";
@@ -16,8 +16,8 @@ import { createSidebarScope, SidebarScopeContext } from "./sidebar/sidebar-scope
 export interface SidebarProps {
   serverName: string;
   onOpenServerSettings: (trigger: HTMLElement) => void;
-  bots: BotProfile[];
-  activeBotId: string;
+  agents: AgentProfile[];
+  activeAgentId: string;
   showPeople?: boolean;
   people: TeamPresenceMember[];
   directThreads: DirectThreadSummary[];
@@ -34,37 +34,37 @@ export interface SidebarProps {
   onUnpin: (item: SidebarPinnedItem) => void;
   onReorderPinned: (items: SidebarPinnedItem[]) => void;
   onReorderPeople: (memberIds: string[]) => void;
-  onSelectBot: (botId: string) => void;
+  onSelectAgent: (agentId: string) => void;
   onSelectPerson: (memberId: string) => void;
   onPreloadDirectConversation?: () => void;
-  onCreateBot: () => void;
-  onEditBot: (botId: string) => void;
+  onCreateAgent: () => void;
+  onEditAgent: (agentId: string) => void;
   duplicateSupported?: boolean;
-  duplicatingBotIds?: ReadonlySet<string>;
-  onDuplicateBot?: (botId: string) => Promise<void>;
-  onDeleteBot: (botId: string) => Promise<void>;
+  duplicatingAgentIds?: ReadonlySet<string>;
+  onDuplicateAgent?: (agentId: string) => Promise<void>;
+  onDeleteAgent: (agentId: string) => Promise<void>;
   compact: boolean;
   onExpand: () => void;
   onOpenMarketplace: () => void;
   emptyAction?: {
     label: string;
     avatarSeed: string;
-    avatarHue: BotAvatarHue | null;
+    avatarHue: AvatarHue | null;
     onSelect: () => void;
   };
 }
 
 export type SidebarAgentState = { kind: "working" } | { kind: "responded" } | { kind: "unread"; count: number };
 
-export type ResolvedPinnedItem = { ref: SidebarPinnedItem; bot: BotProfile };
+export type ResolvedPinnedItem = { ref: SidebarPinnedItem; agent: AgentProfile };
 
 export function Sidebar(props: SidebarProps) {
   const scope = createSidebarScope(props);
   return (
     <SidebarScopeContext value={scope}>
       <aside
-        id="bot-sidebar"
-        aria-label="Bot navigation"
+        id="agent-sidebar"
+        aria-label="Agent navigation"
         class={["sidebar panel-edge", { "sidebar-compact": props.compact }]}
       >
         <SidebarTopbar />

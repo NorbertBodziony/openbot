@@ -1,4 +1,4 @@
-import type { BotStore } from "../bot-store";
+import type { AgentStore } from "../agent-store";
 import { mergeProviderHistory, snapshotFromThread } from "../conversation-snapshots";
 import type { MailboxStore } from "../mailbox-store";
 import { decodeThreadResponse } from "../protocol";
@@ -9,11 +9,11 @@ import type { MailboxSync } from "./mailbox-sync";
 import type { ProviderRuntime } from "./provider-runtime";
 
 export interface BootRecoveryHooks {
-  emitError(code: string, error: unknown, botId?: string): void;
+  emitError(code: string, error: unknown, agentId?: string): void;
 }
 
 export interface BootRecoveryOptions {
-  store: BotStore;
+  store: AgentStore;
   mailbox: MailboxStore;
   providers: ProviderRuntime;
   conversation: ConversationRuntime;
@@ -39,7 +39,7 @@ export interface BootRecoveryOptions {
  * `emitError`. Never imports the facade.
  */
 export class BootRecovery {
-  readonly #store: BotStore;
+  readonly #store: AgentStore;
   readonly #mailbox: MailboxStore;
   readonly #providers: ProviderRuntime;
   readonly #conversation: ConversationRuntime;
@@ -61,9 +61,9 @@ export class BootRecovery {
       let terminal: "completed" | "failed" | "interrupted" = "interrupted";
       let reason = "OpenBot restarted before this delivery reached a confirmed terminal state.";
       try {
-        const bot = this.#store.list().find((candidate) => candidate.id === delivery.recipientBotId);
-        const client = bot ? this.#providers.clientForBot(bot) : null;
-        const session = bot ? this.#store.activeProviderSession(bot.id) : null;
+        const agent = this.#store.list().find((candidate) => candidate.id === delivery.recipientAgentId);
+        const client = agent ? this.#providers.clientForAgent(agent) : null;
+        const session = agent ? this.#store.activeProviderSession(agent.id) : null;
         if (session && client) {
           const response = await client.request(
             "thread/read",
@@ -90,9 +90,9 @@ export class BootRecovery {
         // Conservatively keep the interrupted result; never repeat uncertain side effects.
       }
       await this.#mailbox.markTerminal(delivery.id, terminal, terminal === "completed" ? null : reason);
-      const bot = this.#store.list().find((candidate) => candidate.id === delivery.recipientBotId);
-      if (bot?.threadId) {
-        const snapshot = this.#store.database.readConversation(bot.id, bot.threadId);
+      const agent = this.#store.list().find((candidate) => candidate.id === delivery.recipientAgentId);
+      if (agent?.threadId) {
+        const snapshot = this.#store.database.readConversation(agent.id, agent.threadId);
         snapshot.activeTurnId = null;
         for (const message of snapshot.messages) {
           if (message.turnId === delivery.turnId && message.status === "streaming") {
@@ -105,14 +105,14 @@ export class BootRecovery {
           status: terminal,
         });
       }
-      this.#mailboxSync.emitQueue(delivery.recipientBotId);
+      this.#mailboxSync.emitQueue(delivery.recipientAgentId);
     }
   }
 
   recoverPersistedTurns(): void {
-    for (const bot of this.#store.list()) {
-      if (!bot.threadId) continue;
-      const snapshot = this.#store.database.readConversation(bot.id, bot.threadId);
+    for (const agent of this.#store.list()) {
+      if (!agent.threadId) continue;
+      const snapshot = this.#store.database.readConversation(agent.id, agent.threadId);
       const turnId = snapshot.activeTurnId;
       let changed = false;
       if (turnId) {
@@ -132,15 +132,15 @@ export class BootRecovery {
       }
       if (!changed) continue;
       const persisted = this.#store.database.persistConversation(snapshot, "turn.interrupted-by-restart", { turnId });
-      this.#conversation.setSnapshot(bot.id, persisted);
+      this.#conversation.setSnapshot(agent.id, persisted);
     }
   }
 
   async backfillProviderHistory(): Promise<void> {
-    for (const bot of this.#store.list()) {
-      if (!bot.threadId) continue;
-      const session = this.#store.activeProviderSession(bot.id);
-      const client = this.#providers.clientForBot(bot);
+    for (const agent of this.#store.list()) {
+      if (!agent.threadId) continue;
+      const session = this.#store.activeProviderSession(agent.id);
+      const client = this.#providers.clientForAgent(agent);
       if (!session || !client) continue;
       try {
         const response = await client.request(
@@ -148,26 +148,26 @@ export class BootRecovery {
           { threadId: session.externalSessionId, includeTurns: true },
           decodeThreadResponse,
         );
-        const imported = snapshotFromThread(bot.id, response.thread, (deliveryId) =>
+        const imported = snapshotFromThread(agent.id, response.thread, (deliveryId) =>
           this.#mailbox.getDelivery(deliveryId),
         );
-        imported.threadId = bot.threadId;
-        const current = this.#store.database.readConversation(bot.id, bot.threadId);
+        imported.threadId = agent.threadId;
+        const current = this.#store.database.readConversation(agent.id, agent.threadId);
         const merged = mergeProviderHistory(current, imported);
         this.#mailboxSync.syncMailboxMessages(merged);
         if (conversationContentSignature(merged) === conversationContentSignature(current)) {
-          const live = this.#conversation.snapshot(bot.id);
-          if (!live?.activeTurnId) this.#conversation.setSnapshot(bot.id, current);
+          const live = this.#conversation.snapshot(agent.id);
+          if (!live?.activeTurnId) this.#conversation.setSnapshot(agent.id, current);
           continue;
         }
         const persisted = this.#store.database.persistConversation(merged, "provider-history.backfilled", {
           provider: session.provider,
           externalSessionId: session.externalSessionId,
         });
-        const live = this.#conversation.snapshot(bot.id);
-        if (!live?.activeTurnId) this.#conversation.setSnapshot(bot.id, persisted);
+        const live = this.#conversation.snapshot(agent.id);
+        if (!live?.activeTurnId) this.#conversation.setSnapshot(agent.id, persisted);
       } catch (error) {
-        this.#hooks.emitError("provider_history_backfill_pending", error, bot.id);
+        this.#hooks.emitError("provider_history_backfill_pending", error, agent.id);
       }
     }
   }

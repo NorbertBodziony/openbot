@@ -1,12 +1,12 @@
 import {
   type AgentEvent,
-  type BotSummary,
+  type AgentSummary,
   type ConversationMessage,
   type ConversationSnapshot,
-  type CreateBotInput,
+  type CreateAgentInput,
   isAvatarHue,
   type TeamRealtimeEvent,
-  type UpdateBotInput,
+  type UpdateAgentInput,
 } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import type { TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
@@ -47,27 +47,27 @@ import {
 } from "@/features/workspace/components/remote-team-transport";
 import { trustedHostKeys } from "@/features/workspace/model/trusted-host-keys";
 import {
-  MAX_PINNED_BOTS,
-  type MobileBot,
+  MAX_PINNED_AGENTS,
+  type MobileAgent,
   type MobileServer,
   type MobileServerDirectoryState,
   type MobileWorkspaceContextValue,
 } from "@/features/workspace/model/workspace-types";
 
 export type {
-  MobileBot,
+  MobileAgent,
   MobileServer,
   MobileServerDirectoryState,
   MobileServerKind,
   MobileServerState,
   MobileWorkspaceContextValue,
-  ToggleBotPinResult,
+  ToggleAgentPinResult,
 } from "@/features/workspace/model/workspace-types";
-export { MAX_PINNED_BOTS } from "@/features/workspace/model/workspace-types";
+export { MAX_PINNED_AGENTS } from "@/features/workspace/model/workspace-types";
 
 const SERVER_ACCENTS = ["#cdadec", "#6960f1", "#e3b866", "#5b9ce2", "#85c7a2"] as const;
-type RemoteBot = Pick<
-  BotSummary,
+type RemoteAgent = Pick<
+  AgentSummary,
   "id" | "name" | "title" | "description" | "preview" | "updatedAt" | "avatarSeed" | "avatarHue"
 >;
 const EMPTY_SERVER: MobileServer = {
@@ -112,9 +112,9 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
   const [serverDirectoryError, setServerDirectoryError] = useState<string | null>(null);
   const serversRef = useRef(servers);
   serversRef.current = servers;
-  const [bots, setBots] = useState<MobileBot[]>([]);
-  // Keep former bot IDs too, so leaving also removes cached chats of deleted bots.
-  const serverBotIds = useRef(new Map<string, Set<string>>());
+  const [agents, setAgents] = useState<MobileAgent[]>([]);
+  // Keep former agent IDs too, so leaving also removes cached chats of deleted agents.
+  const serverAgentIds = useRef(new Map<string, Set<string>>());
   const removedServers = useRef(new Set<string>());
   const readRefreshSequence = useRef(0);
   const serverCapabilities = useRef(new Map<string, string[]>());
@@ -133,10 +133,10 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
     [session.apiUrl, session.user.id],
   );
   const [preferences, setPreferences] = useState<Record<string, RemoteWorkspacePreferences>>({});
-  const hiddenBotIds = (activeServerId ? preferences[activeServerId]?.hidden : null) ?? [];
-  const pinnedBotIds = (activeServerId ? preferences[activeServerId]?.pinned : null) ?? [];
+  const hiddenAgentIds = (activeServerId ? preferences[activeServerId]?.hidden : null) ?? [];
+  const pinnedAgentIds = (activeServerId ? preferences[activeServerId]?.pinned : null) ?? [];
   const readWrites = useRef(new Map<string, Promise<void>>());
-  const [unreadBotIds, setUnreadBotIds] = useState<string[]>([]);
+  const [unreadAgentIds, setUnreadAgentIds] = useState<string[]>([]);
 
   const installHosts = useCallback((hosts: RemoteTeamHost[]) => {
     setServers((current) => {
@@ -190,13 +190,13 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
     [],
   );
 
-  const replaceServerBots = useCallback((serverId: string, summaries: RemoteBot[]) => {
-    const knownIds = serverBotIds.current.get(serverId) ?? new Set<string>();
-    for (const bot of summaries) knownIds.add(bot.id);
-    serverBotIds.current.set(serverId, knownIds);
-    setBots((current) => [
-      ...current.filter((bot) => bot.serverId !== serverId),
-      ...summaries.map((bot) => projectBot(serverId, bot)),
+  const replaceServerAgents = useCallback((serverId: string, summaries: RemoteAgent[]) => {
+    const knownIds = serverAgentIds.current.get(serverId) ?? new Set<string>();
+    for (const agent of summaries) knownIds.add(agent.id);
+    serverAgentIds.current.set(serverId, knownIds);
+    setAgents((current) => [
+      ...current.filter((agent) => agent.serverId !== serverId),
+      ...summaries.map((agent) => projectAgent(serverId, agent)),
     ]);
   }, []);
 
@@ -219,21 +219,21 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
       }
       serverCapabilities.current.set(server.id, compatibility.capabilities);
       connectionStage.current = "agents";
-      const summaries = await request("GET", "/v1/agents", decodeBotSummaries);
+      const summaries = await request("GET", "/v1/agents", decodeAgentSummaries);
       if (currentGeneration !== loadGeneration.current) return;
-      replaceServerBots(server.id, summaries);
+      replaceServerAgents(server.id, summaries);
       const readSequence = ++readRefreshSequence.current;
       connectionStage.current = "reads";
       const reads = await request("GET", "/v1/agents/conversation-reads", decodeConversationReads);
       if (currentGeneration !== loadGeneration.current) return;
       if (readSequence === readRefreshSequence.current) {
-        setUnreadBotIds((current) => mergeRemoteUnreadIds(current, reads));
+        setUnreadAgentIds((current) => mergeRemoteUnreadIds(current, reads));
       }
       connectionStage.current = "conversations";
       await resyncRemoteConversations({
-        botIds: summaries.map((bot) => bot.id),
+        agentIds: summaries.map((agent) => agent.id),
         cached: conversationsRef.current,
-        load: (botId) => request("GET", `/v1/agents/${encodeURIComponent(botId)}/conversation`, decodeConversation),
+        load: (agentId) => request("GET", `/v1/agents/${encodeURIComponent(agentId)}/conversation`, decodeConversation),
         apply: (snapshot) => setConversations((current) => storeNewestSnapshot(current, snapshot)),
         isCurrent: () => currentGeneration === loadGeneration.current,
       });
@@ -245,7 +245,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
         ),
       );
     },
-    [replaceServerBots, request, preferenceStore],
+    [replaceServerAgents, request, preferenceStore],
   );
 
   useEffect(() => {
@@ -306,9 +306,13 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
   }, []);
 
   const loadConversation = useCallback(
-    async (botId: string) => {
+    async (agentId: string) => {
       const generation = loadGeneration.current;
-      const snapshot = await request("GET", `/v1/agents/${encodeURIComponent(botId)}/conversation`, decodeConversation);
+      const snapshot = await request(
+        "GET",
+        `/v1/agents/${encodeURIComponent(agentId)}/conversation`,
+        decodeConversation,
+      );
       if (generation === loadGeneration.current) setConversations((current) => storeNewestSnapshot(current, snapshot));
       return snapshot;
     },
@@ -320,7 +324,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
     const generation = loadGeneration.current;
     const reads = await request("GET", "/v1/agents/conversation-reads", decodeConversationReads);
     if (sequence !== readRefreshSequence.current || generation !== loadGeneration.current) return;
-    setUnreadBotIds((current) => mergeRemoteUnreadIds(current, reads));
+    setUnreadAgentIds((current) => mergeRemoteUnreadIds(current, reads));
   }, [request]);
 
   const handleTeamEvent = useCallback(
@@ -333,15 +337,15 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
       ) {
         void refreshConversationReads().catch(() => undefined);
       }
-      if (event.type === "bots-changed") replaceServerBots(serverId, event.bots);
+      if (event.type === "agents-changed") replaceServerAgents(serverId, event.agents);
       else if (event.type === "conversation") {
-        const knownIds = serverBotIds.current.get(serverId) ?? new Set<string>();
-        knownIds.add(event.snapshot.botId);
-        serverBotIds.current.set(serverId, knownIds);
+        const knownIds = serverAgentIds.current.get(serverId) ?? new Set<string>();
+        knownIds.add(event.snapshot.agentId);
+        serverAgentIds.current.set(serverId, knownIds);
         setConversations((current) => storeNewestSnapshot(current, event.snapshot));
       } else if (event.type === "conversation-delta") {
         setConversations((current) => {
-          const snapshot = current[event.botId];
+          const snapshot = current[event.agentId];
           if (!snapshot || event.revision <= snapshot.revision) return current;
           const messageIndex = snapshot.messages.findIndex((message) => message.id === event.messageId);
           const messages = [...snapshot.messages];
@@ -362,7 +366,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
           }
           return {
             ...current,
-            [event.botId]: {
+            [event.agentId]: {
               ...snapshot,
               threadId: event.threadId,
               activeTurnId: event.turnId,
@@ -375,22 +379,23 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
         const readState = event.page.readState;
         if (readState) {
           readRefreshSequence.current += 1;
-          setUnreadBotIds((current) => mergeRemoteUnreadIds(current, { [event.page.botId]: readState }));
+          setUnreadAgentIds((current) => mergeRemoteUnreadIds(current, { [event.page.agentId]: readState }));
         } else void refreshConversationReads().catch(() => undefined);
-        if (conversationsRef.current[event.page.botId]) void loadConversation(event.page.botId).catch(() => undefined);
+        if (conversationsRef.current[event.page.agentId])
+          void loadConversation(event.page.agentId).catch(() => undefined);
       } else if (event.type === "conversation-invalidated" || event.type === "turn-completed") {
-        if (conversationsRef.current[event.botId]) void loadConversation(event.botId).catch(() => undefined);
+        if (conversationsRef.current[event.agentId]) void loadConversation(event.agentId).catch(() => undefined);
       } else if (event.type === "team-identity") {
         setServers((current) =>
           current.map((server) => (server.id === serverId ? { ...server, name: event.serverName } : server)),
         );
       }
     },
-    [loadConversation, replaceServerBots, refreshConversationReads],
+    [loadConversation, replaceServerAgents, refreshConversationReads],
   );
 
-  const markBotRead = useCallback(
-    (botId: string, visibleMessageId?: string | null) => {
+  const markAgentRead = useCallback(
+    (agentId: string, visibleMessageId?: string | null) => {
       if (
         visibleMessageId === null &&
         (!activeServerId ||
@@ -401,36 +406,36 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
       }
       const sequence = ++readRefreshSequence.current;
       const generation = loadGeneration.current;
-      setUnreadBotIds((current) =>
-        visibleMessageId === null ? [...new Set([...current, botId])] : current.filter((id) => id !== botId),
+      setUnreadAgentIds((current) =>
+        visibleMessageId === null ? [...new Set([...current, agentId])] : current.filter((id) => id !== agentId),
       );
-      const write = (readWrites.current.get(botId) ?? Promise.resolve())
+      const write = (readWrites.current.get(agentId) ?? Promise.resolve())
         .then(async () => {
           if (generation !== loadGeneration.current) return;
           const snapshot =
             visibleMessageId !== undefined
               ? null
-              : (conversationsRef.current[botId] ?? (await loadConversation(botId)));
+              : (conversationsRef.current[agentId] ?? (await loadConversation(agentId)));
           if (generation !== loadGeneration.current) return;
           const throughMessageId = visibleMessageId !== undefined ? visibleMessageId : snapshot?.messages.at(-1)?.id;
           if (throughMessageId === undefined) return;
           const reads = await request(
             "POST",
-            `/v1/agents/${encodeURIComponent(botId)}/conversation/${visibleMessageId === null ? "unread" : "read"}`,
-            (value) => decodeConversationReads({ [botId]: value }),
+            `/v1/agents/${encodeURIComponent(agentId)}/conversation/${visibleMessageId === null ? "unread" : "read"}`,
+            (value) => decodeConversationReads({ [agentId]: value }),
             visibleMessageId === null ? {} : { throughMessageId },
           );
           if (generation === loadGeneration.current && sequence === readRefreshSequence.current) {
-            setUnreadBotIds((current) => mergeRemoteUnreadIds(current, reads));
+            setUnreadAgentIds((current) => mergeRemoteUnreadIds(current, reads));
           }
         })
         .catch(() => {
           if (generation === loadGeneration.current) void refreshConversationReads().catch(() => undefined);
           if (visibleMessageId === null) Alert.alert("Could not mark unread", "Reconnect to the server and try again.");
         });
-      readWrites.current.set(botId, write);
+      readWrites.current.set(agentId, write);
       void write.finally(() => {
-        if (readWrites.current.get(botId) === write) readWrites.current.delete(botId);
+        if (readWrites.current.get(agentId) === write) readWrites.current.delete(agentId);
       });
     },
     [request, refreshConversationReads, loadConversation, activeServerId],
@@ -457,14 +462,14 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
       servers,
       serverDirectoryState,
       serverDirectoryError,
-      bots,
+      agents,
       activeServer,
-      activeBots: preferences[activeServer.id]
-        ? bots.filter((bot) => bot.serverId === activeServer.id && !hiddenBotIds.includes(bot.id))
+      activeAgents: preferences[activeServer.id]
+        ? agents.filter((agent) => agent.serverId === activeServer.id && !hiddenAgentIds.includes(agent.id))
         : [],
-      hiddenBots: bots.filter((bot) => bot.serverId === activeServer.id && hiddenBotIds.includes(bot.id)),
-      pinnedBotIds,
-      unreadBotIds,
+      hiddenAgents: agents.filter((agent) => agent.serverId === activeServer.id && hiddenAgentIds.includes(agent.id)),
+      pinnedAgentIds,
+      unreadAgentIds,
       conversations,
       selectServer: setActiveServerId,
       leaveServer: async (serverId) => {
@@ -473,8 +478,8 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
         await directory.leaveHost(server.id, server.membershipId);
         removedServers.current.add(serverId);
         directoryGeneration.current += 1;
-        const removedIds = serverBotIds.current.get(serverId) ?? new Set<string>();
-        serverBotIds.current.delete(serverId);
+        const removedIds = serverAgentIds.current.get(serverId) ?? new Set<string>();
+        serverAgentIds.current.delete(serverId);
         if (activeServerId === serverId) {
           recovery.current?.dispose();
           loadGeneration.current += 1;
@@ -482,12 +487,12 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
           setActiveServerId(session.host?.hostId ?? null);
         }
         setServers((current) => current.filter((candidate) => candidate.id !== serverId));
-        setBots((current) => current.filter((bot) => bot.serverId !== serverId));
+        setAgents((current) => current.filter((agent) => agent.serverId !== serverId));
         setConversations((current) =>
           Object.fromEntries(Object.entries(current).filter(([id]) => !removedIds.has(id))),
         );
         updatePreferences(serverId, () => ({ hidden: [], pinned: [] }));
-        setUnreadBotIds((current) => current.filter((id) => !removedIds.has(id)));
+        setUnreadAgentIds((current) => current.filter((id) => !removedIds.has(id)));
       },
       refreshServers: refreshHosts,
       addRemoteServer: async ({ inviteUrl }) => {
@@ -511,74 +516,79 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
         // Membership is already committed. Directory failure must not reuse the consumed invite.
         void refreshHosts().catch(() => undefined);
       },
-      createBot: async (input: CreateBotInput) => {
-        const created = await request("POST", "/v1/agents", decodeBot, {
+      createAgent: async (input: CreateAgentInput) => {
+        const created = await request("POST", "/v1/agents", decodeAgent, {
           name: input.name,
           description: input.description,
           avatarSeed: input.avatarSeed,
           avatarHue: input.avatarHue,
           initialMessage: input.initialMessage,
         });
-        setBots((current) => [...current.filter((bot) => bot.id !== created.id), projectBot(activeServer.id, created)]);
+        setAgents((current) => [
+          ...current.filter((agent) => agent.id !== created.id),
+          projectAgent(activeServer.id, created),
+        ]);
       },
-      updateBot: async (input: UpdateBotInput) => {
+      updateAgent: async (input: UpdateAgentInput) => {
         const updated = await request(
           "PATCH",
-          `/v1/agents/${encodeURIComponent(input.botId)}`,
-          decodeBot,
-          updateBotPayload(input),
+          `/v1/agents/${encodeURIComponent(input.agentId)}`,
+          decodeAgent,
+          updateAgentPayload(input),
         );
-        setBots((current) => current.map((bot) => (bot.id === updated.id ? projectBot(bot.serverId, updated) : bot)));
+        setAgents((current) =>
+          current.map((agent) => (agent.id === updated.id ? projectAgent(agent.serverId, updated) : agent)),
+        );
       },
-      deleteBot: async (botId) => {
-        await request("DELETE", `/v1/agents/${encodeURIComponent(botId)}`, ignoreResponse);
+      deleteAgent: async (agentId) => {
+        await request("DELETE", `/v1/agents/${encodeURIComponent(agentId)}`, ignoreResponse);
       },
-      duplicateBot: async (botId) => {
-        await request("POST", `/v1/agents/${encodeURIComponent(botId)}/duplicate`, ignoreResponse, {
+      duplicateAgent: async (agentId) => {
+        await request("POST", `/v1/agents/${encodeURIComponent(agentId)}/duplicate`, ignoreResponse, {
           operationId: Crypto.randomUUID(),
         });
       },
       loadConversation,
-      sendMessage: async (botId, text) => {
-        await request("POST", `/v1/agents/${encodeURIComponent(botId)}/messages`, ignoreResponse, {
+      sendMessage: async (agentId, text) => {
+        await request("POST", `/v1/agents/${encodeURIComponent(agentId)}/messages`, ignoreResponse, {
           text,
           attachmentDraftIds: [],
           replyToMessageId: null,
         });
       },
-      hideBot: (botId) => {
+      hideAgent: (agentId) => {
         updatePreferences(activeServer.id, (current) => ({
-          hidden: [...new Set([...current.hidden, botId])],
-          pinned: current.pinned.filter((id) => id !== botId),
+          hidden: [...new Set([...current.hidden, agentId])],
+          pinned: current.pinned.filter((id) => id !== agentId),
         }));
       },
-      unhideBot: (botId) => {
+      unhideAgent: (agentId) => {
         updatePreferences(activeServer.id, (current) => ({
           ...current,
-          hidden: current.hidden.filter((id) => id !== botId),
+          hidden: current.hidden.filter((id) => id !== agentId),
         }));
       },
-      markBotRead,
-      markBotUnread: (botId) => {
-        markBotRead(botId, null);
+      markAgentRead,
+      markAgentUnread: (agentId) => {
+        markAgentRead(agentId, null);
       },
-      toggleBotPin: (botId) => {
-        if (pinnedBotIds.includes(botId)) {
+      toggleAgentPin: (agentId) => {
+        if (pinnedAgentIds.includes(agentId)) {
           return updatePreferences(activeServer.id, (current) => ({
             ...current,
-            pinned: current.pinned.filter((id) => id !== botId),
+            pinned: current.pinned.filter((id) => id !== agentId),
           }))
             ? "unpinned"
             : "error";
         }
-        const bot = bots.find((item) => item.id === botId);
-        const pinnedOnServer = pinnedBotIds.filter((id) =>
-          bots.some((item) => item.id === id && item.serverId === bot?.serverId),
+        const agent = agents.find((item) => item.id === agentId);
+        const pinnedOnServer = pinnedAgentIds.filter((id) =>
+          agents.some((item) => item.id === id && item.serverId === agent?.serverId),
         );
-        if (pinnedOnServer.length >= MAX_PINNED_BOTS) return "limit";
+        if (pinnedOnServer.length >= MAX_PINNED_AGENTS) return "limit";
         return updatePreferences(activeServer.id, (current) => ({
           ...current,
-          pinned: [...new Set([...current.pinned, botId])],
+          pinned: [...new Set([...current.pinned, agentId])],
         }))
           ? "pinned"
           : "error";
@@ -586,20 +596,20 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
     };
   }, [
     activeServerId,
-    bots,
+    agents,
     conversations,
     directory,
-    hiddenBotIds,
+    hiddenAgentIds,
     loadConversation,
-    markBotRead,
-    pinnedBotIds,
+    markAgentRead,
+    pinnedAgentIds,
     refreshHosts,
     request,
     serverDirectoryError,
     serverDirectoryState,
     servers,
     session.host,
-    unreadBotIds,
+    unreadAgentIds,
     preferences,
     updatePreferences,
   ]);
@@ -645,17 +655,17 @@ export function useMobileWorkspace(): MobileWorkspaceContextValue {
   return value;
 }
 
-function projectBot(serverId: string, bot: RemoteBot): MobileBot {
+function projectAgent(serverId: string, agent: RemoteAgent): MobileAgent {
   return {
-    id: bot.id,
+    id: agent.id,
     serverId,
-    name: bot.name,
-    title: bot.title,
-    description: bot.description,
-    preview: bot.preview,
-    updatedLabel: formatUpdatedAt(bot.updatedAt),
-    avatarSeed: bot.avatarSeed,
-    avatarHue: bot.avatarHue,
+    name: agent.name,
+    title: agent.title,
+    description: agent.description,
+    preview: agent.preview,
+    updatedLabel: formatUpdatedAt(agent.updatedAt),
+    avatarSeed: agent.avatarSeed,
+    avatarHue: agent.avatarHue,
   };
 }
 
@@ -670,7 +680,7 @@ function formatUpdatedAt(value: string | null): string {
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(date);
 }
 
-function decodeBot(value: unknown): RemoteBot {
+function decodeAgent(value: unknown): RemoteAgent {
   if (
     !isDynamicRecord(value) ||
     !isString(value.id) ||
@@ -682,7 +692,7 @@ function decodeBot(value: unknown): RemoteBot {
     !isString(value.avatarSeed) ||
     (value.avatarHue !== null && !isAvatarHue(value.avatarHue))
   ) {
-    throw new Error("The server returned an invalid bot.");
+    throw new Error("The server returned an invalid agent.");
   }
   return {
     id: value.id,
@@ -696,15 +706,15 @@ function decodeBot(value: unknown): RemoteBot {
   };
 }
 
-function decodeBotSummaries(value: unknown): RemoteBot[] {
-  if (!Array.isArray(value)) throw new Error("The server returned an invalid bot list.");
-  return value.map(decodeBot);
+function decodeAgentSummaries(value: unknown): RemoteAgent[] {
+  if (!Array.isArray(value)) throw new Error("The server returned an invalid agent list.");
+  return value.map(decodeAgent);
 }
 
 function decodeConversation(value: unknown): ConversationSnapshot {
   if (
     !isDynamicRecord(value) ||
-    !isString(value.botId) ||
+    !isString(value.agentId) ||
     (value.threadId !== null && !isString(value.threadId)) ||
     (value.activeTurnId !== null && !isString(value.activeTurnId)) ||
     !isNumber(value.revision) ||
@@ -715,7 +725,7 @@ function decodeConversation(value: unknown): ConversationSnapshot {
     throw new Error("The server returned an invalid conversation.");
   }
   return {
-    botId: value.botId,
+    agentId: value.agentId,
     threadId: value.threadId,
     activeTurnId: value.activeTurnId,
     revision: value.revision,
@@ -726,7 +736,7 @@ function decodeConversation(value: unknown): ConversationSnapshot {
 function decodeConversationReads(value: unknown): Record<string, { unreadCount: number }> {
   if (!isDynamicRecord(value)) throw new Error("The server returned invalid read states.");
   const reads: Record<string, { unreadCount: number }> = {};
-  for (const [botId, readState] of Object.entries(value)) {
+  for (const [agentId, readState] of Object.entries(value)) {
     if (
       !isDynamicRecord(readState) ||
       !isNumber(readState.unreadCount) ||
@@ -735,7 +745,7 @@ function decodeConversationReads(value: unknown): Record<string, { unreadCount: 
     ) {
       throw new Error("The server returned an invalid read state.");
     }
-    reads[botId] = { unreadCount: readState.unreadCount };
+    reads[agentId] = { unreadCount: readState.unreadCount };
   }
   return reads;
 }
@@ -776,9 +786,9 @@ function isConversationSource(value: unknown): value is NonNullable<Conversation
 
 function ignoreResponse(): void {}
 
-function updateBotPayload(input: UpdateBotInput): TeamProtocolV2Json {
+function updateAgentPayload(input: UpdateAgentInput): TeamProtocolV2Json {
   return {
-    botId: input.botId,
+    agentId: input.agentId,
     ...(input.name === undefined ? {} : { name: input.name }),
     ...(input.title === undefined ? {} : { title: input.title }),
     ...(input.description === undefined ? {} : { description: input.description }),
@@ -795,8 +805,8 @@ function storeNewestSnapshot(
   conversations: Record<string, ConversationSnapshot>,
   snapshot: ConversationSnapshot,
 ): Record<string, ConversationSnapshot> {
-  const current = conversations[snapshot.botId];
+  const current = conversations[snapshot.agentId];
   return current && current.revision > snapshot.revision
     ? conversations
-    : { ...conversations, [snapshot.botId]: snapshot };
+    : { ...conversations, [snapshot.agentId]: snapshot };
 }

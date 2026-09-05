@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
   AgentEvent,
-  BotSummary,
+  AgentSummary,
   ConversationMessage,
   ConversationSnapshot,
   CreateRoutineInput,
@@ -19,7 +19,7 @@ import type {
 import { routineConversationEventItemType, routineRunConversationEventItemType } from "@openbot/contracts/ipc";
 import { isBoolean } from "@openbot/contracts/runtime-values";
 import { AgentRoutineStore } from "../agent-routine-store";
-import type { BotStore } from "../bot-store";
+import type { AgentStore } from "../agent-store";
 import { sortConversationMessages } from "../conversation-snapshots";
 import type { MailboxStore } from "../mailbox-store";
 import type { DynamicToolCallParams } from "../protocol";
@@ -30,8 +30,8 @@ import {
   localTimezone,
   type OpenBotToolResponse,
   openBotToolResult,
+  routineToolAgentId,
   routineToolArguments,
-  routineToolBotId,
   routineToolSchedule,
   routineToolString,
 } from "./routine-tools";
@@ -48,25 +48,25 @@ export interface RoutineMutationOptions {
  */
 export interface RoutineHooks {
   emit(event: AgentEvent): void;
-  emitError(code: string, error: unknown, botId?: string): void;
-  emitQueue(botId: string): void;
-  scheduleDrain(botId: string): void;
-  interrupt(botId: string, turnId: string): Promise<void>;
-  /** The in-flight drain for a bot, so a deletion can wait for a run that is still starting. */
-  awaitDrain(botId: string): Promise<void> | undefined;
+  emitError(code: string, error: unknown, agentId?: string): void;
+  emitQueue(agentId: string): void;
+  scheduleDrain(agentId: string): void;
+  interrupt(agentId: string, turnId: string): Promise<void>;
+  /** The in-flight drain for an agent, so a deletion can wait for a run that is still starting. */
+  awaitDrain(agentId: string): Promise<void> | undefined;
   syncMailboxMessages(snapshot: ConversationSnapshot): void;
-  listBots(): BotSummary[];
+  listAgents(): AgentSummary[];
   /**
-   * Bots mid-duplication, which never fire: a half-copied agent is not yet a running one, and its
+   * Agents mid-duplication, which never fire: a half-copied agent is not yet a running one, and its
    * routines would otherwise start against a workspace that is still being written.
    */
-  pendingDuplicateBots(): ReadonlySet<string>;
+  pendingDuplicateAgents(): ReadonlySet<string>;
   /** The timer only arms while the service is initialized and not stopping. */
   isRunning(): boolean;
 }
 
 export interface RoutineSchedulerOptions {
-  store: BotStore;
+  store: AgentStore;
   mailbox: MailboxStore;
   conversation: ConversationRuntime;
   hooks: RoutineHooks;
@@ -86,17 +86,17 @@ export interface RoutineSchedulerOptions {
  * user can tell a stalled routine from a working one.
  */
 export class RoutineScheduler {
-  readonly #store: BotStore;
+  readonly #store: AgentStore;
   readonly #mailbox: MailboxStore;
   readonly #conversation: ConversationRuntime;
   readonly #hooks: RoutineHooks;
   readonly #routines: AgentRoutineStore;
   /**
-   * A deletion has to interrupt live runs before it can remove their routine, so it holds the bot
+   * A deletion has to interrupt live runs before it can remove their routine, so it holds the agent
    * out of the drain loop while it does — otherwise the queue starts the next delivery for a
    * routine that is halfway deleted.
    */
-  readonly #deletionBots = new Set<string>();
+  readonly #deletionAgents = new Set<string>();
   #timer: NodeJS.Timeout | null = null;
 
   constructor(options: RoutineSchedulerOptions) {
@@ -108,26 +108,26 @@ export class RoutineScheduler {
   }
 
   /** The scheduler's clause in the drain mute registry. */
-  mayDrain(botId: string): boolean {
-    return !this.#deletionBots.has(botId);
+  mayDrain(agentId: string): boolean {
+    return !this.#deletionAgents.has(agentId);
   }
 
-  list(botId: string): Routine[] {
-    this.#conversation.requireKnownBot(botId);
-    return this.#routines.list(botId);
+  list(agentId: string): Routine[] {
+    this.#conversation.requireKnownAgent(agentId);
+    return this.#routines.list(agentId);
   }
 
-  /** Unchecked read for callers that already hold the bot, such as the duplication signature. */
-  listFor(botId: string): Routine[] {
-    return this.#routines.list(botId);
+  /** Unchecked read for callers that already hold the agent, such as the duplication signature. */
+  listFor(agentId: string): Routine[] {
+    return this.#routines.list(agentId);
   }
 
   runForDelivery(deliveryId: string): RoutineRun | null {
     return this.#routines.runForDelivery(deliveryId);
   }
 
-  duplicate(sourceBotId: string, targetBotId: string, now: Date): Map<string, Routine> {
-    return this.#routines.duplicate(sourceBotId, targetBotId, now);
+  duplicate(sourceAgentId: string, targetAgentId: string, now: Date): Map<string, Routine> {
+    return this.#routines.duplicate(sourceAgentId, targetAgentId, now);
   }
 
   skipMissed(now: Date): void {
@@ -135,51 +135,51 @@ export class RoutineScheduler {
   }
 
   create(input: CreateRoutineInput, options: RoutineMutationOptions = {}): Routine {
-    this.#conversation.requireKnownBot(input.botId);
+    this.#conversation.requireKnownAgent(input.agentId);
     const routine =
       options.recordConversationEvent === false
         ? this.#routines.create(input)
         : this.#mutateWithConversation(
-            input.botId,
+            input.agentId,
             "created",
             () => this.#routines.create(input),
             (created) => created,
             options.turnId,
           );
-    this.stateChanged(input.botId);
+    this.stateChanged(input.agentId);
     this.arm();
     return routine;
   }
 
   update(input: UpdateRoutineInput, options: RoutineMutationOptions = {}): Routine {
-    this.#conversation.requireKnownBot(input.botId);
+    this.#conversation.requireKnownAgent(input.agentId);
     const routine =
       options.recordConversationEvent === false
         ? this.#routines.update(input)
         : this.#mutateWithConversation(
-            input.botId,
+            input.agentId,
             "updated",
             () => this.#routines.update(input),
             (updated) => updated,
             options.turnId,
           );
-    this.stateChanged(input.botId);
+    this.stateChanged(input.agentId);
     this.arm();
     return routine;
   }
 
   async delete(input: DeleteRoutineInput, options: RoutineMutationOptions = {}): Promise<void> {
-    this.#conversation.requireKnownBot(input.botId);
-    const routine = this.#routines.get(input.botId, input.routineId);
+    this.#conversation.requireKnownAgent(input.agentId);
+    const routine = this.#routines.get(input.agentId, input.routineId);
     if (!routine) throw new Error("This routine no longer exists.");
-    if (this.#deletionBots.has(input.botId)) {
+    if (this.#deletionAgents.has(input.agentId)) {
       throw new Error("Another routine deletion is already in progress for this agent.");
     }
-    this.#deletionBots.add(input.botId);
+    this.#deletionAgents.add(input.agentId);
     try {
       const activeRuns = await this.#interruptRunsBeforeDeletion(
-        input.botId,
-        this.#routines.activeRuns(input.botId, input.routineId),
+        input.agentId,
+        this.#routines.activeRuns(input.agentId, input.routineId),
       );
       if (options.recordConversationEvent === false) {
         withDatabaseTransaction(
@@ -188,12 +188,12 @@ export class RoutineScheduler {
             for (const run of activeRuns) {
               if (run.status === "queued" && run.deliveryId) {
                 if (this.#mailbox.getDelivery(run.deliveryId)?.delivery.status === "queued") {
-                  this.#mailbox.cancelNow(input.botId, run.deliveryId);
+                  this.#mailbox.cancelNow(input.agentId, run.deliveryId);
                 }
               }
               this.#routines.updateRunStatus(run.id, "cancelled");
             }
-            this.#routines.delete(input.botId, input.routineId);
+            this.#routines.delete(input.agentId, input.routineId);
           },
           // Deliberately narrower than the conversation variants: this branch records no
           // conversation event, so there is no snapshot to restore — only the mailbox.
@@ -201,9 +201,9 @@ export class RoutineScheduler {
         );
       } else {
         this.#mutateWithConversation(
-          input.botId,
+          input.agentId,
           "deleted",
-          () => this.#routines.delete(input.botId, input.routineId),
+          () => this.#routines.delete(input.agentId, input.routineId),
           () => routine,
           options.turnId,
           {
@@ -211,7 +211,7 @@ export class RoutineScheduler {
               for (const run of activeRuns) {
                 if (run.status === "queued" && run.deliveryId) {
                   if (this.#mailbox.getDelivery(run.deliveryId)?.delivery.status === "queued") {
-                    this.#mailbox.cancelNow(input.botId, run.deliveryId);
+                    this.#mailbox.cancelNow(input.agentId, run.deliveryId);
                   }
                 }
                 this.#appendRunTransition(snapshot, run, "cancelled");
@@ -221,49 +221,49 @@ export class RoutineScheduler {
           },
         );
       }
-      this.#hooks.emitQueue(input.botId);
-      this.stateChanged(input.botId);
+      this.#hooks.emitQueue(input.agentId);
+      this.stateChanged(input.agentId);
       this.arm();
     } finally {
-      this.#deletionBots.delete(input.botId);
-      if (this.#mailbox.nextQueued(input.botId)) this.#hooks.scheduleDrain(input.botId);
+      this.#deletionAgents.delete(input.agentId);
+      if (this.#mailbox.nextQueued(input.agentId)) this.#hooks.scheduleDrain(input.agentId);
     }
   }
 
   async test(input: TestRoutineInput): Promise<RoutineRun> {
-    this.#conversation.requireKnownBot(input.botId);
-    const routine = this.#routines.get(input.botId, input.routineId);
+    this.#conversation.requireKnownAgent(input.agentId);
+    const routine = this.#routines.get(input.agentId, input.routineId);
     if (!routine) throw new Error("This routine no longer exists.");
     const run = this.#routines.createRun(routine, null, "manual", new Date().toISOString());
     await this.#enqueueRun(run);
-    this.stateChanged(input.botId);
-    return this.#routines.listRuns(input.botId, input.routineId, 1)[0] ?? run;
+    this.stateChanged(input.agentId);
+    return this.#routines.listRuns(input.agentId, input.routineId, 1)[0] ?? run;
   }
 
   listRuns(input: ListRoutineRunsInput): RoutineRun[] {
-    this.#conversation.requireKnownBot(input.botId);
-    if (!this.#routines.get(input.botId, input.routineId)) throw new Error("This routine no longer exists.");
-    return this.#routines.listRuns(input.botId, input.routineId, input.limit);
+    this.#conversation.requireKnownAgent(input.agentId);
+    if (!this.#routines.get(input.agentId, input.routineId)) throw new Error("This routine no longer exists.");
+    return this.#routines.listRuns(input.agentId, input.routineId, input.limit);
   }
 
   /** The six `openbot` routine tools. Returns null when `tool` is not one of them. */
-  async handleTool(params: DynamicToolCallParams, senderBotId: string): Promise<OpenBotToolResponse | null> {
+  async handleTool(params: DynamicToolCallParams, senderAgentId: string): Promise<OpenBotToolResponse | null> {
     if (params.tool === "list_routines") {
-      const args = routineToolArguments(params.arguments, ["botId"]);
-      const botId = routineToolBotId(args, senderBotId);
-      return openBotToolResult({ routines: this.list(botId) });
+      const args = routineToolArguments(params.arguments, ["agentId"]);
+      const agentId = routineToolAgentId(args, senderAgentId);
+      return openBotToolResult({ routines: this.list(agentId) });
     }
 
     if (params.tool === "create_routine") {
       const args = routineToolArguments(params.arguments, [
-        "botId",
+        "agentId",
         "name",
         "instruction",
         "schedule",
         "active",
         "timezone",
       ]);
-      const botId = routineToolBotId(args, senderBotId);
+      const agentId = routineToolAgentId(args, senderAgentId);
       const active = args.active === undefined ? true : args.active;
       if (!isBoolean(active)) throw new Error("active must be a boolean.");
       const timezone =
@@ -272,7 +272,7 @@ export class RoutineScheduler {
           : routineToolString(args.timezone, "timezone", 128, "A routine timezone is required.");
       const routine = this.create(
         {
-          botId,
+          agentId,
           name: routineToolString(args.name, "name", INPUT_LIMITS.routineName, "A routine name is required."),
           instruction: routineToolString(
             args.instruction,
@@ -284,14 +284,14 @@ export class RoutineScheduler {
           timezone,
           schedule: routineToolSchedule(args.schedule),
         },
-        { turnId: botId === senderBotId ? params.turnId : undefined },
+        { turnId: agentId === senderAgentId ? params.turnId : undefined },
       );
       return openBotToolResult(routine);
     }
 
     if (params.tool === "update_routine") {
       const args = routineToolArguments(params.arguments, [
-        "botId",
+        "agentId",
         "routineId",
         "name",
         "instruction",
@@ -299,7 +299,7 @@ export class RoutineScheduler {
         "active",
       ]);
       const input: UpdateRoutineInput = {
-        botId: routineToolBotId(args, senderBotId),
+        agentId: routineToolAgentId(args, senderAgentId),
         routineId: routineToolString(args.routineId, "routineId", INPUT_LIMITS.identifier, "routineId is required."),
       };
       let hasUpdate = false;
@@ -326,32 +326,34 @@ export class RoutineScheduler {
         hasUpdate = true;
       }
       if (!hasUpdate) throw new Error("At least one routine update is required.");
-      return openBotToolResult(this.update(input, { turnId: input.botId === senderBotId ? params.turnId : undefined }));
+      return openBotToolResult(
+        this.update(input, { turnId: input.agentId === senderAgentId ? params.turnId : undefined }),
+      );
     }
 
     if (params.tool === "delete_routine") {
-      const args = routineToolArguments(params.arguments, ["botId", "routineId"]);
-      const botId = routineToolBotId(args, senderBotId);
+      const args = routineToolArguments(params.arguments, ["agentId", "routineId"]);
+      const agentId = routineToolAgentId(args, senderAgentId);
       const routineId = routineToolString(
         args.routineId,
         "routineId",
         INPUT_LIMITS.identifier,
         "routineId is required.",
       );
-      await this.delete({ botId, routineId }, { turnId: botId === senderBotId ? params.turnId : undefined });
-      return openBotToolResult({ deleted: true, botId, routineId });
+      await this.delete({ agentId, routineId }, { turnId: agentId === senderAgentId ? params.turnId : undefined });
+      return openBotToolResult({ deleted: true, agentId, routineId });
     }
 
     if (params.tool === "test_routine") {
-      const args = routineToolArguments(params.arguments, ["botId", "routineId"]);
-      const botId = routineToolBotId(args, senderBotId);
+      const args = routineToolArguments(params.arguments, ["agentId", "routineId"]);
+      const agentId = routineToolAgentId(args, senderAgentId);
       const routineId = routineToolString(
         args.routineId,
         "routineId",
         INPUT_LIMITS.identifier,
         "routineId is required.",
       );
-      return openBotToolResult(await this.test({ botId, routineId }));
+      return openBotToolResult(await this.test({ agentId, routineId }));
     }
 
     return null;
@@ -360,14 +362,14 @@ export class RoutineScheduler {
   async resumePendingRuns(): Promise<void> {
     for (const run of this.#routines.pendingRuns()) {
       await this.#enqueueRun(run).catch((error) => {
-        this.#hooks.emitError("routine_delivery_recovery_failed", error, run.botId);
+        this.#hooks.emitError("routine_delivery_recovery_failed", error, run.agentId);
       });
     }
   }
 
   /**
    * Reconciles one queue delivery with the run it belongs to. Returns whether anything changed, so
-   * the queue emitter can raise a single `routines-changed` for the bot rather than one per
+   * the queue emitter can raise a single `routines-changed` for the agent rather than one per
    * delivery. This dependency is the one the plan accepts: the queue engine stays in the service,
    * and it is the queue that knows a delivery's status changed.
    */
@@ -401,8 +403,8 @@ export class RoutineScheduler {
     this.#transitionInteractionWithReconciliation(run, "running");
   }
 
-  stateChanged(botId: string): void {
-    this.#hooks.emit({ type: "routines-changed", botId });
+  stateChanged(agentId: string): void {
+    this.#hooks.emit({ type: "routines-changed", agentId });
   }
 
   /** Re-derives the next due time across every routine and arms the single timer for it. */
@@ -410,7 +412,7 @@ export class RoutineScheduler {
     if (this.#timer) clearTimeout(this.#timer);
     this.#timer = null;
     if (!this.#hooks.isRunning()) return;
-    const nextDueAt = this.#routines.nextDueAt(this.#hooks.pendingDuplicateBots());
+    const nextDueAt = this.#routines.nextDueAt(this.#hooks.pendingDuplicateAgents());
     if (!nextDueAt) return;
     const delay = Math.max(0, Math.min(new Date(nextDueAt).getTime() - Date.now(), 2_147_000_000));
     this.#timer = setTimeout(() => {
@@ -426,9 +428,9 @@ export class RoutineScheduler {
   }
 
   async #processDue(now = new Date()): Promise<void> {
-    const changedBots = new Set<string>();
+    const changedAgents = new Set<string>();
     try {
-      for (const due of this.#routines.due(now, this.#hooks.pendingDuplicateBots())) {
+      for (const due of this.#routines.due(now, this.#hooks.pendingDuplicateAgents())) {
         let scheduledFor = new Date(due.nextRunAt);
         let nextRunAt = nextRoutineOccurrence(due.schedule, due.routine.timezone, scheduledFor);
         while (nextRunAt.getTime() <= now.getTime()) {
@@ -437,23 +439,23 @@ export class RoutineScheduler {
         }
         const run = this.#routines.createRun(due.routine, due.triggerId, "scheduled", scheduledFor.toISOString());
         this.#routines.advanceTrigger(due.routine.id, due.triggerId, nextRunAt.toISOString());
-        changedBots.add(due.routine.botId);
+        changedAgents.add(due.routine.agentId);
         if (!run.deliveryId) {
           await this.#enqueueRun(run).catch((error) => {
-            this.#hooks.emitError("routine_delivery_failed", error, due.routine.botId);
+            this.#hooks.emitError("routine_delivery_failed", error, due.routine.agentId);
           });
         }
       }
     } catch (error) {
       this.#hooks.emitError("routine_scheduler_failed", error);
     } finally {
-      for (const botId of changedBots) this.stateChanged(botId);
+      for (const agentId of changedAgents) this.stateChanged(agentId);
       this.arm();
     }
   }
 
   async #enqueueRun(run: RoutineRun): Promise<void> {
-    const bot = await this.#store.getOrCreate(run.botId);
+    const agent = await this.#store.getOrCreate(run.agentId);
     try {
       const receipt = await this.#mailbox.enqueue({
         sender: {
@@ -463,7 +465,7 @@ export class RoutineScheduler {
           routineName: run.routineName,
           scheduledFor: run.scheduledFor,
         },
-        recipientBotIds: [bot.id],
+        recipientAgentIds: [agent.id],
         text: run.instruction,
         draftIds: [],
         replyToMessageId: null,
@@ -472,27 +474,27 @@ export class RoutineScheduler {
       const deliveryId = receipt.deliveries[0]?.id;
       if (!deliveryId) throw new Error("Unable to create the routine delivery.");
       this.#routines.attachDelivery(run.id, deliveryId);
-      const snapshot = this.#conversation.ensureSnapshot(bot.id, bot.threadId);
+      const snapshot = this.#conversation.ensureSnapshot(agent.id, agent.threadId);
       this.#hooks.syncMailboxMessages(snapshot);
-      await this.#store.updatePreview(bot.id, run.instruction);
-      this.#hooks.emit({ type: "bots-changed", bots: this.#hooks.listBots() });
+      await this.#store.updatePreview(agent.id, run.instruction);
+      this.#hooks.emit({ type: "agents-changed", agents: this.#hooks.listAgents() });
       this.#conversation.emitConversation(snapshot, "routine.run-queued", { routineId: run.routineId, runId: run.id });
-      this.#hooks.emitQueue(bot.id);
-      this.#hooks.scheduleDrain(bot.id);
+      this.#hooks.emitQueue(agent.id);
+      this.#hooks.scheduleDrain(agent.id);
     } catch (error) {
       this.#transitionRunWithConversation(run, "failed", error instanceof Error ? error.message : String(error));
-      this.stateChanged(run.botId);
+      this.stateChanged(run.agentId);
       throw error;
     }
   }
 
-  async #interruptRunsBeforeDeletion(botId: string, runs: RoutineRun[]): Promise<RoutineRun[]> {
+  async #interruptRunsBeforeDeletion(agentId: string, runs: RoutineRun[]): Promise<RoutineRun[]> {
     const startingRun = runs.find((run) => {
       if (!run.deliveryId) return false;
       const delivery = this.#mailbox.getDelivery(run.deliveryId)?.delivery;
       return delivery?.status === "starting" && !delivery.turnId;
     });
-    if (startingRun) await this.#hooks.awaitDrain(botId);
+    if (startingRun) await this.#hooks.awaitDrain(agentId);
 
     const cancellableRuns: RoutineRun[] = [];
     const activeTurnIds = new Set<string>();
@@ -515,19 +517,19 @@ export class RoutineScheduler {
       activeTurnIds.add(delivery.turnId);
     }
     if (activeTurnIds.size === 0) return cancellableRuns;
-    if (!this.#store.activeProviderSession(botId)) {
+    if (!this.#store.activeProviderSession(agentId)) {
       throw new Error("OpenBot cannot interrupt the active routine run because its provider session is unavailable.");
     }
-    for (const turnId of activeTurnIds) await this.#hooks.interrupt(botId, turnId);
+    for (const turnId of activeTurnIds) await this.#hooks.interrupt(agentId, turnId);
     return cancellableRuns;
   }
 
   #transitionInteractionWithReconciliation(run: RoutineRun, status: "needs-attention" | "running"): void {
     try {
       this.#transitionRunWithConversation(run, status);
-      this.stateChanged(run.botId);
+      this.stateChanged(run.agentId);
     } catch (error) {
-      this.#hooks.emitError("delivery_reconciliation_pending", error, run.botId);
+      this.#hooks.emitError("delivery_reconciliation_pending", error, run.agentId);
       queueMicrotask(() => {
         if (!run.deliveryId) return;
         const current = this.#routines.runForDelivery(run.deliveryId);
@@ -536,9 +538,9 @@ export class RoutineScheduler {
         if (status === "needs-attention" && current.status !== "running") return;
         try {
           this.#transitionRunWithConversation(current, status);
-          this.stateChanged(current.botId);
+          this.stateChanged(current.agentId);
         } catch (retryError) {
-          this.#hooks.emitError("delivery_reconciliation_pending", retryError, current.botId);
+          this.#hooks.emitError("delivery_reconciliation_pending", retryError, current.agentId);
         }
       });
     }
@@ -551,11 +553,11 @@ export class RoutineScheduler {
   ): RoutineRun {
     if (run.status === status && run.error === error) return run;
     const database = this.#store.database;
-    return this.#conversation.withConversationTransaction(run.botId, ({ threadId, snapshot: nextSnapshot }) => {
+    return this.#conversation.withConversationTransaction(run.agentId, ({ threadId, snapshot: nextSnapshot }) => {
       const transition = this.#appendRunTransition(nextSnapshot, run, status, error);
       sortConversationMessages(nextSnapshot.messages);
       nextSnapshot.revision = database.appendConversationMessage({
-        botId: run.botId,
+        agentId: run.agentId,
         threadId,
         activeTurnId: nextSnapshot.activeTurnId,
         message: transition.message,
@@ -587,7 +589,7 @@ export class RoutineScheduler {
   }
 
   #mutateWithConversation<T>(
-    botId: string,
+    agentId: string,
     action: RoutineConversationEventAction,
     mutate: () => T,
     eventRoutine: (result: T) => Pick<Routine, "id" | "name">,
@@ -596,7 +598,7 @@ export class RoutineScheduler {
   ): T {
     const database = this.#store.database;
     return this.#conversation.withConversationTransaction(
-      botId,
+      agentId,
       ({ snapshot: nextSnapshot }) => {
         transactionHooks?.beforeMutate?.(nextSnapshot);
         const result = mutate();

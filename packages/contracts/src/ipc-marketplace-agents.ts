@@ -1,4 +1,4 @@
-import type { BotAvatarHue, BotSummary, RoutineSchedule } from "./ipc-conversation";
+import type { AgentSummary, AvatarHue, RoutineSchedule } from "./ipc-conversation";
 
 export type AgentReviewStatus = "pending" | "approved" | "rejected";
 
@@ -27,7 +27,7 @@ export interface MarketplaceAgentSummary {
   installs: number;
   featured: boolean;
   avatarSeed: string;
-  avatarHue: BotAvatarHue | null;
+  avatarHue: AvatarHue | null;
   avatarUrl: string | null;
   skillCount: number;
   routineCount: number;
@@ -56,7 +56,7 @@ export interface MarketplaceAgentQuery {
 
 export interface AgentSubmission {
   id: string;
-  agentId: string;
+  listingId: string;
   name: string;
   title: string;
   description: string;
@@ -64,7 +64,7 @@ export interface AgentSubmission {
   status: AgentReviewStatus;
   rejectionNote: string | null;
   avatarSeed: string;
-  avatarHue: BotAvatarHue | null;
+  avatarHue: AvatarHue | null;
   avatarUrl: string | null;
   skillCount: number;
   routineCount: number;
@@ -73,29 +73,29 @@ export interface AgentSubmission {
 }
 
 export interface AgentPublicationPreview {
-  botId: string;
+  agentId: string;
   name: string;
   title: string;
   description: string;
   avatarSeed: string;
-  avatarHue: BotAvatarHue | null;
+  avatarHue: AvatarHue | null;
   avatarUrl: string | null;
   skills: MarketplaceAgentSkill[];
   routines: MarketplaceAgentRoutine[];
 }
 
 export interface SubmitMarketplaceAgentInput {
-  botId: string;
-  agentId?: string;
+  agentId: string;
+  listingId?: string;
 }
 
 export interface InstallMarketplaceAgentInput {
-  agentId: string;
-  botId?: string;
+  listingId: string;
+  agentId?: string;
   timezone: string;
   receiptId: string;
 }
 
 export interface InstallMarketplaceAgentResult {
-  bot: BotSummary;
+  agent: AgentSummary;
 }

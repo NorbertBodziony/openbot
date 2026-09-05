@@ -55,7 +55,7 @@ describe("browser remote peer recovery", () => {
     }
   });
 
-  it("rejects a malformed bootstrap response instead of leaving the bot loader pending forever", async () => {
+  it("rejects a malformed bootstrap response instead of leaving the agent loader pending forever", async () => {
     const network = await setupNetwork();
     await network.connect();
     const offline = deferred();
@@ -116,7 +116,7 @@ describe("browser remote peer recovery", () => {
       await closed;
       await expect(reconnecting).resolves.toMatchObject({ ok: true });
       await expect(
-        network.runtime.execute({ id: "bots", type: "request", method: "GET", path: "/v1/agents", body: {} }),
+        network.runtime.execute({ id: "agents", type: "request", method: "GET", path: "/v1/agents", body: {} }),
       ).resolves.toMatchObject({ ok: true, status: 200, body: [] });
       await network.runtime.dispose();
     },

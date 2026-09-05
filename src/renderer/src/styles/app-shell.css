@@ -232,8 +232,8 @@
   }
 }
 
-.global-search-avatar.bot-avatar {
-  --bot-avatar-optical-offset: -2px;
+.global-search-avatar.agent-avatar {
+  --agent-avatar-optical-offset: -2px;
 
   width: 28px;
   height: 28px;
@@ -1794,7 +1794,7 @@ textarea {
   color: var(--openbot-text-muted);
 }
 
-.bot-list {
+.agent-list {
   display: flex;
   min-height: 0;
   flex: 1;
@@ -1805,11 +1805,11 @@ textarea {
   scrollbar-width: none;
 }
 
-.bot-list::-webkit-scrollbar {
+.agent-list::-webkit-scrollbar {
   display: none;
 }
 
-.bot-list-content {
+.agent-list-content {
   position: relative;
 }
 
@@ -1918,26 +1918,26 @@ textarea {
   touch-action: pan-y;
 }
 
-.bot-list[data-sidebar-dragging],
-.bot-list[data-sidebar-dragging] .sidebar-section-drag-handle,
-.bot-list[data-sidebar-dragging] .sidebar-section-toggle,
-.bot-list[data-sidebar-dragging] .agent-row,
-.bot-list[data-sidebar-dragging] .person-row {
+.agent-list[data-sidebar-dragging],
+.agent-list[data-sidebar-dragging] .sidebar-section-drag-handle,
+.agent-list[data-sidebar-dragging] .sidebar-section-toggle,
+.agent-list[data-sidebar-dragging] .agent-row,
+.agent-list[data-sidebar-dragging] .person-row {
   cursor: grabbing;
 }
 
-.bot-list[data-sidebar-dragging] .sidebar-section-toggle {
+.agent-list[data-sidebar-dragging] .sidebar-section-toggle {
   pointer-events: none;
 }
 
-.bot-list[data-sidebar-dragging] .sidebar-section-toggle:hover,
-.bot-list[data-sidebar-dragging] .sidebar-section-toggle:focus-visible {
+.agent-list[data-sidebar-dragging] .sidebar-section-toggle:hover,
+.agent-list[data-sidebar-dragging] .sidebar-section-toggle:focus-visible {
   background: transparent;
   color: var(--openbot-text-readable);
 }
 
-.bot-list[data-sidebar-dragging] .sidebar-section-toggle:hover .sidebar-section-chevron,
-.bot-list[data-sidebar-dragging] .sidebar-section-toggle:focus-visible .sidebar-section-chevron {
+.agent-list[data-sidebar-dragging] .sidebar-section-toggle:hover .sidebar-section-chevron,
+.agent-list[data-sidebar-dragging] .sidebar-section-toggle:focus-visible .sidebar-section-chevron {
   opacity: 0;
 }
 
@@ -2084,18 +2084,18 @@ textarea {
   color: var(--openbot-text-secondary);
 }
 
-.bot-row.sidebar-agent-drag-preview {
+.agent-row.sidebar-agent-drag-preview {
   background: var(--openbot-bg-surface-raised);
   transition: none;
 }
 
-.bot-row.sidebar-person-drag-preview {
+.agent-row.sidebar-person-drag-preview {
   background: var(--openbot-bg-surface-raised);
   transition: none;
 }
 
-.bot-row.sidebar-agent-drag-preview *,
-.bot-row.sidebar-person-drag-preview * {
+.agent-row.sidebar-agent-drag-preview *,
+.agent-row.sidebar-person-drag-preview * {
   animation: none;
   transition: none;
 }
@@ -2114,11 +2114,11 @@ textarea {
   will-change: transform;
 }
 
-.bot-list[data-sidebar-dragging="agent"] .sidebar-agent-item {
+.agent-list[data-sidebar-dragging="agent"] .sidebar-agent-item {
   will-change: transform;
 }
 
-.bot-list[data-sidebar-dragging="person"] .sidebar-person-item {
+.agent-list[data-sidebar-dragging="person"] .sidebar-person-item {
   will-change: transform;
 }
 
@@ -2256,7 +2256,7 @@ textarea {
   transition: transform var(--openbot-duration-normal) var(--openbot-ease-out);
 }
 
-.bot-row.sidebar-pinned-row {
+.agent-row.sidebar-pinned-row {
   width: 72px;
   height: 94px;
   min-height: 94px;
@@ -2272,14 +2272,14 @@ textarea {
   transform: scale(0.96);
 }
 
-.bot-row.sidebar-pinned-row .sidebar-pinned-avatar {
+.agent-row.sidebar-pinned-row .sidebar-pinned-avatar {
   width: 48px;
   height: 48px;
   flex-basis: 48px;
 }
 
-.bot-row.sidebar-pinned-row .bot-avatar,
-.bot-row.sidebar-pinned-row.person-row .person-avatar {
+.agent-row.sidebar-pinned-row .agent-avatar,
+.agent-row.sidebar-pinned-row.person-row .person-avatar {
   width: 48px;
   height: 48px;
 }
@@ -2425,7 +2425,7 @@ textarea {
   font-weight: 680;
 }
 
-.bot-row {
+.agent-row {
   display: flex;
   width: 100%;
   height: 54px;
@@ -2444,27 +2444,27 @@ textarea {
     transform var(--openbot-duration-normal) ease;
 }
 
-.bot-row + .bot-row {
+.agent-row + .agent-row {
   margin-top: 4px;
 }
 
-.bot-row:hover {
+.agent-row:hover {
   background: var(--openbot-hover);
 }
 
-.bot-row:active {
+.agent-row:active {
   transform: scale(0.99);
 }
 
-.bot-row-active {
+.agent-row-active {
   background: var(--openbot-active);
 }
 
-.bot-row-menu-open {
+.agent-row-menu-open {
   background: var(--openbot-border);
 }
 
-.bot-row-avatar {
+.agent-row-avatar {
   position: relative;
   display: grid;
   width: 36px;
@@ -2475,7 +2475,7 @@ textarea {
   transition: transform var(--panel-resize-duration, var(--openbot-duration-overlay)) cubic-bezier(0.32, 0.72, 0, 1);
 }
 
-.bot-row-agent-status {
+.agent-row-agent-status {
   position: absolute;
   z-index: 1;
   right: -5px;
@@ -2488,11 +2488,11 @@ textarea {
   pointer-events: none;
 }
 
-.bot-row-active .bot-row-agent-status {
+.agent-row-active .agent-row-agent-status {
   border-color: var(--openbot-bg-control);
 }
 
-.bot-row-agent-status-working {
+.agent-row-agent-status-working {
   width: 24px;
   height: 16px;
   border-radius: var(--openbot-radius-pill);
@@ -2500,13 +2500,13 @@ textarea {
   color: var(--openbot-text-secondary);
 }
 
-.bot-row-thinking-dots {
+.agent-row-thinking-dots {
   display: inline-flex;
   align-items: center;
   gap: 2px;
 }
 
-.bot-row-thinking-dots i {
+.agent-row-thinking-dots i {
   width: 3px;
   height: 3px;
   border-radius: var(--openbot-radius-pill);
@@ -2515,15 +2515,15 @@ textarea {
   animation: typing-dot-pulse 900ms ease-in-out infinite;
 }
 
-.bot-row-thinking-dots i:nth-child(2) {
+.agent-row-thinking-dots i:nth-child(2) {
   animation-delay: var(--openbot-duration-fast);
 }
 
-.bot-row-thinking-dots i:nth-child(3) {
+.agent-row-thinking-dots i:nth-child(3) {
   animation-delay: var(--openbot-duration-overlay);
 }
 
-.bot-row-agent-status-responded {
+.agent-row-agent-status-responded {
   width: 16px;
   height: 16px;
   border-radius: var(--openbot-radius-pill);
@@ -2532,7 +2532,7 @@ textarea {
   animation: sidebar-reply-in var(--openbot-duration-overlay) cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-.bot-row-agent-status-responded svg {
+.agent-row-agent-status-responded svg {
   width: 10px;
   height: 10px;
   fill: none;
@@ -2542,7 +2542,7 @@ textarea {
   stroke-linejoin: round;
 }
 
-.bot-row-agent-status-unread {
+.agent-row-agent-status-unread {
   min-width: 16px;
   height: 16px;
   border-radius: var(--openbot-radius-pill);
@@ -2576,16 +2576,16 @@ textarea {
   }
 }
 
-.bot-delete-backdrop {
+.agent-delete-backdrop {
   position: fixed;
   z-index: 100;
   inset: 0;
   display: grid;
   place-items: center;
-  animation: bot-backdrop-in var(--openbot-duration-normal) ease-out;
+  animation: agent-backdrop-in var(--openbot-duration-normal) ease-out;
 }
 
-.bot-delete-dialog {
+.agent-delete-dialog {
   display: flex;
   width: min(390px, calc(100vw - 40px));
   flex-direction: column;
@@ -2593,10 +2593,10 @@ textarea {
   background: var(--openbot-bg-control);
   padding: 26px 26px 20px;
   text-align: center;
-  animation: bot-dialog-in var(--openbot-duration-slow) cubic-bezier(0.2, 0.8, 0.2, 1);
+  animation: agent-dialog-in var(--openbot-duration-slow) cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-.bot-delete-dialog h2 {
+.agent-delete-dialog h2 {
   margin: 0;
   color: var(--openbot-text-primary);
   font-size: var(--openbot-text-2xl);
@@ -2605,7 +2605,7 @@ textarea {
   letter-spacing: -0.25px;
 }
 
-.bot-delete-dialog > p {
+.agent-delete-dialog > p {
   max-width: 310px;
   margin: 8px 0 0;
   color: var(--openbot-text-muted);
@@ -2613,7 +2613,7 @@ textarea {
   line-height: 19px;
 }
 
-.bot-delete-dialog .bot-delete-error {
+.agent-delete-dialog .agent-delete-error {
   width: 100%;
   margin-top: 14px;
   border-radius: var(--openbot-radius-md);
@@ -2633,17 +2633,17 @@ textarea {
   color: var(--openbot-danger);
 }
 
-.bot-context-submenu-chevron {
+.agent-context-submenu-chevron {
   margin-left: auto;
   color: var(--openbot-text-muted);
 }
 
-.bot-context-submenu {
+.agent-context-submenu {
   max-height: min(520px, calc(100vh - 16px));
   overflow-y: auto;
 }
 
-.bot-delete-actions {
+.agent-delete-actions {
   display: grid;
   width: 100%;
   margin-top: 22px;
@@ -2651,7 +2651,7 @@ textarea {
   gap: 9px;
 }
 
-.bot-delete-actions button {
+.agent-delete-actions button {
   height: 38px;
   border: 0.5px solid var(--openbot-border);
   border-radius: var(--openbot-radius-md);
@@ -2664,46 +2664,46 @@ textarea {
     opacity var(--openbot-duration-hover) ease;
 }
 
-.bot-delete-actions button:hover {
+.agent-delete-actions button:hover {
   background: var(--openbot-border);
 }
 
-.bot-delete-actions button:disabled {
+.agent-delete-actions button:disabled {
   cursor: default;
   opacity: 0.55;
 }
 
-.bot-delete-actions .bot-delete-confirm {
+.agent-delete-actions .agent-delete-confirm {
   border-color: var(--openbot-danger);
   background: var(--openbot-danger);
   color: var(--openbot-text-primary);
 }
 
-.bot-delete-actions .bot-delete-confirm:hover {
+.agent-delete-actions .agent-delete-confirm:hover {
   background: var(--openbot-danger);
 }
 
-@keyframes bot-context-in {
+@keyframes agent-context-in {
   from {
     opacity: 0;
     transform: scale(0.96) translateY(-3px);
   }
 }
 
-@keyframes bot-backdrop-in {
+@keyframes agent-backdrop-in {
   from {
     opacity: 0;
   }
 }
 
-@keyframes bot-dialog-in {
+@keyframes agent-dialog-in {
   from {
     opacity: 0;
     transform: scale(0.97) translateY(5px);
   }
 }
 
-.bot-avatar {
+.agent-avatar {
   display: grid;
   width: 32px;
   height: 32px;
@@ -2715,21 +2715,21 @@ textarea {
   overflow: visible;
 }
 
-.bot-avatar > svg {
+.agent-avatar > svg {
   display: block;
   width: 128%;
   height: 128%;
   overflow: visible;
-  translate: var(--bot-avatar-optical-offset-x, 0) var(--bot-avatar-optical-offset, 0);
+  translate: var(--agent-avatar-optical-offset-x, 0) var(--agent-avatar-optical-offset, 0);
 }
 
-.bot-avatar-custom {
+.agent-avatar-custom {
   overflow: hidden;
   background: var(--openbot-hover);
   box-shadow: inset 0 0 0 1px var(--openbot-border);
 }
 
-.bot-avatar-custom > img,
+.agent-avatar-custom > img,
 .composer-mention-avatar > img {
   display: block;
   width: 100%;
@@ -2737,8 +2737,8 @@ textarea {
   object-fit: cover;
 }
 
-.bot-row .bot-avatar {
-  --bot-avatar-optical-offset: -4px;
+.agent-row .agent-avatar {
+  --agent-avatar-optical-offset: -4px;
 
   width: 36px;
   height: 36px;
@@ -2883,7 +2883,7 @@ textarea {
   stroke-width: 1.5;
 }
 
-.avatar-image-upload-preview .bot-avatar {
+.avatar-image-upload-preview .agent-avatar {
   width: 42px;
   height: 42px;
 }
@@ -2951,7 +2951,7 @@ textarea {
     0 1px 3px var(--openbot-shadow-popover-ambient);
 }
 
-.avatar-face-choice .bot-avatar {
+.avatar-face-choice .agent-avatar {
   width: 34px;
   height: 34px;
 }
@@ -2990,14 +2990,14 @@ textarea {
   font-weight: 650;
 }
 
-.conversation-title .bot-avatar {
-  --bot-avatar-optical-offset: -2px;
+.conversation-title .agent-avatar {
+  --agent-avatar-optical-offset: -2px;
 
   width: 18px;
   height: 18px;
 }
 
-.bot-row-copy {
+.agent-row-copy {
   min-width: 0;
   flex: 1;
   opacity: 1;
@@ -3007,7 +3007,7 @@ textarea {
     transform var(--openbot-duration-slow) cubic-bezier(0.32, 0.72, 0, 1);
 }
 
-.bot-row-heading {
+.agent-row-heading {
   display: flex;
   min-width: 0;
   align-items: baseline;
@@ -3015,7 +3015,7 @@ textarea {
   gap: 8px;
 }
 
-.bot-row-title {
+.agent-row-title {
   display: flex;
   min-width: 0;
   align-items: center;
@@ -3023,17 +3023,17 @@ textarea {
   overflow: hidden;
 }
 
-.bot-row-title:has(.bot-role-badge) {
-  --bot-role-badge-collapsed-width: calc(2ch + 9px);
+.agent-row-title:has(.agent-role-badge) {
+  --agent-role-badge-collapsed-width: calc(2ch + 9px);
 
   display: grid;
   grid-template-columns:
-    fit-content(calc(100% - var(--bot-role-badge-collapsed-width) - 5px))
-    minmax(var(--bot-role-badge-collapsed-width), 1fr);
+    fit-content(calc(100% - var(--agent-role-badge-collapsed-width) - 5px))
+    minmax(var(--agent-role-badge-collapsed-width), 1fr);
 }
 
-.bot-row-title strong,
-.person-row .bot-row-heading strong {
+.agent-row-title strong,
+.person-row .agent-row-heading strong {
   min-width: 0;
   overflow: hidden;
   color: var(--openbot-text-primary);
@@ -3044,7 +3044,7 @@ textarea {
   white-space: nowrap;
 }
 
-.bot-role-badge {
+.agent-role-badge {
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
@@ -3061,15 +3061,15 @@ textarea {
   white-space: nowrap;
 }
 
-.bot-role-badge > span {
+.agent-role-badge > span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.bot-row-time,
-.person-row .bot-row-heading > span {
+.agent-row-time,
+.person-row .agent-row-heading > span {
   min-width: 0;
   max-width: 54px;
   overflow: hidden;
@@ -3081,7 +3081,7 @@ textarea {
   white-space: nowrap;
 }
 
-.bot-row-preview {
+.agent-row-preview {
   display: block;
   margin-top: 0;
   overflow: hidden;
@@ -3116,17 +3116,17 @@ textarea {
   text-align: center;
 }
 
-.sidebar-first-bot-state {
+.sidebar-first-agent-state {
   display: flex;
   min-height: 100%;
   flex-direction: column;
 }
 
-.ui-button.sidebar-first-bot-action {
+.ui-button.sidebar-first-agent-action {
   flex: 0 0 auto;
 }
 
-.sidebar-first-bot-empty {
+.sidebar-first-agent-empty {
   display: grid;
   flex: 1;
   place-items: center;
@@ -3157,13 +3157,13 @@ textarea {
   padding-bottom: 9px;
 }
 
-.app-frame:has(.account-dock-hybrid) .bot-list,
+.app-frame:has(.account-dock-hybrid) .agent-list,
 .app-frame:has(.account-dock-hybrid) .server-rail-list {
   padding-bottom: 60px;
   scroll-padding-bottom: 60px;
 }
 
-.app-frame:has(.account-dock-hybrid) .bot-list.scroll-fade-bottom:not(.scroll-fade-top),
+.app-frame:has(.account-dock-hybrid) .agent-list.scroll-fade-bottom:not(.scroll-fade-top),
 .app-frame:has(.account-dock-hybrid) .server-rail-list.scroll-fade-bottom:not(.scroll-fade-top) {
   -webkit-mask-image: linear-gradient(
     to bottom,
@@ -3181,7 +3181,7 @@ textarea {
   );
 }
 
-.app-frame:has(.account-dock-hybrid) .bot-list.scroll-fade-top.scroll-fade-bottom,
+.app-frame:has(.account-dock-hybrid) .agent-list.scroll-fade-top.scroll-fade-bottom,
 .app-frame:has(.account-dock-hybrid) .server-rail-list.scroll-fade-top.scroll-fade-bottom {
   -webkit-mask-image: linear-gradient(
     to bottom,
@@ -3643,7 +3643,7 @@ textarea {
   transition-delay: 55ms;
 }
 
-.sidebar-compact .bot-list {
+.sidebar-compact .agent-list {
   padding-inline: 12px;
 }
 
@@ -3663,15 +3663,15 @@ textarea {
   white-space: nowrap;
 }
 
-.sidebar-compact .bot-row {
+.sidebar-compact .agent-row {
   padding-inline: 8px;
 }
 
-.sidebar-compact .bot-row-avatar {
+.sidebar-compact .agent-row-avatar {
   transform: translateX(6px);
 }
 
-.sidebar-compact .bot-row.sidebar-pinned-row {
+.sidebar-compact .agent-row.sidebar-pinned-row {
   width: 60px;
   height: 60px;
   min-height: 60px;
@@ -3683,7 +3683,7 @@ textarea {
   flex-basis: 60px;
 }
 
-.sidebar-compact .bot-row.sidebar-pinned-row .sidebar-pinned-avatar {
+.sidebar-compact .agent-row.sidebar-pinned-row .sidebar-pinned-avatar {
   transform: none;
 }
 
@@ -3691,7 +3691,7 @@ textarea {
   display: none;
 }
 
-.sidebar-compact .bot-row-copy {
+.sidebar-compact .agent-row-copy {
   opacity: 0;
   pointer-events: none;
   transform: translateX(-8px);
@@ -4014,8 +4014,8 @@ textarea {
 .composer-button:hover,
 .composer-attachment > button:hover,
 .account-menu-row:hover,
-.bot-context-menu button:hover,
-.bot-context-menu button:focus-visible,
+.agent-context-menu button:hover,
+.agent-context-menu button:focus-visible,
 .remote-text-button:hover:not(:disabled),
 .remote-more-button:hover:not(:disabled),
 .remote-dialog > header > button:hover,
@@ -4028,7 +4028,7 @@ textarea {
 
 .sidebar-icon-button:active,
 .header-panel-toggle:active,
-.bot-row:active,
+.agent-row:active,
 .composer-button:active,
 .voice-button:active,
 .remote-primary-button:active:not(:disabled),
@@ -4038,17 +4038,17 @@ textarea {
   transform: scale(0.97);
 }
 
-.bot-row:hover,
-.bot-row-menu-open {
+.agent-row:hover,
+.agent-row-menu-open {
   background: var(--openbot-bg-control);
 }
 
-.bot-list[data-sidebar-dragging] .bot-row:hover {
+.agent-list[data-sidebar-dragging] .agent-row:hover {
   background: transparent;
 }
 
-.bot-list[data-sidebar-dragging] .bot-row.bot-row-active,
-.bot-list[data-sidebar-dragging] .bot-row.bot-row-active:hover {
+.agent-list[data-sidebar-dragging] .agent-row.agent-row-active,
+.agent-list[data-sidebar-dragging] .agent-row.agent-row-active:hover {
   background: var(--openbot-active);
 }
 
@@ -4092,7 +4092,7 @@ textarea {
 }
 
 .remote-dialog,
-.bot-delete-dialog {
+.agent-delete-dialog {
   border-color: var(--openbot-border-strong);
   background: var(--openbot-bg-surface);
 }

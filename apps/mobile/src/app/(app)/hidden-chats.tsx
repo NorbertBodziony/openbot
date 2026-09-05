@@ -1,1 +1,1 @@
-export { HiddenChatsScreen as default } from "@/features/bots/screens/hidden-chats-screen";
+export { HiddenChatsScreen as default } from "@/features/agents/screens/hidden-chats-screen";

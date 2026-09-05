@@ -327,13 +327,13 @@
 .agent-marketplace-card {
   grid-template-columns: 42px minmax(0, 1fr) auto;
 }
-.agent-marketplace-card .bot-avatar,
-.agent-submission-row .bot-avatar,
-.agent-publish-card .bot-avatar {
+.agent-marketplace-card .agent-avatar,
+.agent-submission-row .agent-avatar,
+.agent-publish-card .agent-avatar {
   width: 42px;
   height: 42px;
 }
-.agent-marketplace-detail .skills-marketplace-detail-hero > .bot-avatar {
+.agent-marketplace-detail .skills-marketplace-detail-hero > .agent-avatar {
   width: 64px;
   height: 64px;
 }

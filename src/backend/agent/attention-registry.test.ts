@@ -45,7 +45,7 @@ describe.sequential("AttentionRegistry: prompts, approvals and browser takeovers
     const events: AgentEvent[] = [];
     service.on("event", (event) => events.push(event));
     await service.initialize();
-    await service.sendMessage({ botId: "chief", text: "Need an approval" });
+    await service.sendMessage({ agentId: "chief", text: "Need an approval" });
     await waitFor(() => events.some((event) => event.type === "turn-started"));
 
     const client = clients.get("codex");
@@ -73,7 +73,7 @@ describe.sequential("AttentionRegistry: prompts, approvals and browser takeovers
         type: "approval",
         approval: expect.objectContaining({
           requestId: "approval-command",
-          botId: "chief",
+          agentId: "chief",
           kind: "command",
           command: "npm test",
           cwd: "/tmp/openbot",
@@ -90,7 +90,7 @@ describe.sequential("AttentionRegistry: prompts, approvals and browser takeovers
       type: "agent-input-resolved",
       kind: "approval",
       requestId: "approval-command",
-      botId: "chief",
+      agentId: "chief",
     });
     expect(events.findLast((event) => event.type === "runtime-snapshot")).toMatchObject({
       snapshot: { pendingApprovals: [] },
@@ -126,7 +126,7 @@ describe.sequential("AttentionRegistry: prompts, approvals and browser takeovers
     const events: AgentEvent[] = [];
     service.on("event", (event) => events.push(event));
     await service.initialize();
-    await service.sendMessage({ botId: "chief", text: "Use Telegram" });
+    await service.sendMessage({ agentId: "chief", text: "Use Telegram" });
     await waitFor(() => events.some((event) => event.type === "turn-started"));
 
     const client = clients.get("codex");
@@ -154,7 +154,7 @@ describe.sequential("AttentionRegistry: prompts, approvals and browser takeovers
       expect.objectContaining({
         type: "prompt",
         requestId: "computer-use-always",
-        botId: "chief",
+        agentId: "chief",
         questions: [
           expect.objectContaining({
             question: "Allow ChatGPT to use Telegram?",
@@ -219,7 +219,7 @@ describe.sequential("AttentionRegistry: prompts, approvals and browser takeovers
       result: { action: "decline", content: null, _meta: null },
     });
     expect(events).toContainEqual(
-      expect.objectContaining({ type: "error", code: "mcp_safety_handoff", botId: "chief" }),
+      expect.objectContaining({ type: "error", code: "mcp_safety_handoff", agentId: "chief" }),
     );
   });
   it("provides a default-mode ask_user tool that resolves through the Questions card", async () => {
@@ -233,7 +233,7 @@ describe.sequential("AttentionRegistry: prompts, approvals and browser takeovers
     const events: AgentEvent[] = [];
     service.on("event", (event) => events.push(event));
     await service.initialize();
-    await service.sendMessage({ botId: "chief", text: "Ask me a question" });
+    await service.sendMessage({ agentId: "chief", text: "Ask me a question" });
     await waitFor(() => events.some((event) => event.type === "turn-started"));
 
     const client = clients.get("codex");
@@ -296,7 +296,7 @@ describe.sequential("AttentionRegistry: prompts, approvals and browser takeovers
       type: "agent-input-resolved",
       kind: "prompt",
       requestId: "question-call",
-      botId: "chief",
+      agentId: "chief",
     });
     expect(events.findLast((event) => event.type === "runtime-snapshot")).toMatchObject({
       snapshot: { pendingPrompts: [] },
@@ -331,7 +331,7 @@ describe.sequential("AttentionRegistry: prompts, approvals and browser takeovers
     expect(JSON.stringify(resolvedMessage)).not.toContain("super-secret");
     const persisted = store.database.readConversation(
       "chief",
-      resolvedMessage?.turnId ? (store.list().find((bot) => bot.id === "chief")?.threadId ?? null) : null,
+      resolvedMessage?.turnId ? (store.list().find((agent) => agent.id === "chief")?.threadId ?? null) : null,
     );
     expect(JSON.stringify(persisted)).not.toContain("super-secret");
     expect(service.searchConversationMessages(optionLabel, "chief").results).toEqual([
@@ -528,7 +528,7 @@ describe.sequential("AttentionRegistry: prompts, approvals and browser takeovers
       service.respondToPrompt({ requestId: "persistence-question-call", answers: { delivery: ["Yes"] } }),
     ).rejects.toThrow("no longer active");
     expect(events).toContainEqual(
-      expect.objectContaining({ type: "error", code: "prompt_persistence_failed", botId: "chief" }),
+      expect.objectContaining({ type: "error", code: "prompt_persistence_failed", agentId: "chief" }),
     );
     persistenceFailure.mockRestore();
   });
@@ -544,7 +544,7 @@ describe.sequential("AttentionRegistry: prompts, approvals and browser takeovers
           url: "https://example.com/login",
           loading: false,
           ownerThreadId: params.threadId,
-          ownerBotId: params.ownerBotId ?? null,
+          ownerAgentId: params.ownerAgentId ?? null,
         });
       }
       return { success: true, contentItems: [] };
@@ -558,7 +558,7 @@ describe.sequential("AttentionRegistry: prompts, approvals and browser takeovers
     const events: AgentEvent[] = [];
     service.on("event", (event) => events.push(event));
     await service.initialize();
-    await service.sendMessage({ botId: "chief", text: "Open a protected page" });
+    await service.sendMessage({ agentId: "chief", text: "Open a protected page" });
     await waitFor(() => events.some((event) => event.type === "turn-started"));
 
     const client = clients.get("codex");
@@ -580,7 +580,7 @@ describe.sequential("AttentionRegistry: prompts, approvals and browser takeovers
     await waitFor(() => client.responses.length === 1);
     expect(tabs[0]).toMatchObject({
       ownerThreadId: started.threadId,
-      ownerBotId: "chief",
+      ownerAgentId: "chief",
     });
 
     client.emit("request", {
@@ -598,7 +598,7 @@ describe.sequential("AttentionRegistry: prompts, approvals and browser takeovers
     await waitFor(() => events.some((event) => event.type === "browser-takeover-requested"));
     expect(client.responses).toHaveLength(1);
     expect(events.find((event) => event.type === "browser-takeover-requested")).toMatchObject({
-      request: { requestId: "takeover-call", botId: "chief", tabId: "protected-tab" },
+      request: { requestId: "takeover-call", agentId: "chief", tabId: "protected-tab" },
     });
 
     await service.respondToBrowserTakeover({ requestId: "takeover-call", decision: "complete" });
@@ -610,7 +610,7 @@ describe.sequential("AttentionRegistry: prompts, approvals and browser takeovers
     expect(events).toContainEqual({
       type: "browser-takeover-resolved",
       requestId: "takeover-call",
-      botId: "chief",
+      agentId: "chief",
     });
     expect(events.findLast((event) => event.type === "runtime-snapshot")).toMatchObject({
       snapshot: { pendingBrowserTakeovers: [] },
@@ -646,7 +646,7 @@ describe.sequential("AttentionRegistry: prompts, approvals and browser takeovers
       return client;
     });
     await service.initialize();
-    await service.sendMessage({ botId: "chief", text: "Need a legacy approval" });
+    await service.sendMessage({ agentId: "chief", text: "Need a legacy approval" });
     await waitFor(() => clients.get("codex")?.requests.some((request) => request.method === "turn/start"));
     const client = clients.get("codex");
     if (!client) throw new Error("Codex client was not created.");

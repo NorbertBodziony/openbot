@@ -17,7 +17,7 @@
 
 import type { AgentEvent, ConversationPage, QueueSnapshot } from "@openbot/contracts/ipc";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
-import { decodeBotSummaries, decodeQueueSnapshot } from "./remote-agent-decoding";
+import { decodeAgentSummaries, decodeQueueSnapshot } from "./remote-agent-decoding";
 import { decodeConversationPageFromHost } from "./remote-conversation-decoding";
 import type { RemoteRequestFn } from "./remote-server-client";
 import { addRemotePreviewUrls, pageQuery } from "./remote-server-urls";
@@ -68,9 +68,9 @@ export class RemoteEventRefresh {
   forward(serverId: string, event: AgentEvent, bufferedLive = false): void {
     this.#advance(serverId);
     if (event.type === "conversation-invalidated") {
-      void this.#refreshConversationPage(serverId, event.botId, event.revision);
+      void this.#refreshConversationPage(serverId, event.agentId, event.revision);
     } else if (event.type === "queue-invalidated") {
-      void this.#refreshQueue(serverId, event.botId);
+      void this.#refreshQueue(serverId, event.agentId);
     } else {
       const remoteEvent = addRemotePreviewUrls(event, serverId);
       if (bufferedLive) this.#emit(serverId, remoteEvent, true);
@@ -84,22 +84,22 @@ export class RemoteEventRefresh {
    */
   async refreshAgentState(serverId: string): Promise<void> {
     const generation = this.#advance(serverId);
-    const bots = await this.#request(serverId, TEAM_API_ROUTES.agents.all, decodeBotSummaries);
+    const agents = await this.#request(serverId, TEAM_API_ROUTES.agents.all, decodeAgentSummaries);
     if (this.#generations.get(serverId) !== generation) return;
-    this.#emit(serverId, { type: "bots-changed", bots });
+    this.#emit(serverId, { type: "agents-changed", agents });
     await Promise.all(
-      bots.map(async (bot) => {
+      agents.map(async (agent) => {
         try {
           const [page, queue] = await Promise.all([
-            this.#conversationPage(serverId, bot.id, FALLBACK_CONVERSATION_LIMIT),
-            this.#request(serverId, TEAM_API_ROUTES.agent.queue(bot.id), decodeQueueSnapshot),
+            this.#conversationPage(serverId, agent.id, FALLBACK_CONVERSATION_LIMIT),
+            this.#request(serverId, TEAM_API_ROUTES.agent.queue(agent.id), decodeQueueSnapshot),
           ]);
           if (this.#generations.get(serverId) !== generation) return;
           const { pageInfo: _, references: __, readState: ___, ...snapshot } = page;
           this.#emit(serverId, { type: "conversation", snapshot });
           this.#emit(serverId, { type: "queue-changed", snapshot: queue });
         } catch {
-          // A failed bot refresh must not discard the server or other bots.
+          // A failed agent refresh must not discard the server or other agents.
         }
       }),
     );
@@ -121,8 +121,8 @@ export class RemoteEventRefresh {
     this.#queues.clear();
   }
 
-  async #refreshConversationPage(serverId: string, botId: string, revision: number): Promise<void> {
-    const key = `${serverId}\0${botId}`;
+  async #refreshConversationPage(serverId: string, agentId: string, revision: number): Promise<void> {
+    const key = `${serverId}\0${agentId}`;
     const pending = this.#conversations.get(key);
     if (pending) {
       if (pending.revision === revision) pending.sequence += 1;
@@ -137,7 +137,7 @@ export class RemoteEventRefresh {
         const requestedSequence = request.sequence;
         let page: ConversationPage;
         try {
-          page = await this.#conversationPage(serverId, botId, INVALIDATED_CONVERSATION_LIMIT);
+          page = await this.#conversationPage(serverId, agentId, INVALIDATED_CONVERSATION_LIMIT);
         } catch {
           // Something arrived while this failed, so the retry is for that one, not this one.
           if (request.sequence !== requestedSequence || request.revision !== requestedRevision) continue;
@@ -159,8 +159,8 @@ export class RemoteEventRefresh {
     }
   }
 
-  async #refreshQueue(serverId: string, botId: string): Promise<void> {
-    const key = `${serverId}\0${botId}`;
+  async #refreshQueue(serverId: string, agentId: string): Promise<void> {
+    const key = `${serverId}\0${agentId}`;
     const pending = this.#queues.get(key);
     if (pending) {
       pending.dirty = true;
@@ -173,7 +173,7 @@ export class RemoteEventRefresh {
         request.dirty = false;
         let snapshot: QueueSnapshot;
         try {
-          snapshot = await this.#request(serverId, TEAM_API_ROUTES.agent.queue(botId), decodeQueueSnapshot);
+          snapshot = await this.#request(serverId, TEAM_API_ROUTES.agent.queue(agentId), decodeQueueSnapshot);
         } catch {
           if (request.dirty) continue;
           return;
@@ -186,10 +186,10 @@ export class RemoteEventRefresh {
     }
   }
 
-  #conversationPage(serverId: string, botId: string, limit: number): Promise<ConversationPage> {
+  #conversationPage(serverId: string, agentId: string, limit: number): Promise<ConversationPage> {
     return this.#request(
       serverId,
-      `${TEAM_API_ROUTES.agent.conversationPage(botId)}${pageQuery({ type: "latest" }, limit)}`,
+      `${TEAM_API_ROUTES.agent.conversationPage(agentId)}${pageQuery({ type: "latest" }, limit)}`,
       decodeConversationPageFromHost,
     );
   }

@@ -13,7 +13,7 @@ import type {
 import { hostedSiteConversationEventItemType, hostedSiteConversationEventText } from "@openbot/contracts/ipc";
 import { isBoolean } from "@openbot/contracts/runtime-values";
 import type { AgentClient } from "../agent-client";
-import type { BotStore } from "../bot-store";
+import type { AgentStore } from "../agent-store";
 import { sortConversationMessages } from "../conversation-snapshots";
 import type { PendingHostedSiteTerminalEvent } from "../openbot-database";
 import { type AppServerRequest, type DynamicToolCallParams, isRecord, type RequestId } from "../protocol";
@@ -46,7 +46,7 @@ export interface AgentHostedSites {
  * path drops.
  */
 export interface HostedSiteMutationContext {
-  botId: string;
+  agentId: string;
   operationId: string;
   action: HostedSiteConversationEventAction;
   params: DynamicToolCallParams;
@@ -56,14 +56,14 @@ export interface HostedSiteMutationContext {
 export interface HostedSiteApprovalTarget {
   client: AgentClient;
   id: RequestId;
-  botId: string;
+  agentId: string;
 }
 
 export interface HostedSiteCoordinatorOptions {
-  store: BotStore;
+  store: AgentStore;
   conversation: ConversationRuntime;
   hostedSites: AgentHostedSites | null;
-  emitError(code: string, error: unknown, botId?: string): void;
+  emitError(code: string, error: unknown, agentId?: string): void;
   isStopping(): boolean;
 }
 
@@ -90,10 +90,10 @@ export const HOSTED_SITE_APPROVAL_METHOD = "openbot/hosted-site-mutation";
  * provider response rides along as the `deliver` callback and only fires once the marker is durable.
  */
 export class HostedSiteCoordinator {
-  readonly #store: BotStore;
+  readonly #store: AgentStore;
   readonly #conversation: ConversationRuntime;
   readonly #hostedSites: AgentHostedSites | null;
-  readonly #emitError: (code: string, error: unknown, botId?: string) => void;
+  readonly #emitError: (code: string, error: unknown, agentId?: string) => void;
   readonly #isStopping: () => boolean;
   readonly #pendingTerminalEvents = new Map<string, PendingHostedSiteTerminalEvent>();
   readonly #pendingTerminalDeliveries = new Map<string, () => void>();
@@ -125,8 +125,8 @@ export class HostedSiteCoordinator {
   ): Promise<{ approval: AgentApproval; mutation: HostedSiteMutationContext } | null> {
     const threadId = params.threadId;
     const turnId = params.turnId;
-    const botId = this.#conversation.botForThread(threadId);
-    if (!turnId || !botId) {
+    const agentId = this.#conversation.agentForThread(threadId);
+    if (!turnId || !agentId) {
       client.respondError(request.id, {
         code: -32602,
         message: "OpenBot could not identify this hosted site request.",
@@ -135,7 +135,7 @@ export class HostedSiteCoordinator {
     }
     const details = await this.#approvalDetails(params, tool);
     const mutation: HostedSiteMutationContext = {
-      botId,
+      agentId,
       operationId: randomUUID(),
       action: hostedSiteAction(tool),
       params,
@@ -143,8 +143,8 @@ export class HostedSiteCoordinator {
     };
     const approval: AgentApproval = {
       requestId: request.id,
-      botId,
-      threadId: this.#conversation.publicThreadId(botId, threadId),
+      agentId,
+      threadId: this.#conversation.publicThreadId(agentId, threadId),
       turnId,
       kind: "permissions",
       command: null,
@@ -183,9 +183,9 @@ export class HostedSiteCoordinator {
           message: "The hosted site change could not be recorded.",
         });
       } catch (responseError) {
-        this.#emitError("server_response_failed", responseError, target.botId);
+        this.#emitError("server_response_failed", responseError, target.agentId);
       }
-      this.#emitError("hosted_site_marker_persistence_failed", error, target.botId);
+      this.#emitError("hosted_site_marker_persistence_failed", error, target.agentId);
       return;
     }
     let result: HostedSiteMutationResult | null = null;
@@ -195,7 +195,7 @@ export class HostedSiteCoordinator {
       this.#recordTerminalEvent(mutation, "failed", mutation.eventDetails, () => {
         target.client.respondError(target.id, { code: -32603, message: String(error) });
       });
-      this.#emitError("server_request_failed", error, target.botId);
+      this.#emitError("server_request_failed", error, target.agentId);
     }
     if (result) {
       const succeeded = result;
@@ -205,9 +205,9 @@ export class HostedSiteCoordinator {
     }
   }
 
-  forgetBot(botId: string): void {
+  forgetAgent(agentId: string): void {
     for (const [key, event] of this.#pendingTerminalEvents) {
-      if (event.botId !== botId) continue;
+      if (event.agentId !== agentId) continue;
       this.#pendingTerminalEvents.delete(key);
       this.#pendingTerminalDeliveries.delete(key);
     }
@@ -290,14 +290,14 @@ export class HostedSiteCoordinator {
     if (args.spaFallback !== undefined && !isBoolean(args.spaFallback)) {
       throw new Error("spaFallback must be a boolean.");
     }
-    const bot = this.#conversation.requireKnownBot(context.botId);
+    const agent = this.#conversation.requireKnownAgent(context.agentId);
     const input = {
       sourcePath,
       title,
       description,
       ...(isBoolean(args.spaFallback) ? { spaFallback: args.spaFallback } : {}),
     };
-    const roots = [bot.workspacePath, this.#store.sharedRoot];
+    const roots = [agent.workspacePath, this.#store.sharedRoot];
     const siteId =
       context.action === "publish" ? undefined : siteToolString(args.siteId, "siteId", INPUT_LIMITS.identifier);
     const site = siteId
@@ -334,7 +334,7 @@ export class HostedSiteCoordinator {
       this.#recordEvent(context, status, details, createdAt);
       return true;
     } catch (error) {
-      this.#emitError("hosted_site_marker_persistence_failed", error, context.botId);
+      this.#emitError("hosted_site_marker_persistence_failed", error, context.agentId);
       return false;
     }
   }
@@ -346,14 +346,14 @@ export class HostedSiteCoordinator {
     deliver?: () => void,
   ): void {
     const event: PendingHostedSiteTerminalEvent = {
-      botId: context.botId,
-      threadId: this.#store.ensureThreadIdNow(context.botId),
+      agentId: context.agentId,
+      threadId: this.#store.ensureThreadIdNow(context.agentId),
       turnId: context.params.turnId,
       operationId: context.operationId,
       action: context.action,
       status,
       details,
-      markerCommandId: hostedSiteEventCommandId(context.botId, context.operationId, status),
+      markerCommandId: hostedSiteEventCommandId(context.agentId, context.operationId, status),
       createdAt: new Date().toISOString(),
     };
     hostedSiteConversationEventItemType(event.action, event.status, event.operationId);
@@ -377,10 +377,10 @@ export class HostedSiteCoordinator {
         this.#store.database.recordPendingHostedSiteTerminalEvent(event);
         durable = true;
       } catch (error) {
-        this.#emitError("hosted_site_marker_persistence_failed", error, event.botId);
+        this.#emitError("hosted_site_marker_persistence_failed", error, event.agentId);
       }
       const context: HostedSiteMutationContext = {
-        botId: event.botId,
+        agentId: event.agentId,
         operationId: event.operationId,
         action: event.action,
         params: {
@@ -404,7 +404,7 @@ export class HostedSiteCoordinator {
           try {
             deliver();
           } catch (error) {
-            this.#emitError("server_response_failed", error, event.botId);
+            this.#emitError("server_response_failed", error, event.agentId);
           }
         }
       }
@@ -428,7 +428,7 @@ export class HostedSiteCoordinator {
     createdAt: string,
   ): void {
     const database = this.#store.database;
-    this.#conversation.withConversationTransaction(context.botId, ({ threadId, snapshot: current }) => {
+    this.#conversation.withConversationTransaction(context.agentId, ({ threadId, snapshot: current }) => {
       const messageId = hostedSiteEventMessageId(context.operationId, status);
       if (!current.messages.some((message) => message.id === messageId)) {
         const message: ConversationMessage = {
@@ -444,26 +444,26 @@ export class HostedSiteCoordinator {
         current.messages.push(message);
         sortConversationMessages(current.messages);
         current.revision = database.appendConversationMessage({
-          botId: context.botId,
+          agentId: context.agentId,
           threadId,
           activeTurnId: current.activeTurnId,
           message,
           eventType: `hosted-site.${context.action}-${status}`,
-          commandId: hostedSiteEventCommandId(context.botId, context.operationId, status),
+          commandId: hostedSiteEventCommandId(context.agentId, context.operationId, status),
           detail: { action: context.action, status, operationId: context.operationId, siteId: details.siteId },
         });
       }
       if (status === "running") {
         database.recordActiveHostedSiteConversationEvent({
-          botId: context.botId,
+          agentId: context.agentId,
           threadId,
           turnId: context.params.turnId,
           createdAt,
           event: { action: context.action, status, operationId: context.operationId, ...details },
         });
       } else {
-        database.deleteActiveHostedSiteConversationEvent(context.botId, context.operationId);
-        database.deletePendingHostedSiteTerminalEvent(context.botId, context.operationId, status);
+        database.deleteActiveHostedSiteConversationEvent(context.agentId, context.operationId);
+        database.deletePendingHostedSiteTerminalEvent(context.agentId, context.operationId, status);
       }
       // The idempotency guard above means this can legitimately append nothing and still publish.
       return { result: undefined, snapshot: current };
@@ -471,16 +471,16 @@ export class HostedSiteCoordinator {
   }
 
   #reconcileEventsAfterRestart(): void {
-    for (const { botId, threadId, turnId, event } of this.#store.database.activeHostedSiteConversationEvents()) {
+    for (const { agentId, threadId, turnId, event } of this.#store.database.activeHostedSiteConversationEvents()) {
       if (
         [...this.#pendingTerminalEvents.values()].some(
-          (pending) => pending.botId === botId && pending.operationId === event.operationId,
+          (pending) => pending.agentId === agentId && pending.operationId === event.operationId,
         )
       ) {
         continue;
       }
       const context: HostedSiteMutationContext = {
-        botId,
+        agentId,
         operationId: event.operationId,
         action: event.action,
         params: {

@@ -23,7 +23,7 @@ export function WorkspaceLeftPanelResizer() {
     <PanelResizer
       class="left-panel-resizer"
       label="Resize left sidebar"
-      controls="bot-sidebar"
+      controls="agent-sidebar"
       direction="left"
       value={layout.leftPanelWidth()}
       defaultValue={LEFT_PANEL_DEFAULT}

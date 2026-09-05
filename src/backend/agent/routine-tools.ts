@@ -11,9 +11,9 @@ export function routineToolArguments(value: unknown, allowedKeys: readonly strin
   return value;
 }
 
-export function routineToolBotId(args: DynamicRecord, senderBotId: string): string {
-  if (args.botId === undefined) return senderBotId;
-  return routineToolString(args.botId, "botId", INPUT_LIMITS.identifier, "botId is required.");
+export function routineToolAgentId(args: DynamicRecord, senderAgentId: string): string {
+  if (args.agentId === undefined) return senderAgentId;
+  return routineToolString(args.agentId, "agentId", INPUT_LIMITS.identifier, "agentId is required.");
 }
 
 export function routineToolString(value: unknown, field: string, limit: number, requiredMessage: string): string {

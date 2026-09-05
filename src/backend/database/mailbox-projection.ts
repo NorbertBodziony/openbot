@@ -13,7 +13,7 @@ export interface MailboxProjectionMessage {
   id: string;
   sender: {
     kind: string;
-    botId?: string;
+    agentId?: string;
     routineId?: string;
     runId?: string;
     routineName?: string;
@@ -28,7 +28,7 @@ export interface MailboxProjectionMessage {
 export interface MailboxProjectionDelivery {
   id: string;
   messageId: string;
-  recipientBotId: string;
+  recipientAgentId: string;
   status: string;
   turnId: string | null;
   error: string | null;
@@ -49,10 +49,10 @@ export interface MailboxProjectionGeneratedAttachment extends MailboxProjectionA
 }
 
 export interface MailboxProjectionReaction {
-  botId: string;
+  agentId: string;
   messageId: string;
   emoji: string;
-  actor: { kind: "user" } | { kind: "bot"; botId: string };
+  actor: { kind: "user" } | { kind: "agent"; agentId: string };
   updatedAt: string;
 }
 
@@ -61,7 +61,7 @@ export interface MailboxProjectionState {
   deliveries: MailboxProjectionDelivery[];
   drafts: MailboxProjectionDraft[];
   generatedAttachments: MailboxProjectionGeneratedAttachment[];
-  pausedBotIds: string[];
+  pausedAgentIds: string[];
   idempotency: Record<string, string>;
   reactions: MailboxProjectionReaction[];
 }
@@ -132,7 +132,7 @@ export class MailboxProjection {
           messageInsert.run(
             String(message.id),
             sender.kind,
-            sender.botId ?? null,
+            sender.agentId ?? null,
             String(message.text),
             isString(message.replyToMessageId) ? message.replyToMessageId : null,
             String(message.createdAt),
@@ -161,7 +161,7 @@ export class MailboxProjection {
           deliveryInsert.run(
             String(delivery.id),
             String(delivery.messageId),
-            String(delivery.recipientBotId),
+            String(delivery.recipientAgentId),
             String(delivery.status),
             isString(delivery.turnId) ? delivery.turnId : null,
             isString(delivery.error) ? delivery.error : null,
@@ -175,19 +175,19 @@ export class MailboxProjection {
             (agent_id, paused, metadata_json, last_event_sequence) VALUES (?, ?, ?, ?)
         `);
         queueInsert.run("__mailbox__", 0, JSON.stringify({ idempotency: value.idempotency }), sequence);
-        for (const botId of value.pausedBotIds) queueInsert.run(botId, 1, "{}", sequence);
+        for (const agentId of value.pausedAgentIds) queueInsert.run(agentId, 1, "{}", sequence);
         const reactionInsert = db.prepare(`
           INSERT INTO projection_reactions
-            (agent_id, message_id, emoji, actor_kind, actor_bot_id, updated_at, last_event_sequence)
+            (agent_id, message_id, emoji, actor_kind, actor_agent_id, updated_at, last_event_sequence)
           VALUES (?, ?, ?, ?, ?, ?, ?)
         `);
         for (const reaction of value.reactions) {
           reactionInsert.run(
-            String(reaction.botId),
+            String(reaction.agentId),
             String(reaction.messageId),
             String(reaction.emoji),
-            reaction.actor.kind,
-            reaction.actor.kind === "bot" ? reaction.actor.botId : "",
+            reaction.actor.kind === "agent" ? "agent" : reaction.actor.kind,
+            reaction.actor.kind === "agent" ? reaction.actor.agentId : "",
             String(reaction.updatedAt),
             sequence,
           );
@@ -270,20 +270,20 @@ export class MailboxProjection {
     const generatedAttachments = databaseRows(
       db.prepare("SELECT metadata_json FROM projection_attachments WHERE owner_kind = 'generated'").all(),
     ).map((row) => JSON.parse(requiredStringColumn(row, "metadata_json")));
-    const pausedBotIds = databaseRows(
+    const pausedAgentIds = databaseRows(
       db.prepare("SELECT agent_id FROM projection_queue_state WHERE paused = 1").all(),
     ).map((row) => requiredStringColumn(row, "agent_id"));
     const reactions = databaseRows(
       db
-        .prepare("SELECT agent_id, message_id, emoji, actor_kind, actor_bot_id, updated_at FROM projection_reactions")
+        .prepare("SELECT agent_id, message_id, emoji, actor_kind, actor_agent_id, updated_at FROM projection_reactions")
         .all(),
     ).map((row) => ({
-      botId: requiredStringColumn(row, "agent_id"),
+      agentId: requiredStringColumn(row, "agent_id"),
       messageId: requiredStringColumn(row, "message_id"),
       emoji: requiredStringColumn(row, "emoji"),
       actor:
-        requiredStringColumn(row, "actor_kind") === "bot"
-          ? { kind: "bot" as const, botId: requiredStringColumn(row, "actor_bot_id") }
+        requiredStringColumn(row, "actor_kind") === "agent"
+          ? { kind: "agent" as const, agentId: requiredStringColumn(row, "actor_agent_id") }
           : { kind: "user" as const },
       updatedAt: requiredStringColumn(row, "updated_at"),
     }));
@@ -293,7 +293,7 @@ export class MailboxProjection {
       deliveries,
       drafts,
       generatedAttachments,
-      pausedBotIds,
+      pausedAgentIds,
       idempotency: metadata.idempotency ?? {},
       reactions,
     };

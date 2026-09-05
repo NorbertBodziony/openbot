@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { BotSummary } from "@openbot/contracts/ipc";
+import type { AgentSummary } from "@openbot/contracts/ipc";
 import { zipSync } from "fflate";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CentralAuthManager } from "./central-auth-manager";
@@ -72,7 +72,7 @@ describe("SkillMarketplaceService", () => {
       },
     });
     await auth.initialize();
-    const bot: BotSummary = {
+    const agent: AgentSummary = {
       id: "writer",
       provider: "codex",
       name: "Writer",
@@ -89,41 +89,43 @@ describe("SkillMarketplaceService", () => {
       avatarHue: null,
       avatarUrl: null,
     };
-    const refreshedBots: string[] = [];
+    const refreshedAgents: string[] = [];
     const service = new SkillMarketplaceService(
       auth,
-      () => [bot],
-      async (botId) => {
-        refreshedBots.push(botId);
+      () => [agent],
+      async (agentId) => {
+        refreshedAgents.push(agentId);
       },
     );
 
-    await expect(service.install({ botId: bot.id, skillId: "skill-1" })).resolves.toMatchObject({ state: "installed" });
+    await expect(service.install({ agentId: agent.id, skillId: "skill-1" })).resolves.toMatchObject({
+      state: "installed",
+    });
     await expect(
-      readFile(join(bot.workspacePath, ".agents", "skills", "release-notes", "SKILL.md"), "utf8"),
+      readFile(join(agent.workspacePath, ".agents", "skills", "release-notes", "SKILL.md"), "utf8"),
     ).resolves.toContain("Release Notes");
     await expect(
-      readFile(join(bot.workspacePath, ".claude", "skills", "release-notes", "SKILL.md"), "utf8"),
+      readFile(join(agent.workspacePath, ".claude", "skills", "release-notes", "SKILL.md"), "utf8"),
     ).resolves.toContain("Release Notes");
     expect(requests).toContain("POST /v1/skills/skill-1/install");
-    expect(refreshedBots).toEqual([bot.id]);
+    expect(refreshedAgents).toEqual([agent.id]);
 
-    await writeFile(join(bot.workspacePath, ".agents", "skills", "release-notes", "SKILL.md"), "locally changed");
+    await writeFile(join(agent.workspacePath, ".agents", "skills", "release-notes", "SKILL.md"), "locally changed");
     requests.length = 0;
-    await expect(service.listInstalledForChatTags(bot.id)).resolves.toEqual([
+    await expect(service.listInstalledForChatTags(agent.id)).resolves.toEqual([
       expect.objectContaining({ state: "modified" }),
     ]);
     expect(requests).toEqual([]);
-    await expect(service.listInstalled(bot.id)).resolves.toEqual([expect.objectContaining({ state: "modified" })]);
-    await expect(service.uninstall({ botId: bot.id, skillId: "skill-1" })).rejects.toThrow("local changes");
-    await writeFile(join(bot.workspacePath, ".agents", "skills", "release-notes", "SKILL.md"), skillContents);
-    await rm(join(bot.workspacePath, ".claude", "skills", "release-notes", "references", "template.md"));
-    await expect(service.listInstalledForChatTags(bot.id)).resolves.toEqual([
+    await expect(service.listInstalled(agent.id)).resolves.toEqual([expect.objectContaining({ state: "modified" })]);
+    await expect(service.uninstall({ agentId: agent.id, skillId: "skill-1" })).rejects.toThrow("local changes");
+    await writeFile(join(agent.workspacePath, ".agents", "skills", "release-notes", "SKILL.md"), skillContents);
+    await rm(join(agent.workspacePath, ".claude", "skills", "release-notes", "references", "template.md"));
+    await expect(service.listInstalledForChatTags(agent.id)).resolves.toEqual([
       expect.objectContaining({ state: "needs-repair" }),
     ]);
     await expect(
-      service.uninstall({ botId: bot.id, skillId: "skill-1", removeModified: true }),
+      service.uninstall({ agentId: agent.id, skillId: "skill-1", removeModified: true }),
     ).resolves.toBeUndefined();
-    expect(refreshedBots).toEqual([bot.id, bot.id]);
+    expect(refreshedAgents).toEqual([agent.id, agent.id]);
   });
 });

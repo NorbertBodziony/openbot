@@ -2,14 +2,14 @@ import type {
   AccountSession,
   AccountUsage,
   AgentEvent,
+  AgentMemory,
   AgentModelOption,
   AgentStatus,
+  AgentSummary,
   AnalyticsPreference,
   AppInfo,
   AppSetupState,
   AttachmentImportEvent,
-  BotMemory,
-  BotSummary,
   BrowserControlState,
   BrowserOpenInput,
   BrowserPictureInPictureEvent,
@@ -54,7 +54,7 @@ import type {
   TeamMemberSummary,
   TeamPresenceSnapshot,
   TeamSessionSummary,
-  UpdateBotInput,
+  UpdateAgentInput,
   UpdateQueuedMessageInput,
   UpdateStatus,
   UpdateTeamMemberInput,
@@ -67,8 +67,8 @@ import {
 import browserTakeoverPreviewUrl from "../../stories/assets/browser-takeover-preview.svg";
 import {
   STORY_AGENT_STATUS,
+  STORY_AGENT_SUMMARIES,
   STORY_APP_INFO,
-  STORY_BOT_SUMMARIES,
   STORY_BROWSER_CONTROL,
   STORY_BROWSER_TABS,
   STORY_DIRECT_SNAPSHOTS,
@@ -96,7 +96,7 @@ export interface MockOpenBotOptions {
   setupState?: AppSetupState;
   agentStatus?: AgentStatus;
   usage?: AccountUsage;
-  bots?: BotSummary[];
+  agents?: AgentSummary[];
   models?: AgentModelOption[];
   snapshots?: Record<string, ConversationSnapshot>;
   browserTabs?: BrowserTab[];
@@ -112,17 +112,20 @@ export interface MockOpenBotOptions {
   sessions?: TeamSessionSummary[];
   remoteDesktopSessions?: RemoteDesktopSession[];
   updateStatus?: UpdateStatus;
-  memories?: Record<string, BotMemory[]>;
+  memories?: Record<string, AgentMemory[]>;
   routines?: Record<string, Routine[]>;
 }
 
 export interface MockOpenBotControls {
   api: OpenBotDesktopApi;
   emitAgentEvent: (event: AgentEvent) => void;
-  onLatestConversationOpened: (listener: (botId: string) => void) => () => void;
+  onLatestConversationOpened: (listener: (agentId: string) => void) => () => void;
   onLatestDirectConversationOpened: (listener: (memberId: string) => void) => () => void;
-  readConversationSnapshot: (botId: string) => ConversationSnapshot;
-  updateConversationSnapshot: (botId: string, update: (snapshot: ConversationSnapshot) => void) => ConversationSnapshot;
+  readConversationSnapshot: (agentId: string) => ConversationSnapshot;
+  updateConversationSnapshot: (
+    agentId: string,
+    update: (snapshot: ConversationSnapshot) => void,
+  ) => ConversationSnapshot;
   readDirectConversationSnapshot: (memberId: string) => DirectConversationSnapshot;
   updateDirectConversationSnapshot: (
     memberId: string,
@@ -131,7 +134,7 @@ export interface MockOpenBotControls {
   emitConversationDelta: (
     event: Omit<Extract<AgentEvent, { type: "conversation-delta" }>, "type" | "revision">,
   ) => void;
-  setQueueSnapshot: (botId: string, deliveries: QueueDelivery[]) => QueueSnapshot;
+  setQueueSnapshot: (agentId: string, deliveries: QueueDelivery[]) => QueueSnapshot;
   emitAuthState: (state: CentralAuthState) => void;
   emitPresence: (snapshot: TeamPresenceSnapshot) => void;
   emitDirectMessage: (event: DirectMessageRealtimeEvent) => void;
@@ -163,7 +166,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
   let dynamicIslandPreference: DynamicIslandPreference = { ...DEFAULT_DYNAMIC_ISLAND_PREFERENCE };
   let dynamicIslandPresentation: DynamicIslandPresentation = { serverId: "local", mode: "idle" };
   const agentStatus = clone(options.agentStatus ?? STORY_AGENT_STATUS);
-  let bots = clone(options.bots ?? STORY_BOT_SUMMARIES);
+  let agents = clone(options.agents ?? STORY_AGENT_SUMMARIES);
   let sidebarLayout: SidebarLayoutSnapshot = {
     revision: 0,
     sections: [],
@@ -217,9 +220,9 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
   let remoteDesktopSessions = clone(options.remoteDesktopSessions ?? [STORY_REMOTE_DESKTOP_SESSION]);
   let updateStatus = clone(options.updateStatus ?? STORY_UPDATE_STATUS);
   const usage = clone(options.usage ?? STORY_USAGE);
-  const usageTarget = bots[0];
+  const usageTarget = agents[0];
   const usageTargetKey = usageTarget ? `${usageTarget.provider}:${usageTarget.model}` : null;
-  let botCounter = bots.length;
+  let agentCounter = agents.length;
   let messageCounter = 10;
   let directMessageCounter = 10;
 
@@ -249,9 +252,9 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
     }, delay);
     timers.add(timer);
   };
-  const emptyQueue = (botId: string): QueueSnapshot => ({ botId, deliveries: [] });
-  const queues = new Map<string, QueueSnapshot>(bots.map((bot) => [bot.id, emptyQueue(bot.id)]));
-  const memories = new Map<string, BotMemory[]>(Object.entries(clone(options.memories ?? {})));
+  const emptyQueue = (agentId: string): QueueSnapshot => ({ agentId, deliveries: [] });
+  const queues = new Map<string, QueueSnapshot>(agents.map((agent) => [agent.id, emptyQueue(agent.id)]));
+  const memories = new Map<string, AgentMemory[]>(Object.entries(clone(options.memories ?? {})));
   const routines = new Map<string, Routine[]>(Object.entries(clone(options.routines ?? {})));
   const routineRuns = new Map<string, RoutineRun[]>();
 
@@ -317,11 +320,11 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
     emit(remoteDesktopListeners, sessionsValue);
   }
 
-  function getSnapshot(botId: string): ConversationSnapshot {
+  function getSnapshot(agentId: string): ConversationSnapshot {
     return (
-      snapshots[botId] ?? {
-        botId,
-        threadId: `thread-${botId}`,
+      snapshots[agentId] ?? {
+        agentId,
+        threadId: `thread-${agentId}`,
         activeTurnId: null,
         revision: 0,
         messages: [],
@@ -329,45 +332,45 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
     );
   }
 
-  function updateSnapshot(botId: string, update: (snapshot: ConversationSnapshot) => void): void {
-    const snapshot = getSnapshot(botId);
+  function updateSnapshot(agentId: string, update: (snapshot: ConversationSnapshot) => void): void {
+    const snapshot = getSnapshot(agentId);
     update(snapshot);
     snapshot.revision += 1;
-    snapshots[botId] = snapshot;
+    snapshots[agentId] = snapshot;
     emitAgentEvent({ type: "conversation", snapshot });
   }
 
-  function readConversationSnapshot(botId: string): ConversationSnapshot {
-    return clone(getSnapshot(botId));
+  function readConversationSnapshot(agentId: string): ConversationSnapshot {
+    return clone(getSnapshot(agentId));
   }
 
   function updateConversationSnapshot(
-    botId: string,
+    agentId: string,
     update: (snapshot: ConversationSnapshot) => void,
   ): ConversationSnapshot {
-    updateSnapshot(botId, update);
-    return readConversationSnapshot(botId);
+    updateSnapshot(agentId, update);
+    return readConversationSnapshot(agentId);
   }
 
   function emitConversationDelta(
     event: Omit<Extract<AgentEvent, { type: "conversation-delta" }>, "type" | "revision">,
   ): void {
-    const snapshot = getSnapshot(event.botId);
+    const snapshot = getSnapshot(event.agentId);
     snapshot.revision += 1;
-    snapshots[event.botId] = snapshot;
+    snapshots[event.agentId] = snapshot;
     emitAgentEvent({ ...event, type: "conversation-delta", revision: snapshot.revision });
   }
 
-  function setQueueSnapshot(botId: string, deliveries: QueueDelivery[]): QueueSnapshot {
-    const snapshot = { botId, deliveries: clone(deliveries) };
-    queues.set(botId, snapshot);
+  function setQueueSnapshot(agentId: string, deliveries: QueueDelivery[]): QueueSnapshot {
+    const snapshot = { agentId, deliveries: clone(deliveries) };
+    queues.set(agentId, snapshot);
     emitAgentEvent({ type: "queue-changed", snapshot });
     return clone(snapshot);
   }
 
-  function createBotSummary(input: Partial<BotSummary> = {}): BotSummary {
-    botCounter += 1;
-    const id = input.id ?? `mock-agent-${botCounter}`;
+  function createAgentSummary(input: Partial<AgentSummary> = {}): AgentSummary {
+    agentCounter += 1;
+    const id = input.id ?? `mock-agent-${agentCounter}`;
     return {
       id,
       provider: input.provider ?? "codex",
@@ -378,7 +381,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       model: input.model ?? "gpt-5.6-luna",
       reasoningEffort: input.reasoningEffort ?? "medium",
       threadId: input.threadId ?? `thread-${id}`,
-      workspacePath: input.workspacePath ?? `/mock/OpenBot/Bots/${id}`,
+      workspacePath: input.workspacePath ?? `/mock/OpenBot/Agents/${id}`,
       preview: input.preview ?? "No messages yet",
       updatedAt: input.updatedAt ?? null,
       avatarSeed: input.avatarSeed ?? id,
@@ -576,12 +579,12 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
     },
     agent: {
       getStatus: async () => clone(agentStatus),
-      getUsage: async (botId) => {
-        const bot = bots.find((candidate) => candidate.id === botId);
-        return clone(bot && `${bot.provider}:${bot.model}` === usageTargetKey ? usage : { limits: [] });
+      getUsage: async (agentId) => {
+        const agent = agents.find((candidate) => candidate.id === agentId);
+        return clone(agent && `${agent.provider}:${agent.model}` === usageTargetKey ? usage : { limits: [] });
       },
       listModels: async () => clone(models),
-      listBots: async () => clone(bots),
+      listAgents: async () => clone(agents),
       listInstalledSkills: async () => [],
       getSidebarLayout: async () => clone(sidebarLayout),
       mutateSidebarLayout: async (action) => {
@@ -589,33 +592,33 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         emitAgentEvent({ type: "sidebar-layout-changed", layout: sidebarLayout });
         return clone(sidebarLayout);
       },
-      createBot: async (input) => {
-        const bot = createBotSummary({
+      createAgent: async (input) => {
+        const agent = createAgentSummary({
           name: input.name,
           title: "",
           description: input.description,
           avatarSeed: input.avatarSeed,
           avatarHue: input.avatarHue,
         });
-        bots = [...bots, bot];
-        queues.set(bot.id, emptyQueue(bot.id));
-        emitAgentEvent({ type: "bots-changed", bots });
+        agents = [...agents, agent];
+        queues.set(agent.id, emptyQueue(agent.id));
+        emitAgentEvent({ type: "agents-changed", agents });
         try {
-          await api.agent.sendMessage({ botId: bot.id, text: input.initialMessage, attachmentDraftIds: [] });
-          return clone(bot);
+          await api.agent.sendMessage({ agentId: agent.id, text: input.initialMessage, attachmentDraftIds: [] });
+          return clone(agent);
         } catch (error) {
-          bots = bots.filter((candidate) => candidate.id !== bot.id);
-          queues.delete(bot.id);
-          delete snapshots[bot.id];
-          emitAgentEvent({ type: "bots-changed", bots });
+          agents = agents.filter((candidate) => candidate.id !== agent.id);
+          queues.delete(agent.id);
+          delete snapshots[agent.id];
+          emitAgentEvent({ type: "agents-changed", agents });
           throw error;
         }
       },
-      duplicateBot: async (botId) => {
-        const source = bots.find((bot) => bot.id === botId);
+      duplicateAgent: async (agentId) => {
+        const source = agents.find((agent) => agent.id === agentId);
         if (!source) throw new Error("Agent not found");
-        const bot = {
-          ...createBotSummary({
+        const agent = {
+          ...createAgentSummary({
             ...source,
             id: undefined,
             name: `${source.name} copy`,
@@ -625,32 +628,32 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
           }),
           threadId: null,
         };
-        bots = [...bots, bot];
-        queues.set(bot.id, emptyQueue(bot.id));
-        snapshots[bot.id] = {
-          botId: bot.id,
+        agents = [...agents, agent];
+        queues.set(agent.id, emptyQueue(agent.id));
+        snapshots[agent.id] = {
+          agentId: agent.id,
           threadId: null,
           messages: [],
           activeTurnId: null,
           revision: 0,
         };
         memories.set(
-          bot.id,
-          (memories.get(botId) ?? []).map((memory) => ({
+          agent.id,
+          (memories.get(agentId) ?? []).map((memory) => ({
             ...memory,
             id: crypto.randomUUID(),
-            botId: bot.id,
+            agentId: agent.id,
             sourceTurnId: null,
           })),
         );
         routines.set(
-          bot.id,
-          (routines.get(botId) ?? []).map((routine) => {
+          agent.id,
+          (routines.get(agentId) ?? []).map((routine) => {
             const routineId = crypto.randomUUID();
             return {
               ...routine,
               id: routineId,
-              botId: bot.id,
+              agentId: agent.id,
               trigger: {
                 ...routine.trigger,
                 id: crypto.randomUUID(),
@@ -660,92 +663,92 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
             };
           }),
         );
-        const sourceSectionId = sidebarLayout.agentAssignments[botId] ?? null;
-        const orderWithoutBot = sidebarLayout.agentOrder.filter((agentId) => agentId !== bot.id);
-        const sourceIndex = orderWithoutBot.indexOf(botId);
-        const beforeAgentId = sourceIndex < 0 ? null : (orderWithoutBot[sourceIndex + 1] ?? null);
+        const sourceSectionId = sidebarLayout.agentAssignments[agentId] ?? null;
+        const orderWithoutAgent = sidebarLayout.agentOrder.filter((agentId) => agentId !== agent.id);
+        const sourceIndex = orderWithoutAgent.indexOf(agentId);
+        const beforeAgentId = sourceIndex < 0 ? null : (orderWithoutAgent[sourceIndex + 1] ?? null);
         sidebarLayout = applySidebarLayoutAction(sidebarLayout, {
           type: "move-agent",
-          agentId: bot.id,
+          agentId: agent.id,
           sectionId: sourceSectionId,
           beforeAgentId,
         });
-        emitAgentEvent({ type: "bots-changed", bots });
+        emitAgentEvent({ type: "agents-changed", agents });
         emitAgentEvent({ type: "sidebar-layout-changed", layout: sidebarLayout });
-        return clone({ bot, layout: sidebarLayout });
+        return clone({ agent, layout: sidebarLayout });
       },
-      updateBot: async (input: UpdateBotInput) => {
-        const current = bots.find((bot) => bot.id === input.botId);
+      updateAgent: async (input: UpdateAgentInput) => {
+        const current = agents.find((agent) => agent.id === input.agentId);
         if (!current) throw new Error("Agent not found");
-        const { botId: _botId, ...updates } = input;
+        const { agentId: _agentId, ...updates } = input;
         const updated = { ...current, ...updates };
-        bots = bots.map((bot) => (bot.id === updated.id ? updated : bot));
-        emitAgentEvent({ type: "bots-changed", bots });
+        agents = agents.map((agent) => (agent.id === updated.id ? updated : agent));
+        emitAgentEvent({ type: "agents-changed", agents });
         return clone(updated);
       },
       setAvatar: async (input: SetAgentAvatarInput) => {
-        const current = bots.find((bot) => bot.id === input.botId);
+        const current = agents.find((agent) => agent.id === input.agentId);
         if (!current) throw new Error("Agent not found");
         const updated = {
           ...current,
-          avatarUrl: input.image ? `mock-avatar://${input.botId}` : null,
+          avatarUrl: input.image ? `mock-avatar://${input.agentId}` : null,
         };
-        bots = bots.map((bot) => (bot.id === updated.id ? updated : bot));
-        emitAgentEvent({ type: "bots-changed", bots });
+        agents = agents.map((agent) => (agent.id === updated.id ? updated : agent));
+        emitAgentEvent({ type: "agents-changed", agents });
         return clone(updated);
       },
-      deleteBot: async (botId) => {
-        bots = bots.filter((bot) => bot.id !== botId);
-        queues.delete(botId);
-        memories.delete(botId);
-        routines.delete(botId);
-        emitAgentEvent({ type: "bots-changed", bots });
+      deleteAgent: async (agentId) => {
+        agents = agents.filter((agent) => agent.id !== agentId);
+        queues.delete(agentId);
+        memories.delete(agentId);
+        routines.delete(agentId);
+        emitAgentEvent({ type: "agents-changed", agents });
       },
-      listMemories: async (botId) => clone(memories.get(botId) ?? []),
+      listMemories: async (agentId) => clone(memories.get(agentId) ?? []),
       createMemory: async (input) => {
         const now = new Date().toISOString();
-        const memory: BotMemory = {
+        const memory: AgentMemory = {
           id: crypto.randomUUID(),
-          botId: input.botId,
+          agentId: input.agentId,
           text: input.text.trim(),
           origin: "manual",
           sourceTurnId: null,
           createdAt: now,
           updatedAt: now,
         };
-        memories.set(input.botId, [...(memories.get(input.botId) ?? []), memory]);
-        emitAgentEvent({ type: "memories-changed", botId: input.botId });
+        memories.set(input.agentId, [...(memories.get(input.agentId) ?? []), memory]);
+        emitAgentEvent({ type: "memories-changed", agentId: input.agentId });
         return clone(memory);
       },
       updateMemory: async (input) => {
-        const current = memories.get(input.botId)?.find((memory) => memory.id === input.memoryId);
+        const current = memories.get(input.agentId)?.find((memory) => memory.id === input.memoryId);
         if (!current) throw new Error("Memory not found");
         const updated = { ...current, text: input.text.trim(), updatedAt: new Date().toISOString() };
         memories.set(
-          input.botId,
-          (memories.get(input.botId) ?? []).map((memory) => (memory.id === input.memoryId ? updated : memory)),
+          input.agentId,
+          (memories.get(input.agentId) ?? []).map((memory) => (memory.id === input.memoryId ? updated : memory)),
         );
-        emitAgentEvent({ type: "memories-changed", botId: input.botId });
+        emitAgentEvent({ type: "memories-changed", agentId: input.agentId });
         return clone(updated);
       },
       deleteMemory: async (input) => {
         memories.set(
-          input.botId,
-          (memories.get(input.botId) ?? []).filter((memory) => memory.id !== input.memoryId),
+          input.agentId,
+          (memories.get(input.agentId) ?? []).filter((memory) => memory.id !== input.memoryId),
         );
-        emitAgentEvent({ type: "memories-changed", botId: input.botId });
+        emitAgentEvent({ type: "memories-changed", agentId: input.agentId });
       },
-      clearMemories: async (botId) => {
-        memories.delete(botId);
-        emitAgentEvent({ type: "memories-changed", botId });
+      clearMemories: async (agentId) => {
+        memories.delete(agentId);
+        emitAgentEvent({ type: "memories-changed", agentId });
       },
-      listRoutines: async (botId) => clone(routines.get(botId) ?? []),
+      listRoutines: async (agentId) => clone(routines.get(agentId) ?? []),
       createRoutine: async (input) => {
         const now = new Date().toISOString();
         const routineId = crypto.randomUUID();
         const routine: Routine = {
           id: routineId,
-          botId: input.botId,
+          agentId: input.agentId,
           name: input.name.trim(),
           instruction: input.instruction.trim(),
           active: input.active,
@@ -761,12 +764,12 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
           createdAt: now,
           updatedAt: now,
         };
-        routines.set(input.botId, [routine, ...(routines.get(input.botId) ?? [])]);
-        emitAgentEvent({ type: "routines-changed", botId: input.botId });
+        routines.set(input.agentId, [routine, ...(routines.get(input.agentId) ?? [])]);
+        emitAgentEvent({ type: "routines-changed", agentId: input.agentId });
         return clone(routine);
       },
       updateRoutine: async (input) => {
-        const current = routines.get(input.botId)?.find((routine) => routine.id === input.routineId);
+        const current = routines.get(input.agentId)?.find((routine) => routine.id === input.routineId);
         if (!current) throw new Error("Routine not found");
         const updated: Routine = {
           ...current,
@@ -788,27 +791,27 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
           updatedAt: new Date().toISOString(),
         };
         routines.set(
-          input.botId,
-          (routines.get(input.botId) ?? []).map((routine) => (routine.id === current.id ? updated : routine)),
+          input.agentId,
+          (routines.get(input.agentId) ?? []).map((routine) => (routine.id === current.id ? updated : routine)),
         );
-        emitAgentEvent({ type: "routines-changed", botId: input.botId });
+        emitAgentEvent({ type: "routines-changed", agentId: input.agentId });
         return clone(updated);
       },
       deleteRoutine: async (input) => {
         routines.set(
-          input.botId,
-          (routines.get(input.botId) ?? []).filter((routine) => routine.id !== input.routineId),
+          input.agentId,
+          (routines.get(input.agentId) ?? []).filter((routine) => routine.id !== input.routineId),
         );
-        emitAgentEvent({ type: "routines-changed", botId: input.botId });
+        emitAgentEvent({ type: "routines-changed", agentId: input.agentId });
       },
       testRoutine: async (input) => {
-        const routine = routines.get(input.botId)?.find((candidate) => candidate.id === input.routineId);
+        const routine = routines.get(input.agentId)?.find((candidate) => candidate.id === input.routineId);
         if (!routine) throw new Error("Routine not found");
         const now = new Date().toISOString();
         const run: RoutineRun = {
           id: crypto.randomUUID(),
           routineId: routine.id,
-          botId: input.botId,
+          agentId: input.agentId,
           triggerId: null,
           kind: "manual",
           scheduledFor: now,
@@ -821,19 +824,19 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
           updatedAt: now,
         };
         routineRuns.set(routine.id, [run, ...(routineRuns.get(routine.id) ?? [])]);
-        emitAgentEvent({ type: "routines-changed", botId: input.botId });
+        emitAgentEvent({ type: "routines-changed", agentId: input.agentId });
         return clone(run);
       },
       listRoutineRuns: async (input) => clone((routineRuns.get(input.routineId) ?? []).slice(0, input.limit)),
-      readConversation: async (botId) => ({
-        ...clone(getSnapshot(botId)),
+      readConversation: async (agentId) => ({
+        ...clone(getSnapshot(agentId)),
         readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
       }),
       readConversationPage: async (input) => {
         if (!input.anchor || input.anchor.type === "latest") {
-          emit(latestConversationListeners, input.botId);
+          emit(latestConversationListeners, input.agentId);
         }
-        const snapshot = clone(getSnapshot(input.botId));
+        const snapshot = clone(getSnapshot(input.agentId));
         const messages = snapshot.messages.slice(-Math.min(input.limit ?? 50, 100));
         return {
           ...snapshot,
@@ -845,10 +848,10 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       },
       searchConversationMessages: async (input) => {
         const query = input.query.trim().toLocaleLowerCase();
-        const results = bots.flatMap((bot) =>
-          getSnapshot(bot.id)
+        const results = agents.flatMap((agent) =>
+          getSnapshot(agent.id)
             .messages.filter((message) => message.text.toLocaleLowerCase().includes(query))
-            .map((message) => ({ botId: bot.id, message: clone(message) })),
+            .map((message) => ({ agentId: agent.id, message: clone(message) })),
         );
         return { results: results.slice(0, input.limit ?? 100), total: results.length, nextCursor: null };
       },
@@ -899,7 +902,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         const delivery: QueueDelivery = {
           id: deliveryId,
           messageId,
-          recipientBotId: input.botId,
+          recipientAgentId: input.agentId,
           sender: { kind: "user" },
           text: input.text,
           attachments: [],
@@ -910,25 +913,25 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
           error: null,
           createdAt,
         };
-        updateSnapshot(input.botId, (snapshot) => {
+        updateSnapshot(input.agentId, (snapshot) => {
           snapshot.activeTurnId = turnId;
           snapshot.messages = [...snapshot.messages, userMessage];
         });
-        queues.set(input.botId, { botId: input.botId, deliveries: [delivery] });
+        queues.set(input.agentId, { agentId: input.agentId, deliveries: [delivery] });
         emitAgentEvent({
           type: "queue-changed",
-          snapshot: queues.get(input.botId) ?? emptyQueue(input.botId),
+          snapshot: queues.get(input.agentId) ?? emptyQueue(input.agentId),
         });
         emitAgentEvent({
           type: "turn-started",
-          botId: input.botId,
-          threadId: getSnapshot(input.botId).threadId ?? `thread-${input.botId}`,
+          agentId: input.agentId,
+          threadId: getSnapshot(input.agentId).threadId ?? `thread-${input.agentId}`,
           turnId,
         });
         emitAgentEvent({
           type: "turn-progress",
-          botId: input.botId,
-          threadId: getSnapshot(input.botId).threadId ?? `thread-${input.botId}`,
+          agentId: input.agentId,
+          threadId: getSnapshot(input.agentId).threadId ?? `thread-${input.agentId}`,
           turnId,
           detail: "Reviewing your request…",
         });
@@ -939,26 +942,26 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
             turnId,
             author: "assistant",
             source: "assistant",
-            text: `Mock reply from ${bots.find((bot) => bot.id === input.botId)?.name ?? "agent"}: I received “${input.text}” and added it to the working context.`,
+            text: `Mock reply from ${agents.find((agent) => agent.id === input.agentId)?.name ?? "agent"}: I received “${input.text}” and added it to the working context.`,
             createdAt: new Date().toISOString(),
             status: "completed",
           };
-          updateSnapshot(input.botId, (snapshot) => {
+          updateSnapshot(input.agentId, (snapshot) => {
             snapshot.activeTurnId = null;
             snapshot.messages = [...snapshot.messages, assistantMessage];
           });
-          queues.set(input.botId, {
-            botId: input.botId,
+          queues.set(input.agentId, {
+            agentId: input.agentId,
             deliveries: [{ ...delivery, status: "completed" }],
           });
           emitAgentEvent({
             type: "queue-changed",
-            snapshot: queues.get(input.botId) ?? emptyQueue(input.botId),
+            snapshot: queues.get(input.agentId) ?? emptyQueue(input.agentId),
           });
           emitAgentEvent({
             type: "turn-completed",
-            botId: input.botId,
-            threadId: getSnapshot(input.botId).threadId ?? `thread-${input.botId}`,
+            agentId: input.agentId,
+            threadId: getSnapshot(input.agentId).threadId ?? `thread-${input.agentId}`,
             turnId,
             status: "completed",
           });
@@ -966,11 +969,11 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
 
         return {
           messageId,
-          deliveries: [{ id: deliveryId, recipientBotId: input.botId, status: "running", position: null }],
+          deliveries: [{ id: deliveryId, recipientAgentId: input.agentId, status: "running", position: null }],
         };
       },
       setMessageReaction: async (input: SetMessageReactionInput) => {
-        updateSnapshot(input.botId, (snapshot) => {
+        updateSnapshot(input.agentId, (snapshot) => {
           const message = snapshot.messages.find((candidate) => candidate.id === input.messageId);
           if (message) {
             message.reaction = input.emoji;
@@ -981,49 +984,49 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
           }
         });
       },
-      listQueue: async (botId) => clone(queues.get(botId) ?? emptyQueue(botId)),
+      listQueue: async (agentId) => clone(queues.get(agentId) ?? emptyQueue(agentId)),
       acknowledgeFailedTurn: async () => undefined,
       cancelQueuedMessage: async (input) => {
-        const queue = queues.get(input.botId) ?? emptyQueue(input.botId);
+        const queue = queues.get(input.agentId) ?? emptyQueue(input.agentId);
         queue.deliveries = queue.deliveries.map((delivery) =>
           delivery.id === input.deliveryId ? { ...delivery, status: "cancelled" } : delivery,
         );
-        queues.set(input.botId, queue);
+        queues.set(input.agentId, queue);
         emitAgentEvent({ type: "queue-changed", snapshot: queue });
       },
       steerQueuedMessage: async (input: SteerQueuedMessageInput) => {
-        const queue = queues.get(input.botId) ?? emptyQueue(input.botId);
+        const queue = queues.get(input.agentId) ?? emptyQueue(input.agentId);
         queue.deliveries = queue.deliveries.map((delivery) =>
           delivery.id === input.deliveryId
             ? { ...delivery, status: "running", turnId: input.expectedTurnId, position: null }
             : delivery,
         );
-        queues.set(input.botId, queue);
+        queues.set(input.agentId, queue);
         emitAgentEvent({ type: "queue-changed", snapshot: queue });
       },
       updateQueuedMessage: async (input: UpdateQueuedMessageInput) => {
-        const queue = queues.get(input.botId) ?? emptyQueue(input.botId);
+        const queue = queues.get(input.agentId) ?? emptyQueue(input.agentId);
         queue.deliveries = queue.deliveries.map((delivery) =>
           delivery.id === input.deliveryId ? { ...delivery, text: input.text } : delivery,
         );
-        queues.set(input.botId, queue);
+        queues.set(input.agentId, queue);
         emitAgentEvent({ type: "queue-changed", snapshot: queue });
       },
       reorderQueue: async (input: ReorderQueueInput) => {
-        const queue = queues.get(input.botId) ?? emptyQueue(input.botId);
+        const queue = queues.get(input.agentId) ?? emptyQueue(input.agentId);
         const byId = new Map(queue.deliveries.map((delivery) => [delivery.id, delivery]));
         queue.deliveries = input.deliveryIds.flatMap((deliveryId, index) => {
           const delivery = byId.get(deliveryId);
           return delivery ? [{ ...delivery, position: index + 1 }] : [];
         });
-        queues.set(input.botId, queue);
+        queues.set(input.agentId, queue);
         emitAgentEvent({ type: "queue-changed", snapshot: queue });
       },
       interrupt: async (input) => {
         emitAgentEvent({
           type: "turn-completed",
-          botId: input.botId,
-          threadId: getSnapshot(input.botId).threadId ?? `thread-${input.botId}`,
+          agentId: input.agentId,
+          threadId: getSnapshot(input.agentId).threadId ?? `thread-${input.agentId}`,
           turnId: input.turnId,
           status: "interrupted",
         });
@@ -1049,7 +1052,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
           url: input.url,
           loading: false,
           ownerThreadId: input.ownerThreadId ?? null,
-          ownerBotId: input.ownerBotId ?? null,
+          ownerAgentId: input.ownerAgentId ?? null,
         };
         browserTabs = [...browserTabs, tab];
         activeBrowserTabId = tab.id;
@@ -1141,7 +1144,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       list: async () => clone(servers),
       select: async (serverId) => {
         servers = servers.map((server) => ({ ...server, active: server.id === serverId }));
-        emitAgentEvent({ type: "bots-changed", bots });
+        emitAgentEvent({ type: "agents-changed", agents });
         return clone(servers);
       },
       reorder: async ({ serverIds }) => {

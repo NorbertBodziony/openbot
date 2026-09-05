@@ -156,7 +156,7 @@ export function ApprovalCard(props: {
 }
 
 export function BrowserTakeoverCard(props: {
-  botName: string;
+  agentName: string;
   tab: BrowserTab | undefined;
   preview: BrowserPreview | null;
   previewStatus: "idle" | "loading" | "ready" | "failed";
@@ -213,10 +213,10 @@ export function BrowserTakeoverCard(props: {
         </h2>
         <p>
           {completed()
-            ? `${props.botName} is continuing.`
+            ? `${props.agentName} is continuing.`
             : cancelled()
               ? "The browser step was cancelled."
-              : `Finish the sign-in, verification, or consent in the open browser. Then let ${props.botName} continue.`}
+              : `Finish the sign-in, verification, or consent in the open browser. Then let ${props.agentName} continue.`}
         </p>
       </div>
 

@@ -20,32 +20,32 @@ export function SidebarDialogs() {
         }}
       >
         <Show when={deleteTarget()}>
-          {(bot) => (
+          {(agent) => (
             <AlertDialog.Portal>
-              <AlertDialog.Overlay class="bot-delete-backdrop">
-                <AlertDialog.Content class="bot-delete-dialog">
+              <AlertDialog.Overlay class="agent-delete-backdrop">
+                <AlertDialog.Content class="agent-delete-dialog">
                   <AgentAvatar
-                    bot={bot()}
+                    agent={agent()}
                     style={{
                       width: "44px",
                       height: "44px",
                       "margin-bottom": "15px",
                     }}
                   />
-                  <AlertDialog.Title>Delete {bot().name}?</AlertDialog.Title>
+                  <AlertDialog.Title>Delete {agent().name}?</AlertDialog.Title>
                   <AlertDialog.Description>
                     This removes the agent and its OpenBot conversation from the app. Its queue, memories, routines, and
                     workspace are deleted. History stored separately by the connected CLI provider is not deleted.
                   </AlertDialog.Description>
-                  <Show when={deleteError()}>{(message) => <p class="bot-delete-error">{message()}</p>}</Show>
-                  <div class="bot-delete-actions">
+                  <Show when={deleteError()}>{(message) => <p class="agent-delete-error">{message()}</p>}</Show>
+                  <div class="agent-delete-actions">
                     <Button variant="outline" type="button" disabled={deleting()} onClick={closeDelete}>
                       Cancel
                     </Button>
                     <Button
                       variant="destructive"
                       type="button"
-                      class="bot-delete-confirm"
+                      class="agent-delete-confirm"
                       disabled={deleting()}
                       onClick={() => void confirmDelete()}
                     >
@@ -68,8 +68,8 @@ export function SidebarDialogs() {
         <Show when={sectionDeleteTarget()}>
           {(section) => (
             <AlertDialog.Portal>
-              <AlertDialog.Overlay class="bot-delete-backdrop">
-                <AlertDialog.Content class="bot-delete-dialog sidebar-section-delete-dialog">
+              <AlertDialog.Overlay class="agent-delete-backdrop">
+                <AlertDialog.Content class="agent-delete-dialog sidebar-section-delete-dialog">
                   <span class="sidebar-section-delete-icon" aria-hidden="true">
                     <Trash2 class="size-5" />
                   </span>
@@ -77,15 +77,15 @@ export function SidebarDialogs() {
                   <AlertDialog.Description>
                     Agents in this section will move to Unassigned. No agents will be deleted.
                   </AlertDialog.Description>
-                  <Show when={deleteError()}>{(message) => <p class="bot-delete-error">{message()}</p>}</Show>
-                  <div class="bot-delete-actions">
+                  <Show when={deleteError()}>{(message) => <p class="agent-delete-error">{message()}</p>}</Show>
+                  <div class="agent-delete-actions">
                     <Button variant="outline" type="button" disabled={deleting()} onClick={closeDelete}>
                       Cancel
                     </Button>
                     <Button
                       variant="destructive"
                       type="button"
-                      class="bot-delete-confirm"
+                      class="agent-delete-confirm"
                       disabled={deleting()}
                       onClick={() => void confirmSectionDelete()}
                     >

@@ -4,7 +4,7 @@ export interface BrowserTab {
   url: string;
   loading: boolean;
   ownerThreadId: string | null;
-  ownerBotId: string | null;
+  ownerAgentId: string | null;
 }
 
 export interface BrowserPreview {
@@ -66,7 +66,7 @@ export type BrowserPictureInPictureEvent =
 export interface BrowserOpenInput {
   url: string;
   ownerThreadId?: string | null;
-  ownerBotId?: string | null;
+  ownerAgentId?: string | null;
   focus?: boolean;
 }
 

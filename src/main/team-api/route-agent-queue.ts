@@ -25,28 +25,28 @@ export interface AgentQueueRouteDependencies {
 
 export async function routeAgentQueue(
   context: TeamApiRequestContext,
-  { botId, action }: AgentRouteTarget,
+  { agentId, action }: AgentRouteTarget,
   { agents }: AgentQueueRouteDependencies,
 ): Promise<RouteOutcome> {
   const { method, request, json, empty } = context;
 
   if (method === "GET" && action === "queue") {
-    return json(200, agents.listQueue(botId));
+    return json(200, agents.listQueue(agentId));
   }
   if (method === "POST" && action === "failures/acknowledge") {
     const body = await readJson(request);
-    agents.acknowledgeFailedTurn(botId, stringField(body, "turnId"));
+    agents.acknowledgeFailedTurn(agentId, stringField(body, "turnId"));
     return empty(204);
   }
   if (method === "POST" && action === "queue/cancel") {
     const body = await readJson(request);
-    await agents.cancelQueuedMessage(botId, stringField(body, "deliveryId"));
+    await agents.cancelQueuedMessage(agentId, stringField(body, "deliveryId"));
     return empty(204);
   }
   if (method === "POST" && action === "queue/steer") {
     const body = await readJson(request);
     await agents.steerQueuedMessage({
-      botId,
+      agentId,
       deliveryId: stringField(body, "deliveryId"),
       expectedTurnId: stringField(body, "expectedTurnId"),
     } satisfies SteerQueuedMessageInput);
@@ -55,7 +55,7 @@ export async function routeAgentQueue(
   if (method === "POST" && action === "queue/update") {
     const body = await readJson(request);
     await agents.updateQueuedMessage({
-      botId,
+      agentId,
       deliveryId: stringField(body, "deliveryId"),
       text: stringField(body, "text", true, INPUT_LIMITS.messageText),
       keepAttachmentIds: stringArray(body, "keepAttachmentIds"),
@@ -66,14 +66,14 @@ export async function routeAgentQueue(
   if (method === "POST" && action === "queue/reorder") {
     const body = await readJson(request);
     await agents.reorderQueue({
-      botId,
+      agentId,
       deliveryIds: stringArray(body, "deliveryIds", INPUT_LIMITS.messageRecipients),
     } satisfies ReorderQueueInput);
     return empty(204);
   }
   if (method === "POST" && action === "interrupt") {
     const body = await readJson(request);
-    await agents.interrupt(botId, stringField(body, "turnId"));
+    await agents.interrupt(agentId, stringField(body, "turnId"));
     return empty(204);
   }
 

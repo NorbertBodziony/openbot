@@ -11,11 +11,10 @@ import Animated, {
   LinearTransition,
   ReduceMotion,
 } from "react-native-reanimated";
-
-import { BloubAvatar } from "@/features/bots/components/bloub-avatar";
-import { useBotContextMenu } from "@/features/bots/components/bot-context-menu";
-import { BotPinAvatar } from "@/features/bots/components/bot-pin-avatar";
-import { type MobileBot, useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
+import { useAgentContextMenu } from "@/features/agents/components/agent-context-menu";
+import { AgentPinAvatar } from "@/features/agents/components/agent-pin-avatar";
+import { BloubAvatar } from "@/features/agents/components/bloub-avatar";
+import { type MobileAgent, useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 import { isIOS } from "@/shared/lib/platform";
 
 const EASE_OUT = Easing.bezier(0.23, 1, 0.32, 1);
@@ -28,10 +27,10 @@ const PINNED_ITEM_LAYOUT = CurvedTransition.duration(240)
 const PINNED_ENTER = FadeIn.duration(180).easing(EASE_OUT).reduceMotion(ReduceMotion.System);
 const PINNED_EXIT = FadeOut.duration(140).easing(EASE_OUT).reduceMotion(ReduceMotion.System);
 
-export function PinnedBotsStrip({ bots }: { bots: MobileBot[] }) {
+export function PinnedAgentsStrip({ agents }: { agents: MobileAgent[] }) {
   return (
     <Animated.View layout={PINNED_LAYOUT}>
-      {bots.length > 0 ? (
+      {agents.length > 0 ? (
         <Animated.View exiting={PINNED_EXIT} style={{ width: "100%" }}>
           <ScrollView
             horizontal
@@ -45,8 +44,8 @@ export function PinnedBotsStrip({ bots }: { bots: MobileBot[] }) {
             }}
             showsHorizontalScrollIndicator={false}
           >
-            {bots.map((bot) => (
-              <PinnedBotItem key={bot.id} bot={bot} />
+            {agents.map((agent) => (
+              <PinnedAgentItem key={agent.id} agent={agent} />
             ))}
           </ScrollView>
         </Animated.View>
@@ -55,11 +54,11 @@ export function PinnedBotsStrip({ bots }: { bots: MobileBot[] }) {
   );
 }
 
-function PinnedBotItem({ bot }: { bot: MobileBot }) {
+function PinnedAgentItem({ agent }: { agent: MobileAgent }) {
   const [background, accent] = useThemeColor(["background", "accent"]);
-  const { unreadBotIds } = useMobileWorkspace();
-  const botContextMenu = useBotContextMenu(bot);
-  const isUnread = unreadBotIds.includes(bot.id);
+  const { unreadAgentIds } = useMobileWorkspace();
+  const agentContextMenu = useAgentContextMenu(agent);
+  const isUnread = unreadAgentIds.includes(agent.id);
 
   const handleOpen = () => {
     if (isIOS) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
@@ -67,24 +66,24 @@ function PinnedBotItem({ bot }: { bot: MobileBot }) {
 
   return (
     <Animated.View entering={PINNED_ENTER} exiting={PINNED_EXIT} layout={PINNED_ITEM_LAYOUT}>
-      <Link href={{ pathname: "/chat/[botId]", params: { botId: bot.id } }} asChild onPress={handleOpen}>
+      <Link href={{ pathname: "/chat/[agentId]", params: { agentId: agent.id } }} asChild onPress={handleOpen}>
         <Link.Trigger>
           <Pressable
-            accessibilityLabel={`Open pinned chat with ${bot.name}`}
+            accessibilityLabel={`Open pinned chat with ${agent.name}`}
             accessibilityRole="button"
             className="w-20 items-center gap-2"
             style={({ pressed }) => ({ opacity: pressed ? 0.58 : 1 })}
           >
             <Link.AppleZoom>
-              <BotPinAvatar botId={bot.id} location="pinned" size={76}>
-                <BloubAvatar hue={bot.avatarHue} seed={bot.avatarSeed} size={76} />
+              <AgentPinAvatar agentId={agent.id} location="pinned" size={76}>
+                <BloubAvatar hue={agent.avatarHue} seed={agent.avatarSeed} size={76} />
                 {isUnread ? (
                   <View
                     className="absolute right-0 top-0 size-3.5 rounded-full border-2 bg-accent"
                     style={{ borderColor: background, backgroundColor: accent }}
                   />
                 ) : null}
-              </BotPinAvatar>
+              </AgentPinAvatar>
             </Link.AppleZoom>
             <Typography.Paragraph
               type="body-xs"
@@ -92,11 +91,11 @@ function PinnedBotItem({ bot }: { bot: MobileBot }) {
               className="w-full text-text-secondary"
               numberOfLines={1}
             >
-              {bot.name}
+              {agent.name}
             </Typography.Paragraph>
           </Pressable>
         </Link.Trigger>
-        {botContextMenu}
+        {agentContextMenu}
       </Link>
     </Animated.View>
   );

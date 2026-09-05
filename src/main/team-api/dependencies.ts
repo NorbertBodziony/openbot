@@ -32,14 +32,14 @@ type TeamApiAgentMethods = Pick<
   | "getRuntimeSnapshot"
   | "getUsage"
   | "listModels"
-  | "listBots"
+  | "listAgents"
   | "listConversationReads"
-  | "createBot"
-  | "committedBotDuplication"
-  | "duplicateBot"
-  | "commitBotDuplication"
-  | "updateBot"
-  | "deleteBot"
+  | "createAgent"
+  | "committedAgentDuplication"
+  | "duplicateAgent"
+  | "commitAgentDuplication"
+  | "updateAgent"
+  | "deleteAgent"
   | "listMemories"
   | "createMemory"
   | "updateMemory"
@@ -120,7 +120,7 @@ export interface TeamApiOptions {
   appVersion?: string;
   store: TeamStore;
   agents: TeamApiAgents;
-  skills?: { listInstalledForChatTags: (botId: string) => Promise<InstalledSkill[]> };
+  skills?: { listInstalledForChatTags: (agentId: string) => Promise<InstalledSkill[]> };
   sidebarLayout?: TeamApiSidebarLayout;
   mailbox: TeamApiMailbox;
   browser: TeamApiBrowser;

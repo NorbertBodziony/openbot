@@ -4,30 +4,30 @@ import { Link, router } from "expo-router";
 import { useRef } from "react";
 import { Alert } from "react-native";
 
-import { useBotPinTransition } from "@/features/bots/components/bot-pin-transition";
-import { type MobileBot, useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
+import { useAgentPinTransition } from "@/features/agents/components/agent-pin-transition";
+import { type MobileAgent, useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 import { isIOS } from "@/shared/lib/platform";
 
-export function useBotContextMenu(bot: MobileBot) {
-  const { deleteBot, duplicateBot, hideBot, markBotRead, markBotUnread, pinnedBotIds, unreadBotIds } =
+export function useAgentContextMenu(agent: MobileAgent) {
+  const { deleteAgent, duplicateAgent, hideAgent, markAgentRead, markAgentUnread, pinnedAgentIds, unreadAgentIds } =
     useMobileWorkspace();
-  const { toggleBotPinAnimated } = useBotPinTransition();
-  const isPinned = pinnedBotIds.includes(bot.id);
-  const isUnread = unreadBotIds.includes(bot.id);
+  const { toggleAgentPinAnimated } = useAgentPinTransition();
+  const isPinned = pinnedAgentIds.includes(agent.id);
+  const isUnread = unreadAgentIds.includes(agent.id);
   const actionPending = useRef(false);
 
-  async function runBotAction(action: "delete" | "duplicate"): Promise<void> {
+  async function runAgentAction(action: "delete" | "duplicate"): Promise<void> {
     if (actionPending.current) return;
     actionPending.current = true;
     try {
-      if (action === "delete") await deleteBot(bot.id);
-      else await duplicateBot(bot.id);
+      if (action === "delete") await deleteAgent(agent.id);
+      else await duplicateAgent(agent.id);
       if (isIOS) {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
       }
     } catch (error) {
       Alert.alert(
-        action === "delete" ? "Could not delete bot" : "Could not duplicate bot",
+        action === "delete" ? "Could not delete agent" : "Could not duplicate agent",
         error instanceof Error ? error.message : "The server could not complete this action. Please try again.",
       );
     } finally {
@@ -35,22 +35,22 @@ export function useBotContextMenu(bot: MobileBot) {
     }
   }
 
-  const handlePin = () => toggleBotPinAnimated(bot.id);
+  const handlePin = () => toggleAgentPinAnimated(agent.id);
 
   const handleCopyId = () => {
-    void Clipboard.setStringAsync(bot.id).then(() => {
+    void Clipboard.setStringAsync(agent.id).then(() => {
       if (isIOS) void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     });
   };
 
   const handleDelete = () => {
-    Alert.alert(`Delete ${bot.name}?`, "This removes the bot from this server.", [
+    Alert.alert(`Delete ${agent.name}?`, "This removes the agent from this server.", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Delete",
         style: "destructive",
         onPress: () => {
-          void runBotAction("delete");
+          void runAgentAction("delete");
         },
       },
     ]);
@@ -61,8 +61,8 @@ export function useBotContextMenu(bot: MobileBot) {
       <Link.MenuAction
         icon={isUnread ? "envelope.open" : "envelope.badge"}
         onPress={() => {
-          if (isUnread) markBotRead(bot.id);
-          else markBotUnread(bot.id);
+          if (isUnread) markAgentRead(agent.id);
+          else markAgentUnread(agent.id);
           if (isIOS) void Haptics.selectionAsync();
         }}
       >
@@ -74,7 +74,7 @@ export function useBotContextMenu(bot: MobileBot) {
       <Link.MenuAction
         icon="eye.slash"
         onPress={() => {
-          hideBot(bot.id);
+          hideAgent(agent.id);
           if (isIOS) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         }}
       >
@@ -83,7 +83,7 @@ export function useBotContextMenu(bot: MobileBot) {
       <Link.Menu icon="ellipsis" title="More">
         <Link.MenuAction
           icon="pencil"
-          onPress={() => router.push({ pathname: "/edit-bot/[botId]", params: { botId: bot.id } })}
+          onPress={() => router.push({ pathname: "/edit-agent/[agentId]", params: { agentId: agent.id } })}
         >
           Edit
         </Link.MenuAction>
@@ -93,7 +93,7 @@ export function useBotContextMenu(bot: MobileBot) {
         <Link.MenuAction
           icon="plus.square.on.square"
           onPress={() => {
-            void runBotAction("duplicate");
+            void runAgentAction("duplicate");
           }}
         >
           Duplicate

@@ -196,16 +196,16 @@ export function mergeRemoteUnreadIds(current: string[], reads: Record<string, { 
 
 /** Only conversations cached for agents in this server need recovery. */
 export async function resyncRemoteConversations(input: {
-  botIds: string[];
+  agentIds: string[];
   cached: Record<string, ConversationSnapshot>;
-  load: (botId: string) => Promise<ConversationSnapshot>;
+  load: (agentId: string) => Promise<ConversationSnapshot>;
   apply: (snapshot: ConversationSnapshot) => void;
   isCurrent: () => boolean;
 }): Promise<void> {
-  for (const botId of input.botIds) {
+  for (const agentId of input.agentIds) {
     if (!input.isCurrent()) return;
-    if (!input.cached[botId]) continue;
-    const snapshot = await input.load(botId);
+    if (!input.cached[agentId]) continue;
+    const snapshot = await input.load(agentId);
     if (!input.isCurrent()) return;
     input.apply(snapshot);
   }

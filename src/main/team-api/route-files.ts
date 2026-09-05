@@ -87,15 +87,16 @@ export async function routeFiles(
     return "handled";
   }
   if (method === "GET" && url.pathname === TEAM_API_ROUTES.workspaceFiles) {
-    const botId = url.searchParams.get("botId");
+    // The released URL spells this `botId`; only the local name follows the rename.
+    const agentId = url.searchParams.get("botId");
     const workspacePath = url.searchParams.get("path");
-    if (!botId || botId.length > INPUT_LIMITS.identifier) {
+    if (!agentId || agentId.length > INPUT_LIMITS.identifier) {
       throw new HttpError(400, "A valid agent id is required.");
     }
     if (!workspacePath || workspacePath.length > INPUT_LIMITS.path) {
       throw new HttpError(400, "A valid workspace file path is required.");
     }
-    const workspaceFile = await agents.resolveWorkspaceFile(botId, workspacePath);
+    const workspaceFile = await agents.resolveWorkspaceFile(agentId, workspacePath);
     if (workspaceFile.size > ATTACHMENT_LIMITS.fileBytes) {
       throw new HttpError(413, "The workspace file exceeds the 100 MB limit.");
     }

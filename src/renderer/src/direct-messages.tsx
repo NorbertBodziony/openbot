@@ -21,9 +21,9 @@ import { createSimpleContext } from "./simple-context";
  *
  * **This domain owns `activeDirectMemberId`, and that is a deliberate departure
  * from the inventory in the plan**, which parked it in a `selection` context
- * alongside `activeBotId`. `selection` exists to break one cycle: `selectBot`
+ * alongside `activeAgentId`. `selection` exists to break one cycle: `selectAgent`
  * writes to agents, conversation and direct messages at once while conversation
- * has to read `activeBot()` back. The direct-message half has no such cycle -
+ * has to read `activeAgent()` back. The direct-message half has no such cycle -
  * twelve of the thirteen readers of `activeDirectMemberId` are the functions in
  * this file, and the command that writes it (`selectDirectMember`) already has
  * to live above every domain it touches. Splitting the id away from the

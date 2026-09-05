@@ -19,19 +19,18 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
-
-import { BloubAvatar } from "@/features/bots/components/bloub-avatar";
-import { useBotContextMenu } from "@/features/bots/components/bot-context-menu";
-import { BotPinAvatar } from "@/features/bots/components/bot-pin-avatar";
-import { type BotAvatarLocation, useBotPinTransition } from "@/features/bots/components/bot-pin-transition";
-import { type MobileBot, useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
+import { useAgentContextMenu } from "@/features/agents/components/agent-context-menu";
+import { AgentPinAvatar } from "@/features/agents/components/agent-pin-avatar";
+import { type AgentAvatarLocation, useAgentPinTransition } from "@/features/agents/components/agent-pin-transition";
+import { BloubAvatar } from "@/features/agents/components/bloub-avatar";
+import { type MobileAgent, useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 import { isIOS } from "@/shared/lib/platform";
 
 const AnimatedRect = Animated.createAnimatedComponent(Rect);
 const EASE_OUT = Easing.bezier(0.23, 1, 0.32, 1);
 
-function BotRowTextReveal({ active, children }: PropsWithChildren<{ active: boolean }>) {
-  const gradientId = `bot-row-reveal-${useId().replaceAll(":", "")}`;
+function AgentRowTextReveal({ active, children }: PropsWithChildren<{ active: boolean }>) {
+  const gradientId = `agent-row-reveal-${useId().replaceAll(":", "")}`;
   const width = useSharedValue(0);
   const progress = useSharedValue(active ? 0 : 1);
 
@@ -81,9 +80,9 @@ function BotRowTextReveal({ active, children }: PropsWithChildren<{ active: bool
   );
 }
 
-interface BotListRowProps {
-  avatarLocation?: BotAvatarLocation;
-  bot: MobileBot;
+interface AgentListRowProps {
+  avatarLocation?: AgentAvatarLocation;
+  agent: MobileAgent;
   dismissToChat?: boolean;
   enableActions?: boolean;
   enableZoomTransition?: boolean;
@@ -91,36 +90,36 @@ interface BotListRowProps {
   rightInset?: number;
 }
 
-export function BotListRow({
+export function AgentListRow({
   avatarLocation = "row",
-  bot,
+  agent,
   dismissToChat = false,
   enableActions = true,
   enableZoomTransition = true,
   leftInset = 20,
   rightInset = 20,
-}: BotListRowProps) {
+}: AgentListRowProps) {
   const [background, accent, accentForeground] = useThemeColor(["background", "accent", "accent-foreground"]);
-  const { unreadBotIds } = useMobileWorkspace();
-  const { startBotNavigationAnimated, toggleBotPinAnimated, transition } = useBotPinTransition();
+  const { unreadAgentIds } = useMobileWorkspace();
+  const { startAgentNavigationAnimated, toggleAgentPinAnimated, transition } = useAgentPinTransition();
   const pendingPinRef = useRef(false);
-  const botContextMenu = useBotContextMenu(bot);
-  const isUnread = unreadBotIds.includes(bot.id);
-  const isUnpinTarget = transition?.botId === bot.id && transition.target === "row";
+  const agentContextMenu = useAgentContextMenu(agent);
+  const isUnread = unreadAgentIds.includes(agent.id);
+  const isUnpinTarget = transition?.agentId === agent.id && transition.target === "row";
   const avatar = (
-    <BotPinAvatar botId={bot.id} location={avatarLocation} size={54}>
-      <BloubAvatar hue={bot.avatarHue} seed={bot.avatarSeed} size={54} />
-    </BotPinAvatar>
+    <AgentPinAvatar agentId={agent.id} location={avatarLocation} size={54}>
+      <BloubAvatar hue={agent.avatarHue} seed={agent.avatarSeed} size={54} />
+    </AgentPinAvatar>
   );
 
   const handleOpen = () => {
-    if (dismissToChat) startBotNavigationAnimated(bot.id, avatarLocation);
+    if (dismissToChat) startAgentNavigationAnimated(agent.id, avatarLocation);
     if (isIOS) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
   };
 
   const linkTrigger = (
     <Link.Trigger>
-      <Pressable accessibilityLabel={`Open chat with ${bot.name}`} accessibilityRole="button" className="w-full">
+      <Pressable accessibilityLabel={`Open chat with ${agent.name}`} accessibilityRole="button" className="w-full">
         {({ pressed }) => (
           <View
             className="min-h-20 w-full flex-row items-center gap-3 py-3"
@@ -132,22 +131,22 @@ export function BotListRow({
             }}
           >
             {enableZoomTransition ? <Link.AppleZoom>{avatar}</Link.AppleZoom> : avatar}
-            <BotRowTextReveal active={isUnpinTarget}>
+            <AgentRowTextReveal active={isUnpinTarget}>
               <View className="min-w-0 flex-1 gap-1">
                 <View className="flex-row items-center gap-2">
                   {isUnread ? <View className="size-2 rounded-full bg-accent" /> : null}
                   <Typography.Paragraph className="min-w-0 flex-1" weight="semibold" numberOfLines={1}>
-                    {bot.name}
+                    {agent.name}
                   </Typography.Paragraph>
                   <Typography.Paragraph type="body-xs" className="text-text-dim">
-                    {bot.updatedLabel}
+                    {agent.updatedLabel}
                   </Typography.Paragraph>
                 </View>
                 <Typography.Paragraph type="body-xs" className="text-text-secondary" numberOfLines={1}>
-                  {bot.preview}
+                  {agent.preview}
                 </Typography.Paragraph>
               </View>
-            </BotRowTextReveal>
+            </AgentRowTextReveal>
           </View>
         )}
       </Pressable>
@@ -155,13 +154,13 @@ export function BotListRow({
   );
 
   const href = {
-    pathname: "/chat/[botId]" as const,
-    params: dismissToChat ? { avatarTransition: "search", botId: bot.id } : { botId: bot.id },
+    pathname: "/chat/[agentId]" as const,
+    params: dismissToChat ? { avatarTransition: "search", agentId: agent.id } : { agentId: agent.id },
   };
-  const botLink = enableActions ? (
+  const agentLink = enableActions ? (
     <Link href={href} asChild dismissTo={dismissToChat} onPress={handleOpen}>
       {linkTrigger}
-      {botContextMenu}
+      {agentContextMenu}
     </Link>
   ) : (
     <Link href={href} asChild dismissTo={dismissToChat} onPress={handleOpen}>
@@ -169,7 +168,7 @@ export function BotListRow({
     </Link>
   );
 
-  if (!enableActions) return botLink;
+  if (!enableActions) return agentLink;
 
   const handlePin = (swipeable: SwipeableMethods) => {
     pendingPinRef.current = true;
@@ -179,7 +178,7 @@ export function BotListRow({
   const handleSwipeableClose = () => {
     if (!pendingPinRef.current) return;
     pendingPinRef.current = false;
-    toggleBotPinAnimated(bot.id);
+    toggleAgentPinAnimated(agent.id);
   };
 
   return (
@@ -193,7 +192,7 @@ export function BotListRow({
       renderRightActions={(_progress, _translation, swipeable) => (
         <View className="w-[88px] overflow-hidden" style={{ backgroundColor: accent }}>
           <Pressable
-            accessibilityLabel={`Pin ${bot.name}`}
+            accessibilityLabel={`Pin ${agent.name}`}
             accessibilityRole="button"
             className="flex-1 items-center justify-center gap-1.5"
             style={({ pressed }) => ({ backgroundColor: accent, opacity: pressed ? 0.72 : 1 })}
@@ -208,7 +207,7 @@ export function BotListRow({
       )}
       rightThreshold={42}
     >
-      {botLink}
+      {agentLink}
     </ReanimatedSwipeable>
   );
 }

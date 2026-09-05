@@ -23,7 +23,7 @@ import { createSimpleContext } from "./simple-context";
  * `resolvedPrompts` marker as soon as the scope stops reporting the prompt as
  * pending, which is exactly when the scope is being torn down.
  *
- * Keyed by server id, then by bot id, and never pruned: a marker is cleared by
+ * Keyed by server id, then by agent id, and never pruned: a marker is cleared by
  * the snapshot that resolves it, and a server the user leaves keeps at most the
  * handful of prompts that were still in flight when they left. Deliberately
  * dependency-free, like `server-switch.tsx`, so it can be mounted anywhere above
@@ -50,7 +50,7 @@ const AnsweredPrompts = createSimpleContext({
     /**
      * The scope reads and writes under its own server id, so nothing it stores
      * can be seen by another server and nothing another server stored can be
-     * read here. Bot ids are unique enough in practice, but this does not have
+     * read here. Agent ids are unique enough in practice, but this does not have
      * to rely on that.
      */
     function promptMarkersFor(serverId: string): ServerPromptMarkers {

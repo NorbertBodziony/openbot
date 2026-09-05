@@ -130,7 +130,7 @@ lifecycle stay in it; the routes live in `src/main/team-api/`, one file per doma
 | the shared vocabulary: the class every route throws, the service types, the parsers, the context | `http-error.ts`, `dependencies.ts`, `request-helpers.ts`, `request-context.ts` |
 | members, invitations, sessions, presence, the account routes behind auth | `route-team.ts` |
 | one domain each | `route-remote-screen.ts`, `route-direct.ts`, `route-browser.ts`, `route-files.ts` |
-| the agent collection and the sole `/v1/agents/:botId` regex, which owns the four below | `route-agents.ts` |
+| the agent collection and the sole `/v1/agents/:agentId` regex, which owns the four below | `route-agents.ts` |
 | one agent sub-resource each | `route-agent-memories.ts`, `route-agent-routines.ts`, `route-agent-conversation.ts`, `route-agent-queue.ts` |
 
 A new endpoint goes in the module for its domain, and nothing else has to be read. Four invariants

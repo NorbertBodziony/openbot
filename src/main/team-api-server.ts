@@ -12,7 +12,7 @@ import {
   type DirectMessageRealtimeEvent,
   type DirectThreadSummary,
   type DirectTypingRealtimeEvent,
-  type DuplicateBotResult,
+  type DuplicateAgentResult,
   type SidebarLayoutSnapshot,
   type TeamMemberSummary,
   type TeamPresenceSnapshot,
@@ -28,7 +28,6 @@ import {
   type TeamCurrentCapability,
 } from "@openbot/contracts/team-protocol/current";
 import {
-  decodeTeamProtocolV1ClientEvent,
   TEAM_APP_VERSION_HEADER,
   TEAM_PROTOCOL_V1,
   TEAM_PROTOCOL_V1_CAPABILITIES,
@@ -37,6 +36,7 @@ import {
   type TeamProtocolSupportV1,
 } from "@openbot/contracts/team-protocol/v1";
 import {
+  decodeTeamProtocolV1CurrentClientEvent,
   encodeTeamProtocolV1CurrentEvent,
   encodeTeamProtocolV1CurrentHttpResponse,
 } from "@openbot/contracts/team-protocol/v1-adapter";
@@ -86,7 +86,7 @@ interface EventClientState {
   memberId: string;
   capabilities: Set<string>;
   includeConversationEvents: boolean;
-  typingBotId: string | null;
+  typingAgentId: string | null;
   typingTimer: ReturnType<typeof setTimeout> | null;
   directTypingRecipientId: string | null;
   directTypingTimer: ReturnType<typeof setTimeout> | null;
@@ -118,7 +118,7 @@ export class TeamApiServer {
     ServerResponse,
     { method: string; path: string; protocol: number; capabilities: Set<string> }
   >();
-  readonly #duplicateRequests = new Map<string, { sourceBotId: string; result: Promise<DuplicateBotResult> }>();
+  readonly #duplicateRequests = new Map<string, { sourceAgentId: string; result: Promise<DuplicateAgentResult> }>();
   readonly #webSockets = new webSockets.WebSocketServer({
     noServer: true,
     maxPayload: EVENT_PAYLOAD_LIMIT,
@@ -138,7 +138,7 @@ export class TeamApiServer {
   #heartbeat: ReturnType<typeof setInterval> | null = null;
   #agentListener: ((event: AgentEvent) => void) | null = null;
   #sidebarLayoutListener: ((layout: SidebarLayoutSnapshot) => void) | null = null;
-  #localTypingBotId: string | null = null;
+  #localTypingAgentId: string | null = null;
   #nextRateLimitSweepAt = 0;
 
   constructor(options: TeamApiOptions) {
@@ -239,7 +239,7 @@ export class TeamApiServer {
       client.close(1001, "Server stopped");
     }
     this.#eventClients.clear();
-    this.#localTypingBotId = null;
+    this.#localTypingAgentId = null;
     try {
       await this.#options.remoteScreen?.stop();
     } finally {
@@ -268,9 +268,9 @@ export class TeamApiServer {
         return {
           ...member,
           online: memberConnections.length > 0 || (member.id === owner?.id && this.#server !== null),
-          typingBotId:
-            (member.id === owner?.id ? this.#localTypingBotId : null) ??
-            memberConnections.find((connection) => connection.typingBotId)?.typingBotId ??
+          typingAgentId:
+            (member.id === owner?.id ? this.#localTypingAgentId : null) ??
+            memberConnections.find((connection) => connection.typingAgentId)?.typingAgentId ??
             null,
         };
       }),
@@ -278,10 +278,10 @@ export class TeamApiServer {
     };
   }
 
-  setLocalTyping(botId: string | null, typing: boolean): void {
-    const next = typing && this.#server ? botId : null;
-    if (next === this.#localTypingBotId) return;
-    this.#localTypingBotId = next;
+  setLocalTyping(agentId: string | null, typing: boolean): void {
+    const next = typing && this.#server ? agentId : null;
+    if (next === this.#localTypingAgentId) return;
+    this.#localTypingAgentId = next;
     this.#publishPresence();
   }
 
@@ -563,7 +563,7 @@ export class TeamApiServer {
       agents: this.#options.agents,
       skills: this.#options.skills,
       sidebarLayout: this.#options.sidebarLayout,
-      duplicateAgent: (botId, operationId) => this.#duplicateAgent(botId, operationId),
+      duplicateAgent: (agentId, operationId) => this.#duplicateAgent(agentId, operationId),
     });
   }
 
@@ -611,14 +611,14 @@ export class TeamApiServer {
         conversationInvalidation ??=
           encodeTeamProtocolV1CurrentEvent({
             type: "conversation-invalidated",
-            botId: event.snapshot.botId,
+            agentId: event.snapshot.agentId,
             revision: event.snapshot.revision,
           }) ?? undefined;
         if (!conversationInvalidation) continue;
         outgoing = conversationInvalidation;
       } else if (event.type === "queue-changed" && supportsRuntimeSnapshots) {
         queueInvalidation ??=
-          encodeTeamProtocolV1CurrentEvent({ type: "queue-invalidated", botId: event.snapshot.botId }) ?? undefined;
+          encodeTeamProtocolV1CurrentEvent({ type: "queue-invalidated", agentId: event.snapshot.agentId }) ?? undefined;
         if (!queueInvalidation) continue;
         outgoing = queueInvalidation;
       } else if (
@@ -690,7 +690,7 @@ export class TeamApiServer {
             ),
       ),
       includeConversationEvents: !supportsSnapshotTransport,
-      typingBotId: null,
+      typingAgentId: null,
       typingTimer: null,
       directTypingRecipientId: null,
       directTypingTimer: null,
@@ -718,7 +718,7 @@ export class TeamApiServer {
             ? Buffer.concat(data).toString("utf8")
             : Buffer.from(data).toString("utf8");
         if (text.length > EVENT_PAYLOAD_LIMIT) throw new Error("Event payload is too large.");
-        const event = decodeTeamProtocolV1ClientEvent(JSON.parse(text));
+        const event = decodeTeamProtocolV1CurrentClientEvent(JSON.parse(text));
         if (event.type === "runtime-snapshot-request" && connection.capabilities.has("agent-runtime-snapshots")) {
           this.#sendRuntimeSnapshot(client, connection, true);
           return;
@@ -750,11 +750,11 @@ export class TeamApiServer {
         }
         if (event.type !== "team-typing") throw new Error("Unsupported team event.");
         const typing = event.typing;
-        const botId = event.botId;
-        if (typing && (!botId || botId.length > INPUT_LIMITS.identifier)) {
+        const agentId = event.agentId;
+        if (typing && (!agentId || agentId.length > INPUT_LIMITS.identifier)) {
           throw new Error("A valid agent is required for typing state.");
         }
-        this.#setClientTyping(connection, typing ? botId : null);
+        this.#setClientTyping(connection, typing ? agentId : null);
       } catch {
         client.close(1003, "Invalid team event payload");
       }
@@ -814,15 +814,15 @@ export class TeamApiServer {
     }
   }
 
-  #setClientTyping(connection: EventClientState, botId: string | null): void {
-    const changed = connection.typingBotId !== botId;
-    connection.typingBotId = botId;
+  #setClientTyping(connection: EventClientState, agentId: string | null): void {
+    const changed = connection.typingAgentId !== agentId;
+    connection.typingAgentId = agentId;
     if (connection.typingTimer) clearTimeout(connection.typingTimer);
-    connection.typingTimer = botId
+    connection.typingTimer = agentId
       ? setTimeout(() => {
           connection.typingTimer = null;
-          if (!connection.typingBotId) return;
-          connection.typingBotId = null;
+          if (!connection.typingAgentId) return;
+          connection.typingAgentId = null;
           this.#publishPresence();
         }, TYPING_TIMEOUT_MS)
       : null;
@@ -921,37 +921,37 @@ export class TeamApiServer {
     return this.#options.chat;
   }
 
-  #duplicateAgent(sourceBotId: string, operationId: string): Promise<DuplicateBotResult> {
-    const committed = this.#options.agents.committedBotDuplication(operationId, sourceBotId);
+  #duplicateAgent(sourceAgentId: string, operationId: string): Promise<DuplicateAgentResult> {
+    const committed = this.#options.agents.committedAgentDuplication(operationId, sourceAgentId);
     if (committed) {
-      return Promise.resolve({ bot: committed.bot, layout: this.#options.sidebarLayout.getSnapshot() });
+      return Promise.resolve({ agent: committed.agent, layout: this.#options.sidebarLayout.getSnapshot() });
     }
     const pending = this.#duplicateRequests.get(operationId);
     if (pending) {
-      if (pending.sourceBotId !== sourceBotId) {
+      if (pending.sourceAgentId !== sourceAgentId) {
         return Promise.reject(new Error("This agent duplication operation belongs to another source agent."));
       }
       return pending.result;
     }
-    const result = this.#performAgentDuplication(sourceBotId, operationId).finally(() => {
+    const result = this.#performAgentDuplication(sourceAgentId, operationId).finally(() => {
       this.#duplicateRequests.delete(operationId);
     });
-    this.#duplicateRequests.set(operationId, { sourceBotId, result });
+    this.#duplicateRequests.set(operationId, { sourceAgentId, result });
     return result;
   }
 
-  async #performAgentDuplication(sourceBotId: string, operationId: string): Promise<DuplicateBotResult> {
-    const bot = await this.#options.agents.duplicateBot(sourceBotId, operationId);
+  async #performAgentDuplication(sourceAgentId: string, operationId: string): Promise<DuplicateAgentResult> {
+    const agent = await this.#options.agents.duplicateAgent(sourceAgentId, operationId);
     try {
-      const layout = await this.#options.sidebarLayout.placeDuplicateAfter(sourceBotId, bot.id, [
-        ...this.#options.agents.listBots().map((candidate) => candidate.id),
-        bot.id,
+      const layout = await this.#options.sidebarLayout.placeDuplicateAfter(sourceAgentId, agent.id, [
+        ...this.#options.agents.listAgents().map((candidate) => candidate.id),
+        agent.id,
       ]);
-      return await this.#options.agents.commitBotDuplication(bot.id, layout);
+      return await this.#options.agents.commitAgentDuplication(agent.id, layout);
     } catch (error) {
       const rollbackResults = await Promise.allSettled([
-        this.#options.agents.deleteBot(bot.id),
-        this.#options.sidebarLayout.removeAgent(bot.id),
+        this.#options.agents.deleteAgent(agent.id),
+        this.#options.sidebarLayout.removeAgent(agent.id),
       ]);
       const rollbackErrors = rollbackResults.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
       if (rollbackErrors.length > 0) {

@@ -4,11 +4,11 @@ import { expect, fn, waitFor, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { RichMessageText } from "../src/components/conversation/RichMessageText";
 import type { MessageCitation } from "../src/data";
-import { STORY_ATTACHMENTS, STORY_BOTS } from "./fixtures";
+import { STORY_AGENTS, STORY_ATTACHMENTS } from "./fixtures";
 
 const args: Parameters<typeof RichMessageText>[0] = {
   body: "Ask @Research to review https://openbot.run/docs before the launch.",
-  bots: STORY_BOTS,
+  agents: STORY_AGENTS,
   attachments: [],
   onSelectAgent: fn(),
   onOpenLink: fn(),

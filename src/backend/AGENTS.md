@@ -44,7 +44,7 @@ offers, in order of preference:
 | Barrier | Use it for |
 | --- | --- |
 | `waitFor(predicate)` — `agent-service-test-harness.ts` | Anything driven by the fake provider process. Polls to a deadline and fails naming *the predicate that never held*, printing the source of the check. |
-| `nextRoutinesChanged(service, botId)` — same file | One named `AgentEvent`. Resolves on the event; the pattern generalizes to any other event you need. |
+| `nextRoutinesChanged(service, agentId)` — same file | One named `AgentEvent`. Resolves on the event; the pattern generalizes to any other event you need. |
 | `callOpenBotTool(...)` / `expectOpenBotToolError(...)` | A tool round trip. Both already contain the wait. |
 | `await service.someMethod()` | A promise the code under test already returns. Prefer it over observing a side effect of the same call. |
 | `vi.waitFor(() => expect(...))` | A spy or a fake reaching a count, where there is no domain event to hang off. |

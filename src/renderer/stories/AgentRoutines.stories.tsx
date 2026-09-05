@@ -4,12 +4,12 @@ import { expect, fn, waitFor, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { AgentRoutinesSettings } from "../src/components/conversation/AgentRoutinesSettings";
 import AgentSettingsPanel from "../src/components/conversation/AgentSettingsPanel";
-import { STORY_AGENT_STATUS, STORY_BOTS, STORY_MODELS } from "./fixtures";
+import { STORY_AGENT_STATUS, STORY_AGENTS, STORY_MODELS } from "./fixtures";
 import { createMockOpenBot } from "./mock-openbot";
 
 const morningBrief: Routine = {
   id: "routine-morning-brief",
-  botId: "chief",
+  agentId: "chief",
   name: "Morning brief",
   instruction: "Summarize the important market and product changes since yesterday.",
   active: true,
@@ -28,7 +28,7 @@ const morningBrief: Routine = {
 
 const weeklyPlanning: Routine = {
   id: "routine-weekly-planning",
-  botId: "chief",
+  agentId: "chief",
   name: "Weekly planning",
   instruction: "Review open work and prepare the priorities for next week.",
   active: false,
@@ -64,7 +64,7 @@ function RoutinesStory(props: { routines?: Routine[]; runs?: RoutineRun[] }) {
   });
   return (
     <main style={{ width: "380px", height: "720px", overflow: "auto", background: "var(--openbot-bg-canvas)" }}>
-      <AgentRoutinesSettings botId="chief" onCountChange={fn()} onBack={fn()} onClose={fn()} />
+      <AgentRoutinesSettings agentId="chief" onCountChange={fn()} onBack={fn()} onClose={fn()} />
     </main>
   );
 }
@@ -91,11 +91,11 @@ function FullSettingsPanelStory() {
   return (
     <main class="agent-memories-story-stage">
       <AgentSettingsPanel
-        bot={STORY_BOTS[0]}
+        agent={STORY_AGENTS[0]}
         runtimeSettings={{
-          provider: STORY_BOTS[0].provider,
-          model: STORY_BOTS[0].model,
-          reasoningEffort: STORY_BOTS[0].reasoningEffort,
+          provider: STORY_AGENTS[0].provider,
+          model: STORY_AGENTS[0].model,
+          reasoningEffort: STORY_AGENTS[0].reasoningEffort,
         }}
         agentStatus={STORY_AGENT_STATUS}
         modelOptions={STORY_MODELS}
@@ -103,15 +103,15 @@ function FullSettingsPanelStory() {
         maxWidth={() => 640}
         onClose={fn()}
         onWidthChange={fn()}
-        onUpdateBot={async (botId, updates) => {
-          await mock.api.agent.updateBot({ botId, ...updates });
+        onUpdateAgent={async (agentId, updates) => {
+          await mock.api.agent.updateAgent({ agentId, ...updates });
         }}
-        onUpdateRuntimeSettings={async (botId, _settings, updates) => {
-          await mock.api.agent.updateBot({ botId, ...updates });
+        onUpdateRuntimeSettings={async (agentId, _settings, updates) => {
+          await mock.api.agent.updateAgent({ agentId, ...updates });
           return true;
         }}
-        onSetAgentAvatar={async (botId, image) => {
-          await mock.api.agent.setAvatar({ botId, image });
+        onSetAgentAvatar={async (agentId, image) => {
+          await mock.api.agent.setAvatar({ agentId, image });
         }}
       />
     </main>
@@ -121,7 +121,7 @@ function FullSettingsPanelStory() {
 const meta = {
   title: "Settings/Agent Routines",
   component: AgentRoutinesSettings,
-  args: { botId: "chief", onCountChange: fn() },
+  args: { agentId: "chief", onCountChange: fn() },
   parameters: { layout: "centered", a11y: { test: "error" } },
 } satisfies Meta<typeof AgentRoutinesSettings>;
 
@@ -196,7 +196,7 @@ export const RunHistoryStatuses: Story = {
       runs={runStatuses.map((status, index) => ({
         id: `run-${status}`,
         routineId: morningBrief.id,
-        botId: morningBrief.botId,
+        agentId: morningBrief.agentId,
         triggerId: morningBrief.trigger.id,
         kind: index === 0 ? "manual" : "scheduled",
         scheduledFor: new Date(Date.now() - index * 3_600_000).toISOString(),
@@ -258,7 +258,7 @@ function storyRun(id: string, status: RoutineRun["status"], kind: RoutineRun["ki
   return {
     id,
     routineId: morningBrief.id,
-    botId: morningBrief.botId,
+    agentId: morningBrief.agentId,
     triggerId: kind === "manual" ? null : morningBrief.trigger.id,
     kind,
     scheduledFor,

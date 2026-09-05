@@ -119,25 +119,25 @@ export function clearSidebarDragDecorations(list: HTMLElement | undefined): void
 
 export function createSidebarAgentDragCard(source: HTMLElement): HTMLElement {
   const card = document.createElement("div");
-  card.className = "bot-row sidebar-pinned-row sidebar-agent-drag-card";
+  card.className = "agent-row sidebar-pinned-row sidebar-agent-drag-card";
 
-  const sourceAvatar = source.querySelector(".bot-row-avatar")?.cloneNode(true);
+  const sourceAvatar = source.querySelector(".agent-row-avatar")?.cloneNode(true);
   if (sourceAvatar instanceof HTMLElement) {
     sourceAvatar.classList.add("sidebar-pinned-avatar");
     card.append(sourceAvatar);
   }
 
   const copy = document.createElement("span");
-  copy.className = "bot-row-copy sidebar-pinned-copy";
+  copy.className = "agent-row-copy sidebar-pinned-copy";
   const name = document.createElement("strong");
   name.className = "sidebar-pinned-name";
   name.textContent =
     source
-      .querySelector(".sidebar-pinned-name, .bot-row-title strong, .bot-row-heading > strong")
+      .querySelector(".sidebar-pinned-name, .agent-row-title strong, .agent-row-heading > strong")
       ?.textContent?.trim() ?? "Chat";
   copy.append(name);
 
-  const titleText = source.querySelector(".sidebar-pinned-title, .bot-role-badge")?.textContent?.trim();
+  const titleText = source.querySelector(".sidebar-pinned-title, .agent-role-badge")?.textContent?.trim();
   if (titleText) {
     const title = document.createElement("span");
     title.className = "z-badge z-badge-variant-secondary sidebar-pinned-title";

@@ -42,7 +42,7 @@ import {
   AGENT_RUNTIME_WORKING_ITEMS_LIMIT,
   isMessageReaction,
 } from "@openbot/contracts/ipc";
-import { isNumber, isString } from "@openbot/contracts/runtime-values";
+import { type DynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { OpenBotDatabase } from "./openbot-database";
 import { isRecord } from "./protocol";
 
@@ -57,7 +57,7 @@ interface StoredAttachment extends AttachmentSummary {
 }
 
 interface StoredGeneratedAttachment extends StoredAttachment {
-  ownerBotId?: string;
+  ownerAgentId?: string;
   ownerThreadId?: string | null;
 }
 
@@ -69,7 +69,7 @@ interface StoredMessage {
   id: string;
   sender:
     | { kind: "user" }
-    | { kind: "bot"; botId: string }
+    | { kind: "agent"; agentId: string }
     | { kind: "routine"; routineId: string; runId: string; routineName: string; scheduledFor: string };
   text: string;
   attachments: StoredAttachment[];
@@ -80,7 +80,7 @@ interface StoredMessage {
 interface StoredDelivery {
   id: string;
   messageId: string;
-  recipientBotId: string;
+  recipientAgentId: string;
   queueOrder: number;
   status: QueueDeliveryStatus;
   turnId: string | null;
@@ -94,13 +94,13 @@ interface StoredState {
   deliveries: StoredDelivery[];
   drafts: StoredDraft[];
   generatedAttachments: StoredGeneratedAttachment[];
-  pausedBotIds: string[];
+  pausedAgentIds: string[];
   idempotency: Record<string, string>;
   reactions: StoredReaction[];
 }
 
 interface StoredReaction {
-  botId: string;
+  agentId: string;
   messageId: string;
   emoji: MessageReaction;
   actor: ConversationReactionActor;
@@ -109,7 +109,7 @@ interface StoredReaction {
 
 interface EnqueueInput {
   sender: StoredMessage["sender"];
-  recipientBotIds: string[];
+  recipientAgentIds: string[];
   text: string;
   replyToMessageId?: string | null;
   draftIds?: string[];
@@ -118,14 +118,20 @@ interface EnqueueInput {
 }
 
 interface TransferManifest {
-  version: 1;
+  /**
+   * 2, because the rename changed the field names inside: `recipientBotIds` became `recipientAgentIds` and
+   * `ownerBotId` became `ownerAgentId`. Nothing in the app reads this sidecar back -- it is written for the
+   * user and the model looking at the transfer directory -- but a released version 1 on disk spells those
+   * fields the old way, and leaving both shapes under one number would make the version say nothing.
+   */
+  version: 2;
   kind: "message-transfer" | "generated-attachment";
   transferId?: string;
   messageId?: string;
   generatedAttachmentId?: string;
   sender?: StoredMessage["sender"];
-  recipientBotIds?: string[];
-  ownerBotId?: string;
+  recipientAgentIds?: string[];
+  ownerAgentId?: string;
   ownerThreadId?: string | null;
   createdAt: string;
   attachments: Array<{
@@ -161,7 +167,7 @@ const EMPTY_STATE: StoredState = {
   deliveries: [],
   drafts: [],
   generatedAttachments: [],
-  pausedBotIds: [],
+  pausedAgentIds: [],
   idempotency: {},
   reactions: [],
 };
@@ -188,9 +194,10 @@ export class MailboxStore {
       mkdir(this.#transfersRoot, { recursive: true, mode: 0o700 }),
     ]);
     await this.#database.initialize();
-    const persisted = this.#database.readMailboxState();
-    if (persisted) {
-      if (!isStoredState(persisted)) throw new Error("Stored mailbox projection is invalid.");
+    const stored = this.#database.readMailboxState();
+    if (stored !== null && stored !== undefined) {
+      const persisted = toCurrentMailboxState(stored);
+      if (!persisted || !isStoredState(persisted)) throw new Error("Stored mailbox projection is invalid.");
       this.#state = normalizeStoredState(persisted);
     } else {
       this.#state = normalizeStoredState(await this.#readState());
@@ -319,7 +326,7 @@ export class MailboxStore {
       if (existingMessageId) return this.#receipt(existingMessageId);
     }
 
-    const recipients = [...new Set(input.recipientBotIds)];
+    const recipients = [...new Set(input.recipientAgentIds)];
     if (recipients.length === 0) throw new Error("At least one recipient is required.");
     if (recipients.length > INPUT_LIMITS.messageRecipients) {
       throw new Error(`A message can have at most ${INPUT_LIMITS.messageRecipients} recipients.`);
@@ -370,11 +377,11 @@ export class MailboxStore {
       replyToMessageId: input.replyToMessageId ?? null,
       createdAt,
     };
-    const deliveries = recipients.map<StoredDelivery>((recipientBotId) => ({
+    const deliveries = recipients.map<StoredDelivery>((recipientAgentId) => ({
       id: randomUUID(),
       messageId,
-      recipientBotId,
-      queueOrder: this.#nextQueueOrder(recipientBotId),
+      recipientAgentId,
+      queueOrder: this.#nextQueueOrder(recipientAgentId),
       status: "queued",
       turnId: null,
       error: null,
@@ -406,31 +413,31 @@ export class MailboxStore {
     return this.#receipt(messageId);
   }
 
-  listQueue(botId: string): QueueSnapshot {
+  listQueue(agentId: string): QueueSnapshot {
     const positions = this.#queuedPositions();
     return {
-      botId,
+      agentId,
       deliveries: this.#state.deliveries
-        .filter((delivery) => delivery.recipientBotId === botId)
+        .filter((delivery) => delivery.recipientAgentId === agentId)
         .map((delivery) => this.#publicDelivery(delivery, positions)),
     };
   }
 
-  listRuntimeWork(botIds: readonly string[], failedTurns: ReadonlyMap<string, string>): AgentRuntimeWorkItem[] {
-    const targetBotIds = new Set(botIds);
+  listRuntimeWork(agentIds: readonly string[], failedTurns: ReadonlyMap<string, string>): AgentRuntimeWorkItem[] {
+    const targetAgentIds = new Set(agentIds);
     const working: StoredDelivery[] = [];
     const failed: StoredDelivery[] = [];
-    const workingBotIds = new Set<string>();
-    const failedBotIds = new Set<string>();
+    const workingAgentIds = new Set<string>();
+    const failedAgentIds = new Set<string>();
     for (const delivery of this.#state.deliveries) {
-      if (!targetBotIds.has(delivery.recipientBotId)) continue;
+      if (!targetAgentIds.has(delivery.recipientAgentId)) continue;
       const isWorking = delivery.status === "starting" || delivery.status === "running";
       const isCurrentFailure =
-        delivery.status === "failed" && delivery.turnId === failedTurns.get(delivery.recipientBotId);
+        delivery.status === "failed" && delivery.turnId === failedTurns.get(delivery.recipientAgentId);
       if (!isWorking && !isCurrentFailure) continue;
-      const seenBotIds = isCurrentFailure ? failedBotIds : workingBotIds;
-      if (seenBotIds.has(delivery.recipientBotId)) continue;
-      seenBotIds.add(delivery.recipientBotId);
+      const seenAgentIds = isCurrentFailure ? failedAgentIds : workingAgentIds;
+      if (seenAgentIds.has(delivery.recipientAgentId)) continue;
+      seenAgentIds.add(delivery.recipientAgentId);
       (isCurrentFailure ? failed : working).push(delivery);
     }
     const selected = [
@@ -449,7 +456,7 @@ export class MailboxStore {
       }
       return {
         id: delivery.id,
-        botId: delivery.recipientBotId,
+        agentId: delivery.recipientAgentId,
         turnId: delivery.turnId,
         status: delivery.status,
         text: message.text.slice(0, AGENT_RUNTIME_TEXT_LIMIT),
@@ -458,7 +465,7 @@ export class MailboxStore {
     });
   }
 
-  conversationMessages(botId: string): ConversationMessage[] {
+  conversationMessages(agentId: string): ConversationMessage[] {
     const messages: ConversationMessage[] = [];
     const deliveriesByMessage = new Map<string, StoredDelivery[]>();
     const positions = this.#queuedPositions();
@@ -469,7 +476,7 @@ export class MailboxStore {
     }
     for (const message of this.#state.messages) {
       const deliveries = deliveriesByMessage.get(message.id) ?? [];
-      if (message.sender.kind === "bot" && message.sender.botId === botId) {
+      if (message.sender.kind === "agent" && message.sender.agentId === agentId) {
         messages.push({
           id: `outbox-${message.id}`,
           turnId: this.#sourceTurnId(message.id),
@@ -481,14 +488,14 @@ export class MailboxStore {
           exchange: {
             direction: "outgoing",
             messageId: message.id,
-            senderBotId: botId,
-            recipientBotIds: deliveries.map((item) => item.recipientBotId),
+            senderAgentId: agentId,
+            recipientAgentIds: deliveries.map((item) => item.recipientAgentId),
             replyToMessageId: message.replyToMessageId,
             deliveries: deliveries.map((item) => {
               const delivery = this.#publicDelivery(item, positions);
               return {
                 id: delivery.id,
-                recipientBotId: delivery.recipientBotId,
+                recipientAgentId: delivery.recipientAgentId,
                 status: delivery.status,
                 position: delivery.position,
                 error: delivery.error,
@@ -502,15 +509,15 @@ export class MailboxStore {
       }
 
       for (const storedDelivery of deliveries) {
-        if (storedDelivery.recipientBotId !== botId) continue;
+        if (storedDelivery.recipientAgentId !== agentId) continue;
         const delivery = this.#publicDelivery(storedDelivery, positions);
         messages.push({
           id: delivery.id,
           turnId: storedDelivery.turnId ?? undefined,
-          author: message.sender.kind === "bot" ? "agent" : "user",
-          source: message.sender.kind === "bot" ? "agent" : message.sender.kind === "routine" ? "routine" : "user",
+          author: message.sender.kind === "agent" ? "agent" : "user",
+          source: message.sender.kind === "agent" ? "agent" : message.sender.kind === "routine" ? "routine" : "user",
           text: message.text,
-          senderBotId: message.sender.kind === "bot" ? message.sender.botId : undefined,
+          senderAgentId: message.sender.kind === "agent" ? message.sender.agentId : undefined,
           attachments: message.attachments.map(toAttachmentSummary),
           replyToMessageId: message.replyToMessageId,
           delivery: {
@@ -519,18 +526,18 @@ export class MailboxStore {
             position: delivery.position,
           },
           exchange:
-            message.sender.kind === "bot"
+            message.sender.kind === "agent"
               ? {
                   direction: "incoming",
                   messageId: message.id,
-                  senderBotId: message.sender.botId,
-                  recipientBotIds: deliveries.map((item) => item.recipientBotId),
+                  senderAgentId: message.sender.agentId,
+                  recipientAgentIds: deliveries.map((item) => item.recipientAgentId),
                   replyToMessageId: message.replyToMessageId,
                   deliveries: deliveries.map((item) => {
                     const publicItem = this.#publicDelivery(item, positions);
                     return {
                       id: publicItem.id,
-                      recipientBotId: publicItem.recipientBotId,
+                      recipientAgentId: publicItem.recipientAgentId,
                       status: publicItem.status,
                       position: publicItem.position,
                       error: publicItem.error,
@@ -550,7 +557,7 @@ export class MailboxStore {
           createdAt: message.createdAt,
           status: delivery.status === "failed" ? "failed" : "completed",
           itemType:
-            message.sender.kind === "bot"
+            message.sender.kind === "agent"
               ? "agent-exchange"
               : message.sender.kind === "routine"
                 ? "routine"
@@ -562,22 +569,24 @@ export class MailboxStore {
   }
 
   reactionFor(
-    botId: string,
+    agentId: string,
     messageId: string,
     actor: ConversationReactionActor = { kind: "user" },
   ): MessageReaction | null {
     return (
       this.#state.reactions.find(
         (reaction) =>
-          reaction.botId === botId && reaction.messageId === messageId && reactionActorsEqual(reaction.actor, actor),
+          reaction.agentId === agentId &&
+          reaction.messageId === messageId &&
+          reactionActorsEqual(reaction.actor, actor),
       )?.emoji ?? null
     );
   }
 
-  reactionsFor(botId: string): Map<string, ConversationReaction[]> {
+  reactionsFor(agentId: string): Map<string, ConversationReaction[]> {
     const result = new Map<string, ConversationReaction[]>();
     for (const reaction of this.#state.reactions) {
-      if (reaction.botId !== botId) continue;
+      if (reaction.agentId !== agentId) continue;
       const reactions = result.get(reaction.messageId) ?? [];
       reactions.push({ emoji: reaction.emoji, actor: reaction.actor });
       result.set(reaction.messageId, reactions);
@@ -587,21 +596,21 @@ export class MailboxStore {
   }
 
   async setReaction(
-    botId: string,
+    agentId: string,
     messageId: string,
     actor: ConversationReactionActor,
     emoji: MessageReaction | null,
   ): Promise<void> {
     const index = this.#state.reactions.findIndex(
       (reaction) =>
-        reaction.botId === botId && reaction.messageId === messageId && reactionActorsEqual(reaction.actor, actor),
+        reaction.agentId === agentId && reaction.messageId === messageId && reactionActorsEqual(reaction.actor, actor),
     );
     if (emoji === null) {
       if (index < 0) return;
       this.#state.reactions.splice(index, 1);
     } else if (index >= 0) {
       this.#state.reactions[index] = {
-        botId,
+        agentId,
         messageId,
         emoji,
         actor,
@@ -609,7 +618,7 @@ export class MailboxStore {
       };
     } else {
       this.#state.reactions.push({
-        botId,
+        agentId,
         messageId,
         emoji,
         actor,
@@ -626,27 +635,27 @@ export class MailboxStore {
     return parts.length >= 3 ? parts.at(-2) : undefined;
   }
 
-  senderBotIdsForRecipient(botId: string): string[] {
+  senderAgentIdsForRecipient(agentId: string): string[] {
     const result = new Set<string>();
     for (const delivery of this.#state.deliveries) {
-      if (delivery.recipientBotId !== botId) continue;
+      if (delivery.recipientAgentId !== agentId) continue;
       const sender = this.#requireMessage(delivery.messageId).sender;
-      if (sender.kind === "bot") result.add(sender.botId);
+      if (sender.kind === "agent") result.add(sender.agentId);
     }
     return [...result];
   }
 
-  nextQueued(botId: string): DeliveryContext | null {
+  nextQueued(agentId: string): DeliveryContext | null {
     if (
       this.#state.deliveries.some(
         (delivery) =>
-          delivery.recipientBotId === botId && (delivery.status === "starting" || delivery.status === "running"),
+          delivery.recipientAgentId === agentId && (delivery.status === "starting" || delivery.status === "running"),
       )
     ) {
       return null;
     }
     const delivery = this.#state.deliveries
-      .filter((candidate) => candidate.recipientBotId === botId && candidate.status === "queued")
+      .filter((candidate) => candidate.recipientAgentId === agentId && candidate.status === "queued")
       .sort(compareQueueOrder)[0];
     return delivery ? this.#context(delivery) : null;
   }
@@ -661,30 +670,33 @@ export class MailboxStore {
     return delivery ? this.#context(delivery) : null;
   }
 
-  findDeliveriesByTurn(botId: string, turnId: string): DeliveryContext[] {
+  findDeliveriesByTurn(agentId: string, turnId: string): DeliveryContext[] {
     return this.#state.deliveries
       .filter(
         (delivery) =>
-          delivery.recipientBotId === botId &&
+          delivery.recipientAgentId === agentId &&
           delivery.turnId === turnId &&
           (delivery.status === "starting" || delivery.status === "running"),
       )
       .map((delivery) => this.#context(delivery));
   }
 
-  startingDeliveryForBot(botId: string): DeliveryContext | null {
+  startingDeliveryForAgent(agentId: string): DeliveryContext | null {
     const delivery = this.#state.deliveries.find(
-      (candidate) => candidate.recipientBotId === botId && candidate.status === "starting" && candidate.turnId === null,
+      (candidate) =>
+        candidate.recipientAgentId === agentId && candidate.status === "starting" && candidate.turnId === null,
     );
     return delivery ? this.#context(delivery) : null;
   }
 
-  async deleteBotData(botId: string): Promise<void> {
+  async deleteAgentData(agentId: string): Promise<void> {
     const previous = structuredClone(this.#state);
     const removedMessageIds = new Set<string>();
-    const removedGenerated = this.#state.generatedAttachments.filter((attachment) => attachment.ownerBotId === botId);
+    const removedGenerated = this.#state.generatedAttachments.filter(
+      (attachment) => attachment.ownerAgentId === agentId,
+    );
     const removedTransferRoots = new Set<string>();
-    this.#state.deliveries = this.#state.deliveries.filter((delivery) => delivery.recipientBotId !== botId);
+    this.#state.deliveries = this.#state.deliveries.filter((delivery) => delivery.recipientAgentId !== agentId);
     const remainingMessageIds = new Set(this.#state.deliveries.map((delivery) => delivery.messageId));
     this.#state.messages = this.#state.messages.filter((message) => {
       const keep = remainingMessageIds.has(message.id);
@@ -698,15 +710,15 @@ export class MailboxStore {
       return keep;
     });
     for (const messageId of removedMessageIds) removedTransferRoots.add(join(this.#transfersRoot, messageId));
-    this.#state.pausedBotIds = this.#state.pausedBotIds.filter((id) => id !== botId);
+    this.#state.pausedAgentIds = this.#state.pausedAgentIds.filter((id) => id !== agentId);
     this.#state.reactions = this.#state.reactions.filter(
-      (reaction) => reaction.botId !== botId && !removedMessageIds.has(reaction.messageId),
+      (reaction) => reaction.agentId !== agentId && !removedMessageIds.has(reaction.messageId),
     );
     this.#state.idempotency = Object.fromEntries(
       Object.entries(this.#state.idempotency).filter(([, messageId]) => !removedMessageIds.has(messageId)),
     );
     this.#state.generatedAttachments = this.#state.generatedAttachments.filter(
-      (attachment) => attachment.ownerBotId !== botId,
+      (attachment) => attachment.ownerAgentId !== agentId,
     );
     try {
       await this.#persist(
@@ -727,7 +739,7 @@ export class MailboxStore {
     await this.#drainFileDeletionOutbox();
   }
 
-  chainOriginBotId(messageId: string): string | null {
+  chainOriginAgentId(messageId: string): string | null {
     const visited = new Set<string>();
     let message = this.#state.messages.find((candidate) => candidate.id === messageId);
     while (message && !visited.has(message.id)) {
@@ -735,25 +747,25 @@ export class MailboxStore {
       const parent = message.replyToMessageId
         ? this.#state.messages.find((candidate) => candidate.id === message?.replyToMessageId)
         : undefined;
-      if (!parent) return message.sender.kind === "bot" ? message.sender.botId : null;
+      if (!parent) return message.sender.kind === "agent" ? message.sender.agentId : null;
       message = parent;
     }
     return null;
   }
 
-  hasReplyFrom(botId: string, messageId: string): boolean {
+  hasReplyFrom(agentId: string, messageId: string): boolean {
     return this.#state.messages.some(
       (message) =>
-        message.sender.kind === "bot" && message.sender.botId === botId && message.replyToMessageId === messageId,
+        message.sender.kind === "agent" && message.sender.agentId === agentId && message.replyToMessageId === messageId,
     );
   }
 
-  hasBotMessageFromTurnTo(botId: string, turnId: string, recipientBotId: string): boolean {
+  hasAgentMessageFromTurnTo(agentId: string, turnId: string, recipientAgentId: string): boolean {
     return this.#state.messages.some((message) => {
-      if (message.sender.kind !== "bot" || message.sender.botId !== botId) return false;
+      if (message.sender.kind !== "agent" || message.sender.agentId !== agentId) return false;
       if (this.#sourceTurnId(message.id) !== turnId) return false;
       return this.#state.deliveries.some(
-        (delivery) => delivery.messageId === message.id && delivery.recipientBotId === recipientBotId,
+        (delivery) => delivery.messageId === message.id && delivery.recipientAgentId === recipientAgentId,
       );
     });
   }
@@ -778,13 +790,13 @@ export class MailboxStore {
     await this.#updateDelivery(deliveryId, ["starting", "running"], { status, error });
   }
 
-  async cancel(botId: string, deliveryId: string): Promise<void> {
-    this.cancelNow(botId, deliveryId);
+  async cancel(agentId: string, deliveryId: string): Promise<void> {
+    this.cancelNow(agentId, deliveryId);
   }
 
-  cancelNow(botId: string, deliveryId: string): void {
+  cancelNow(agentId: string, deliveryId: string): void {
     const delivery = this.#state.deliveries.find(
-      (candidate) => candidate.id === deliveryId && candidate.recipientBotId === botId,
+      (candidate) => candidate.id === deliveryId && candidate.recipientAgentId === agentId,
     );
     if (!delivery) throw new Error("Queued message was not found.");
     if (delivery.status !== "queued") throw new Error("Only queued messages can be cancelled.");
@@ -798,20 +810,20 @@ export class MailboxStore {
   }
 
   restorePersistedState(): void {
-    const persisted = this.#database.readMailboxState();
-    if (!isStoredState(persisted)) throw new Error("Stored mailbox projection is invalid.");
+    const persisted = toCurrentMailboxState(this.#database.readMailboxState());
+    if (!persisted || !isStoredState(persisted)) throw new Error("Stored mailbox projection is invalid.");
     this.#state = normalizeStoredState(persisted);
   }
 
   async updateQueuedMessage(
-    botId: string,
+    agentId: string,
     deliveryId: string,
     text: string,
     keepAttachmentIds: string[],
     attachmentDraftIds: string[],
   ): Promise<void> {
     const delivery = this.#state.deliveries.find(
-      (candidate) => candidate.id === deliveryId && candidate.recipientBotId === botId,
+      (candidate) => candidate.id === deliveryId && candidate.recipientAgentId === agentId,
     );
     if (!delivery) throw new Error("Queued message was not found.");
     if (delivery.status !== "queued") throw new Error("Only queued messages can be edited.");
@@ -853,7 +865,7 @@ export class MailboxStore {
             message.sender,
             this.#state.deliveries
               .filter((candidate) => candidate.messageId === message.id)
-              .map((candidate) => candidate.recipientBotId),
+              .map((candidate) => candidate.recipientAgentId),
             message.id,
             new Date().toISOString(),
             draftAttachmentPaths,
@@ -893,9 +905,9 @@ export class MailboxStore {
     await this.#drainFileDeletionOutbox();
   }
 
-  async reorderQueue(botId: string, deliveryIds: string[]): Promise<void> {
+  async reorderQueue(agentId: string, deliveryIds: string[]): Promise<void> {
     const queued = this.#state.deliveries.filter(
-      (delivery) => delivery.recipientBotId === botId && delivery.status === "queued",
+      (delivery) => delivery.recipientAgentId === agentId && delivery.status === "queued",
     );
     const expected = new Set(queued.map((delivery) => delivery.id));
     if (
@@ -965,7 +977,7 @@ export class MailboxStore {
 
   async stageGeneratedAttachments(input: {
     sources: GeneratedAttachmentSource[];
-    ownerBotId?: string;
+    ownerAgentId?: string;
     ownerThreadId?: string | null;
   }): Promise<AttachmentSummary[]> {
     if (input.sources.length === 0 || input.sources.length > MAX_ATTACHMENTS) {
@@ -1010,14 +1022,14 @@ export class MailboxStore {
           previewUrl: attachmentPreviewUrl(entry.id),
           path: entry.targetPath,
           sha256: await sha256(entry.targetPath),
-          ...(input.ownerBotId ? { ownerBotId: input.ownerBotId } : {}),
+          ...(input.ownerAgentId ? { ownerAgentId: input.ownerAgentId } : {}),
           ...(input.ownerThreadId !== undefined ? { ownerThreadId: input.ownerThreadId } : {}),
         };
         await writeTransferManifest(entry.generatedRoot, {
-          version: 1,
+          version: 2,
           kind: "generated-attachment",
           generatedAttachmentId: entry.id,
-          ...(input.ownerBotId ? { ownerBotId: input.ownerBotId } : {}),
+          ...(input.ownerAgentId ? { ownerAgentId: input.ownerAgentId } : {}),
           ...(input.ownerThreadId !== undefined ? { ownerThreadId: input.ownerThreadId } : {}),
           createdAt: new Date().toISOString(),
           attachments: [manifestAttachment(attachment, entry.name)],
@@ -1080,7 +1092,7 @@ export class MailboxStore {
     bytes?: Uint8Array;
     name?: string;
     mimeType?: string;
-    ownerBotId?: string;
+    ownerAgentId?: string;
     ownerThreadId?: string | null;
   }): Promise<AttachmentSummary> {
     if ((input.sourcePath === undefined) === (input.bytes === undefined)) {
@@ -1115,14 +1127,14 @@ export class MailboxStore {
       };
       const generatedAttachment: StoredGeneratedAttachment = {
         ...attachment,
-        ...(input.ownerBotId ? { ownerBotId: input.ownerBotId } : {}),
+        ...(input.ownerAgentId ? { ownerAgentId: input.ownerAgentId } : {}),
         ...(input.ownerThreadId !== undefined ? { ownerThreadId: input.ownerThreadId } : {}),
       };
       await writeTransferManifest(generatedRoot, {
-        version: 1,
+        version: 2,
         kind: "generated-attachment",
         generatedAttachmentId: id,
-        ...(input.ownerBotId ? { ownerBotId: input.ownerBotId } : {}),
+        ...(input.ownerAgentId ? { ownerAgentId: input.ownerAgentId } : {}),
         ...(input.ownerThreadId !== undefined ? { ownerThreadId: input.ownerThreadId } : {}),
         createdAt: new Date().toISOString(),
         attachments: [manifestAttachment(generatedAttachment, name)],
@@ -1183,10 +1195,10 @@ export class MailboxStore {
     };
   }
 
-  #nextQueueOrder(botId: string): number {
+  #nextQueueOrder(agentId: string): number {
     return (
       this.#state.deliveries
-        .filter((delivery) => delivery.recipientBotId === botId)
+        .filter((delivery) => delivery.recipientAgentId === agentId)
         .reduce((max, delivery) => Math.max(max, delivery.queueOrder), -1) + 1
     );
   }
@@ -1213,8 +1225,8 @@ export class MailboxStore {
       .filter((delivery) => delivery.status === "queued")
       .sort(compareQueueOrder);
     for (const delivery of queued) {
-      const position = (counts.get(delivery.recipientBotId) ?? 0) + 1;
-      counts.set(delivery.recipientBotId, position);
+      const position = (counts.get(delivery.recipientAgentId) ?? 0) + 1;
+      counts.set(delivery.recipientAgentId, position);
       positions.set(delivery.id, position);
     }
     return positions;
@@ -1230,7 +1242,7 @@ export class MailboxStore {
           const item = this.#publicDelivery(delivery, positions);
           return {
             id: item.id,
-            recipientBotId: item.recipientBotId,
+            recipientAgentId: item.recipientAgentId,
             status: item.status,
             position: item.position,
           };
@@ -1241,7 +1253,7 @@ export class MailboxStore {
   async #commitAttachments(
     transferId: string,
     sender: StoredMessage["sender"],
-    recipientBotIds: string[],
+    recipientAgentIds: string[],
     messageId: string,
     createdAt: string,
     sourcePaths: string[],
@@ -1276,12 +1288,12 @@ export class MailboxStore {
         });
       }
       await writeTransferManifest(temporaryRoot, {
-        version: 1,
+        version: 2,
         kind: "message-transfer",
         transferId,
         messageId,
         sender,
-        recipientBotIds,
+        recipientAgentIds,
         createdAt,
         attachments: attachments.map((attachment) => manifestAttachment(attachment, attachment.name)),
       });
@@ -1309,8 +1321,8 @@ export class MailboxStore {
 
   async #readState(): Promise<StoredState> {
     try {
-      const value = JSON.parse(await readFile(this.#statePath, "utf8"));
-      if (!isStoredState(value)) {
+      const value = toCurrentMailboxState(JSON.parse(await readFile(this.#statePath, "utf8")));
+      if (!value || !isStoredState(value)) {
         throw new Error("Mailbox state is corrupt or from a newer OpenBot version; refusing to overwrite it.");
       }
       return value;
@@ -1475,11 +1487,11 @@ function normalizeBytes(value: Uint8Array): Uint8Array {
 }
 
 function normalizeStoredState(value: StoredState): StoredState {
-  const nextOrderByBot = new Map<string, number>();
+  const nextOrderByAgent = new Map<string, number>();
   const deliveries = value.deliveries.map((delivery) => {
-    const fallback = nextOrderByBot.get(delivery.recipientBotId) ?? 0;
+    const fallback = nextOrderByAgent.get(delivery.recipientAgentId) ?? 0;
     const queueOrder = Number.isFinite(delivery.queueOrder) ? delivery.queueOrder : fallback;
-    nextOrderByBot.set(delivery.recipientBotId, Math.max(fallback, queueOrder + 1));
+    nextOrderByAgent.set(delivery.recipientAgentId, Math.max(fallback, queueOrder + 1));
     return { ...delivery, queueOrder };
   });
   return {
@@ -1502,6 +1514,68 @@ function compareQueueOrder(left: StoredDelivery, right: StoredDelivery): number 
   );
 }
 
+/**
+ * Mailbox state written before the bot-to-agent rename spells the product agent `bot`. The validators
+ * below run *before* normalization and throw "Stored mailbox projection is invalid.", so an old
+ * spelling does not degrade -- it blocks startup outright. Migration v13 rewrites the database, but a
+ * user who restores `openbot.db` from their own copy of the file never runs it, and `mailbox.json`
+ * predates the database entirely. So every read tolerates both spellings and every write emits only
+ * the new one. This renames keys and the `sender.kind` / `actor.kind` discriminant, never message text.
+ */
+function toCurrentMailboxState(value: unknown): DynamicRecord | null {
+  if (!isRecord(value)) return null;
+  const state = withCurrentAgentKeys(value, { pausedBotIds: "pausedAgentIds" });
+  return {
+    ...state,
+    ...(Array.isArray(state.messages) ? { messages: state.messages.map(toCurrentMailboxMessage) } : {}),
+    ...(Array.isArray(state.deliveries) ? { deliveries: state.deliveries.map(toCurrentDelivery) } : {}),
+    ...(Array.isArray(state.generatedAttachments)
+      ? { generatedAttachments: state.generatedAttachments.map(toCurrentGeneratedAttachment) }
+      : {}),
+    ...(Array.isArray(state.reactions) ? { reactions: state.reactions.map(toCurrentMailboxReaction) } : {}),
+  };
+}
+
+const ACTOR_AGENT_KEYS: Readonly<Record<string, string>> = { botId: "agentId" };
+
+function toCurrentDelivery(value: unknown): DynamicRecord | null {
+  return isRecord(value) ? withCurrentAgentKeys(value, { recipientBotId: "recipientAgentId" }) : null;
+}
+
+function toCurrentGeneratedAttachment(value: unknown): DynamicRecord | null {
+  return isRecord(value) ? withCurrentAgentKeys(value, { ownerBotId: "ownerAgentId" }) : null;
+}
+
+function toCurrentMailboxMessage(value: unknown): DynamicRecord | null {
+  return isRecord(value) ? { ...value, sender: toCurrentMailboxActor(value.sender) } : null;
+}
+
+function toCurrentMailboxReaction(value: unknown): DynamicRecord | null {
+  if (!isRecord(value)) return null;
+  const reaction = withCurrentAgentKeys(value, ACTOR_AGENT_KEYS);
+  return reaction.actor === undefined ? reaction : { ...reaction, actor: toCurrentMailboxActor(reaction.actor) };
+}
+
+function toCurrentMailboxActor(value: unknown): DynamicRecord | null {
+  if (!isRecord(value)) return null;
+  const actor = withCurrentAgentKeys(value, ACTOR_AGENT_KEYS);
+  return actor.kind === "bot" ? { ...actor, kind: "agent" } : actor;
+}
+
+/**
+ * Rewrites the legacy keys onto their current names, dropping a legacy key whose current name is
+ * already present so a half-migrated record cannot resurrect a stale value.
+ */
+function withCurrentAgentKeys(value: DynamicRecord, renames: Readonly<Record<string, string>>): DynamicRecord {
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([key, entry]) => {
+      const current = renames[key];
+      if (current === undefined) return [[key, entry]];
+      return value[current] === undefined ? [[current, entry]] : [];
+    }),
+  );
+}
+
 function isStoredState(value: unknown): value is StoredState {
   return (
     isRecord(value) &&
@@ -1514,8 +1588,8 @@ function isStoredState(value: unknown): value is StoredState {
     value.drafts.every(isStoredDraft) &&
     (value.generatedAttachments === undefined ||
       (Array.isArray(value.generatedAttachments) && value.generatedAttachments.every(isStoredGeneratedAttachment))) &&
-    Array.isArray(value.pausedBotIds) &&
-    value.pausedBotIds.every((item) => isString(item)) &&
+    Array.isArray(value.pausedAgentIds) &&
+    value.pausedAgentIds.every((item) => isString(item)) &&
     isRecord(value.idempotency) &&
     Object.values(value.idempotency).every((item) => isString(item)) &&
     Array.isArray(value.reactions) &&
@@ -1545,7 +1619,7 @@ function isStoredGeneratedAttachment(value: unknown): value is StoredGeneratedAt
   if (!isRecord(value)) return false;
   if (!isStoredAttachment(value)) return false;
   return (
-    (value.ownerBotId === undefined || isString(value.ownerBotId)) &&
+    (value.ownerAgentId === undefined || isString(value.ownerAgentId)) &&
     (value.ownerThreadId === undefined || value.ownerThreadId === null || isString(value.ownerThreadId))
   );
 }
@@ -1560,7 +1634,7 @@ function isStoredMessage(value: unknown): value is StoredMessage {
     isString(value.id) &&
     isRecord(value.sender) &&
     (value.sender.kind === "user" ||
-      (value.sender.kind === "bot" && isString(value.sender.botId)) ||
+      (value.sender.kind === "agent" && isString(value.sender.agentId)) ||
       (value.sender.kind === "routine" &&
         isString(value.sender.routineId) &&
         isString(value.sender.runId) &&
@@ -1579,7 +1653,7 @@ function isStoredDelivery(value: unknown): value is StoredDelivery {
     isRecord(value) &&
     isString(value.id) &&
     isString(value.messageId) &&
-    isString(value.recipientBotId) &&
+    isString(value.recipientAgentId) &&
     (value.queueOrder === undefined || (isNumber(value.queueOrder) && Number.isFinite(value.queueOrder))) &&
     (value.status === "queued" ||
       value.status === "starting" ||
@@ -1597,7 +1671,7 @@ function isStoredDelivery(value: unknown): value is StoredDelivery {
 function isStoredReaction(value: unknown): value is StoredReaction {
   return (
     isRecord(value) &&
-    isString(value.botId) &&
+    isString(value.agentId) &&
     isString(value.messageId) &&
     isMessageReaction(value.emoji) &&
     (value.actor === undefined || isStoredReactionActor(value.actor)) &&
@@ -1608,18 +1682,20 @@ function isStoredReaction(value: unknown): value is StoredReaction {
 function isStoredReactionActor(value: unknown): value is ConversationReactionActor {
   return (
     isRecord(value) &&
-    (value.kind === "user" || (value.kind === "bot" && isString(value.botId) && value.botId.length > 0))
+    (value.kind === "user" || (value.kind === "agent" && isString(value.agentId) && value.agentId.length > 0))
   );
 }
 
 function reactionActorsEqual(left: ConversationReactionActor, right: ConversationReactionActor): boolean {
-  return left.kind === right.kind && (left.kind === "user" || (right.kind === "bot" && left.botId === right.botId));
+  return (
+    left.kind === right.kind && (left.kind === "user" || (right.kind === "agent" && left.agentId === right.agentId))
+  );
 }
 
 function compareReactionActors(left: ConversationReaction, right: ConversationReaction): number {
   if (left.actor.kind !== right.actor.kind) return left.actor.kind === "user" ? -1 : 1;
   if (left.actor.kind === "user" || right.actor.kind === "user") return 0;
-  return left.actor.botId.localeCompare(right.actor.botId);
+  return left.actor.agentId.localeCompare(right.actor.agentId);
 }
 
 function isWithin(root: string, path: string): boolean {

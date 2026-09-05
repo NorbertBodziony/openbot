@@ -2,7 +2,7 @@ import type { QueueSnapshot } from "@openbot/contracts/ipc";
 import type { SidebarAgentState } from "./components/Sidebar";
 
 export interface SidebarAgentStatesInput {
-  botIds: readonly string[];
+  agentIds: readonly string[];
   activeTurns: Record<string, string | null>;
   queues: Record<string, QueueSnapshot>;
   unreadReplies: Record<string, number>;
@@ -24,18 +24,18 @@ export interface SidebarAgentStatesInput {
  */
 export function computeSidebarAgentStates(input: SidebarAgentStatesInput): Record<string, SidebarAgentState> {
   const states: Record<string, SidebarAgentState> = {};
-  for (const botId of input.botIds) {
+  for (const agentId of input.agentIds) {
     const working =
-      Boolean(input.activeTurns[botId]) ||
+      Boolean(input.activeTurns[agentId]) ||
       Boolean(
-        input.queues[botId]?.deliveries.some(
+        input.queues[agentId]?.deliveries.some(
           (delivery) => delivery.status === "starting" || delivery.status === "running",
         ),
       );
-    if (working) states[botId] = { kind: "working" };
-    else if ((input.unreadReplies[botId] ?? 0) > 0) {
-      states[botId] = { kind: "unread", count: input.unreadReplies[botId] ?? 1 };
-    } else if (input.recentReplies[botId]) states[botId] = { kind: "responded" };
+    if (working) states[agentId] = { kind: "working" };
+    else if ((input.unreadReplies[agentId] ?? 0) > 0) {
+      states[agentId] = { kind: "unread", count: input.unreadReplies[agentId] ?? 1 };
+    } else if (input.recentReplies[agentId]) states[agentId] = { kind: "responded" };
   }
   return states;
 }

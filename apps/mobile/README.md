@@ -31,7 +31,7 @@ events to React Native. This keeps the production transport identical while rema
 Expo Go without a development build.
 
 Remote connection recovery makes up to five attempts, waiting 10 seconds after each failure. After
-five failures it waits two minutes before starting a new series. The bot list and chat show
+five failures it waits two minutes before starting a new series. The agent list and chat show
 `Reconnecting x/5` and a countdown until the next attempt or series. Countdown ticks are local UI
 updates, not requests. Backgrounding suspends retries; returning respects any remaining wait and
 starts at most one attempt if its deadline has passed. A successful connection resets the counter. Dead
@@ -60,7 +60,7 @@ src/
     (app)/              routes available to an authenticated session
   features/
     auth/               QR sign-in, session storage, and session context
-    bots/               bot list, bot actions, and pin transitions
+    agents/             agent list, agent actions, and pin transitions
     chat/               chat screen and its focused UI sections
     search/             search model, controls, results, and screen
     servers/            server drawer and joining a server

@@ -1,13 +1,14 @@
-import type { BotSummary, ConversationPage, ConversationSnapshot, ServerSummary } from "@openbot/contracts/ipc";
+import type { AgentSummary, ConversationPage, ConversationSnapshot, ServerSummary } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { createSignal, Show } from "solid-js";
 import { expect, it, vi } from "vitest";
 import { App } from "./App";
+import { createAgentInitialMessage } from "./agent-initial-message";
 import { useAgents } from "./agents";
 import { desktopAnalytics } from "./analytics";
 import { AppProviders } from "./app-providers";
 import {
-  BOTS,
+  AGENTS,
   confirmOnboardingModel,
   emitAgentEvent,
   emitDynamicIslandAction,
@@ -19,7 +20,6 @@ import {
   testConversationPage,
   testServer,
 } from "./app-test-harness";
-import { createBotInitialMessage } from "./bot-initial-message";
 import { useConversation } from "./conversation";
 import { useLayout } from "./layout";
 import { useNavigation } from "./navigation";
@@ -40,7 +40,7 @@ describe("OpenBot connected desktop shell", () => {
       const servers = useServers();
       return (
         <output aria-label="shell controller state">
-          {servers.activeServer()?.id}|{agents.activeBot()?.id}|{conversation.activeMessages().length}|
+          {servers.activeServer()?.id}|{agents.activeAgent()?.id}|{conversation.activeMessages().length}|
           {layout.leftPanelWidth()}
         </output>
       );
@@ -70,7 +70,7 @@ describe("OpenBot connected desktop shell", () => {
             type="button"
             onClick={() => {
               layout.setLeftPanelWidth(360);
-              navigation.selectBot("sales-outbound");
+              navigation.selectAgent("sales-outbound");
             }}
           >
             Set shell state
@@ -176,7 +176,7 @@ describe("OpenBot connected desktop shell", () => {
 
   it("renders message links and opens them in the external browser", async () => {
     vi.mocked(window.openbot.agent.readConversation).mockResolvedValueOnce({
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-chief",
       activeTurnId: null,
       revision: 1,
@@ -215,14 +215,14 @@ describe("OpenBot connected desktop shell", () => {
     });
     vi.mocked(window.openbot.agent.readConversation)
       .mockResolvedValueOnce({
-        botId: "chief",
+        agentId: "chief",
         threadId: "thread-chief",
         activeTurnId: null,
         revision: 0,
         messages: [],
       })
       .mockResolvedValueOnce({
-        botId: "chief",
+        agentId: "chief",
         threadId: "thread-chief",
         activeTurnId: null,
         revision: 1,
@@ -307,40 +307,40 @@ describe("OpenBot connected desktop shell", () => {
     );
   });
 
-  it("creates a Bot from a suggestion with one complete backend input", async () => {
+  it("creates an agent from a suggestion with one complete backend input", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
 
-    await fireEvent.click(screen.getByRole("button", { name: "Create new Bot" }));
-    expect(await screen.findByRole("heading", { name: "Create a new Bot" })).toBeInTheDocument();
-    expect(window.openbot.agent.createBot).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole("button", { name: "Create new agent" }));
+    expect(await screen.findByRole("heading", { name: "Create a new agent" })).toBeInTheDocument();
+    expect(window.openbot.agent.createAgent).not.toHaveBeenCalled();
     await fireEvent.click(screen.getByRole("button", { name: /^Trip Planner\./ }));
 
     const name = screen.getByRole("textbox", { name: "Name" });
-    const purpose = screen.getByRole("textbox", { name: "What should this Bot help with?" });
+    const purpose = screen.getByRole("textbox", { name: "What should this agent help with?" });
     expect(name).toHaveValue("Trip Planner");
     expect(purpose).toHaveValue(
       "Compare travel options and turn my rough ideas into practical, day-by-day itineraries.",
     );
-    await fireEvent.click(screen.getByRole("button", { name: "Create Bot" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
 
-    await waitFor(() => expect(window.openbot.agent.createBot).toHaveBeenCalledOnce());
+    await waitFor(() => expect(window.openbot.agent.createAgent).toHaveBeenCalledOnce());
     const draft = {
       name: "Trip Planner",
       purpose: "Compare travel options and turn my rough ideas into practical, day-by-day itineraries.",
     };
-    expect(window.openbot.agent.createBot).toHaveBeenCalledWith({
+    expect(window.openbot.agent.createAgent).toHaveBeenCalledWith({
       name: draft.name,
       description: draft.purpose,
       avatarSeed: expect.any(String),
       avatarHue: 215,
-      initialMessage: createBotInitialMessage(draft),
+      initialMessage: createAgentInitialMessage(draft),
     });
     expect(window.openbot.agent.sendMessage).not.toHaveBeenCalled();
     expect(await screen.findByRole("heading", { name: "Trip Planner" })).toBeInTheDocument();
   });
 
-  it("opens and cancels Bot creation from a private conversation", async () => {
+  it("opens and cancels agent creation from a private conversation", async () => {
     render(() => <App peopleEnabled />);
     await screen.findByRole("heading", { name: "Chief" });
     emitPresence?.({
@@ -354,10 +354,10 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.click(await screen.findByRole("button", { name: /Alice/ }));
     expect(await screen.findByRole("main", { name: "Direct conversation with Alice" })).toBeInTheDocument();
 
-    await fireEvent.click(screen.getByRole("button", { name: "Create new Bot" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Create new agent" }));
 
-    expect(await screen.findByRole("heading", { name: "Create a new Bot" })).toBeInTheDocument();
-    expect(window.openbot.agent.createBot).not.toHaveBeenCalled();
+    expect(await screen.findByRole("heading", { name: "Create a new agent" })).toBeInTheDocument();
+    expect(window.openbot.agent.createAgent).not.toHaveBeenCalled();
     expect(window.openbot.servers.setDirectTyping).toHaveBeenCalledWith({
       memberId: "member-alice",
       typing: false,
@@ -420,11 +420,11 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByRole("search", { name: "Search conversation" })).not.toBeInTheDocument();
   });
 
-  it("opens global search with Command K and navigates to bot and message results", async () => {
+  it("opens global search with Command K and navigates to agent and message results", async () => {
     vi.mocked(window.openbot.agent.searchConversationMessages).mockResolvedValue({
       results: [
         {
-          botId: "sales-outbound",
+          agentId: "sales-outbound",
           message: {
             id: "sales-search-result",
             author: "assistant",
@@ -438,13 +438,13 @@ describe("OpenBot connected desktop shell", () => {
       total: 1,
       nextCursor: null,
     });
-    vi.mocked(window.openbot.agent.readConversation).mockImplementation(async (botId) => ({
-      botId,
+    vi.mocked(window.openbot.agent.readConversation).mockImplementation(async (agentId) => ({
+      agentId,
       threadId: null,
       activeTurnId: null,
       revision: 1,
       messages:
-        botId === "sales-outbound"
+        agentId === "sales-outbound"
           ? [
               {
                 id: "sales-search-result",
@@ -469,7 +469,7 @@ describe("OpenBot connected desktop shell", () => {
 
     await fireEvent.click(screen.getByRole("tab", { name: "Messages" }));
     await fireEvent.input(input, { target: { value: "sources-hidden-id" } });
-    await screen.findByText("No matching messages or bots");
+    await screen.findByText("No matching messages or agents");
     await fireEvent.input(input, { target: { value: "research" } });
     const messageResult = await screen.findByRole("option", { name: /Ask @Research to use Sources \(skill\)\./ });
     expect(messageResult).not.toHaveTextContent("research-hidden-id");
@@ -480,15 +480,15 @@ describe("OpenBot connected desktop shell", () => {
       limit: 100,
     });
     expect(window.openbot.agent.readConversationPage).toHaveBeenCalledWith({
-      botId: "sales-outbound",
+      agentId: "sales-outbound",
       anchor: { type: "around", messageId: "sales-search-result" },
       limit: 50,
     });
 
     await fireEvent.keyDown(window, { key: "k", metaKey: true });
-    await fireEvent.click(screen.getByRole("tab", { name: "Bots" }));
-    const botSearch = screen.getByRole("combobox", { name: "Search OpenBot" });
-    await fireEvent.input(botSearch, { target: { value: "chief" } });
+    await fireEvent.click(screen.getByRole("tab", { name: "Agents" }));
+    const agentSearch = screen.getByRole("combobox", { name: "Search OpenBot" });
+    await fireEvent.input(agentSearch, { target: { value: "chief" } });
     await fireEvent.click(await screen.findByRole("option", { name: /Chief/ }));
     await screen.findByRole("heading", { name: "Chief" });
   });
@@ -531,7 +531,7 @@ describe("OpenBot connected desktop shell", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "Expand sidebar and search chats" }));
 
-    expect(screen.getByRole("complementary", { name: "Bot navigation" })).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Agent navigation" })).toBeInTheDocument();
     expect(screen.getByRole("separator", { name: "Resize left sidebar" })).toHaveAttribute("aria-valuenow", "280");
     expect(window.localStorage.getItem("openbot:left-panel-collapsed")).toBe("false");
     expect(screen.getByRole("button", { name: "Open Marketplace" })).toBeInTheDocument();
@@ -545,7 +545,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "prompt",
       requestId: "prompt-island",
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-1",
       turnId: "turn-1",
       questions: [
@@ -566,7 +566,7 @@ describe("OpenBot connected desktop shell", () => {
     emitDynamicIslandAction?.({
       type: "answer-prompt",
       serverId: "local",
-      botId: "chief",
+      agentId: "chief",
       requestId: "prompt-island",
       answers: { source: ["Official data"] },
     });
@@ -590,7 +590,7 @@ describe("OpenBot connected desktop shell", () => {
       serverId: "local",
       event: {
         type: "turn-completed",
-        botId: "chief",
+        agentId: "chief",
         threadId: "thread-1",
         turnId: "turn-failed",
         status: "failed",
@@ -599,7 +599,7 @@ describe("OpenBot connected desktop shell", () => {
     const action = {
       type: "open-failure",
       serverId: "local",
-      botId: "chief",
+      agentId: "chief",
       turnId: "turn-failed",
     } as const;
     emitDynamicIslandAction?.(action);
@@ -619,7 +619,7 @@ describe("OpenBot connected desktop shell", () => {
 
   it("marks the selected Dynamic Island message as read after opening it", async () => {
     vi.mocked(window.openbot.agent.readConversation).mockResolvedValue({
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-1",
       activeTurnId: null,
       revision: 1,
@@ -642,14 +642,14 @@ describe("OpenBot connected desktop shell", () => {
     emitDynamicIslandAction?.({
       type: "open-message",
       serverId: "local",
-      botId: "chief",
+      agentId: "chief",
       messageId: "reply-island",
     });
 
     await waitFor(() =>
       expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
         {
-          botId: "chief",
+          agentId: "chief",
           throughMessageId: "reply-island",
         },
         "local",
@@ -670,7 +670,7 @@ describe("OpenBot connected desktop shell", () => {
           resolveFocusedPage = resolve;
         });
       }
-      return testConversationPage(input.botId);
+      return testConversationPage(input.agentId);
     });
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
@@ -680,12 +680,12 @@ describe("OpenBot connected desktop shell", () => {
     emitDynamicIslandAction?.({
       type: "open-message",
       serverId: "local",
-      botId: "chief",
+      agentId: "chief",
       messageId: "reply-island",
     });
     await waitFor(() =>
       expect(window.openbot.agent.readConversationPage).toHaveBeenCalledWith({
-        botId: "chief",
+        agentId: "chief",
         anchor: { type: "around", messageId: "reply-island" },
         limit: 50,
       }),
@@ -734,26 +734,26 @@ describe("OpenBot connected desktop shell", () => {
     await confirmOnboardingModel();
     await waitFor(() => expect(emitDynamicIslandAction).toBeDefined());
 
-    let resolveStudioBots: ((bots: BotSummary[]) => void) | undefined;
-    vi.mocked(window.openbot.agent.listBots)
+    let resolveStudioAgents: ((agents: AgentSummary[]) => void) | undefined;
+    vi.mocked(window.openbot.agent.listAgents)
       .mockImplementationOnce(
         () =>
           new Promise((resolve) => {
-            resolveStudioBots = resolve;
+            resolveStudioAgents = resolve;
           }),
       )
-      .mockResolvedValueOnce([{ ...BOTS[0], name: "Office Chief" }]);
+      .mockResolvedValueOnce([{ ...AGENTS[0], name: "Office Chief" }]);
     emitDynamicIslandAction?.({
       type: "open-message",
       serverId: "remote-1",
-      botId: "chief",
+      agentId: "chief",
       messageId: "stale-remote-message",
     });
-    await waitFor(() => expect(resolveStudioBots).toBeDefined());
+    await waitFor(() => expect(resolveStudioAgents).toBeDefined());
     await fireEvent.click(screen.getByRole("button", { name: "Office PC server" }));
     expect(await screen.findByRole("heading", { name: "Office Chief" })).toBeInTheDocument();
 
-    resolveStudioBots?.([{ ...BOTS[0], name: "Studio Chief" }]);
+    resolveStudioAgents?.([{ ...AGENTS[0], name: "Studio Chief" }]);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(
@@ -781,12 +781,12 @@ describe("OpenBot connected desktop shell", () => {
     await screen.findByRole("heading", { name: "Chief" });
     await confirmOnboardingModel();
     await waitFor(() => expect(emitDynamicIslandAction).toBeDefined());
-    vi.mocked(window.openbot.agent.listBots).mockResolvedValueOnce([{ ...BOTS[0], name: "Office Chief" }]);
+    vi.mocked(window.openbot.agent.listAgents).mockResolvedValueOnce([{ ...AGENTS[0], name: "Office Chief" }]);
 
     emitDynamicIslandAction?.({
       type: "open-message",
       serverId: "remote-1",
-      botId: "chief",
+      agentId: "chief",
       messageId: "wrong-server-message",
     });
 
@@ -808,7 +808,7 @@ describe("OpenBot connected desktop shell", () => {
     const studio = testServer("remote-1", false);
     const office = { ...testServer("remote-2", false), name: "Office PC", apiUrl: "https://office.example.com" };
     let resolveStudioSelection: ((servers: ServerSummary[]) => void) | undefined;
-    let resolveOfficeBots: ((bots: BotSummary[]) => void) | undefined;
+    let resolveOfficeAgents: ((agents: AgentSummary[]) => void) | undefined;
     vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, studio, office]);
     vi.mocked(window.openbot.servers.select)
       .mockImplementationOnce(
@@ -826,36 +826,36 @@ describe("OpenBot connected desktop shell", () => {
     await screen.findByRole("heading", { name: "Chief" });
     await confirmOnboardingModel();
     await waitFor(() => expect(emitDynamicIslandAction).toBeDefined());
-    vi.mocked(window.openbot.agent.listBots).mockImplementationOnce(
+    vi.mocked(window.openbot.agent.listAgents).mockImplementationOnce(
       () =>
         new Promise((resolve) => {
-          resolveOfficeBots = resolve;
+          resolveOfficeAgents = resolve;
         }),
     );
 
     emitDynamicIslandAction?.({
       type: "open-message",
       serverId: "remote-1",
-      botId: "chief",
+      agentId: "chief",
       messageId: "studio-message",
     });
     await waitFor(() => expect(resolveStudioSelection).toBeDefined());
     emitDynamicIslandAction?.({
       type: "open-message",
       serverId: "remote-2",
-      botId: "chief",
+      agentId: "chief",
       messageId: "office-message",
     });
     // The office workspace is mounted but still loading, so it has not consumed
     // the handoff yet - which is the window in which the superseded selection
     // for Studio comes back and reports that it lost.
-    await waitFor(() => expect(resolveOfficeBots).toBeDefined());
+    await waitFor(() => expect(resolveOfficeAgents).toBeDefined());
     resolveStudioSelection?.([
       { ...local, active: false },
       { ...studio, active: true },
       { ...office, active: false },
     ]);
-    resolveOfficeBots?.([{ ...BOTS[0], name: "Office Chief" }]);
+    resolveOfficeAgents?.([{ ...AGENTS[0], name: "Office Chief" }]);
 
     expect(await screen.findByRole("heading", { name: "Office Chief" })).toBeInTheDocument();
     await waitFor(() =>
@@ -871,7 +871,7 @@ describe("OpenBot connected desktop shell", () => {
     const local = testServer("local", true);
     const remote = testServer("remote-1", false);
     let resolveOldPage: ((page: ConversationPage) => void) | undefined;
-    let resolveRemoteBots: ((bots: BotSummary[]) => void) | undefined;
+    let resolveRemoteAgents: ((agents: AgentSummary[]) => void) | undefined;
     vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
     vi.mocked(window.openbot.servers.select).mockResolvedValueOnce([
       { ...local, active: false },
@@ -903,17 +903,17 @@ describe("OpenBot connected desktop shell", () => {
           },
         ),
       );
-    vi.mocked(window.openbot.agent.listBots).mockImplementationOnce(
+    vi.mocked(window.openbot.agent.listAgents).mockImplementationOnce(
       () =>
         new Promise((resolve) => {
-          resolveRemoteBots = resolve;
+          resolveRemoteAgents = resolve;
         }),
     );
 
     await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
     await waitFor(() => expect(resolveOldPage).toBeDefined());
     await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
-    await waitFor(() => expect(resolveRemoteBots).toBeDefined());
+    await waitFor(() => expect(resolveRemoteAgents).toBeDefined());
     resolveOldPage?.(
       testConversationPage(
         "chief",
@@ -936,7 +936,7 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(screen.queryByText("Reply from the old server")).not.toBeInTheDocument();
     expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalled();
-    resolveRemoteBots?.(BOTS);
+    resolveRemoteAgents?.(AGENTS);
     await screen.findByRole("heading", { name: "Chief" });
     await screen.findByText("Unread reply from the new server");
     expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalled();
@@ -954,7 +954,7 @@ describe("OpenBot connected desktop shell", () => {
       type: "approval",
       approval: {
         requestId: 14,
-        botId: "chief",
+        agentId: "chief",
         threadId: "thread-1",
         turnId: "turn-1",
         kind: "permissions",
@@ -982,13 +982,13 @@ describe("OpenBot connected desktop shell", () => {
   });
 
   it("opens the recipient chat from a persistent agent exchange", async () => {
-    vi.mocked(window.openbot.agent.readConversation).mockImplementation(async (botId) => ({
-      botId,
+    vi.mocked(window.openbot.agent.readConversation).mockImplementation(async (agentId) => ({
+      agentId,
       threadId: "thread-1",
       activeTurnId: null,
       revision: 1,
       messages:
-        botId === "chief"
+        agentId === "chief"
           ? [
               {
                 id: "outbox-message-1",
@@ -1000,13 +1000,13 @@ describe("OpenBot connected desktop shell", () => {
                 exchange: {
                   direction: "outgoing",
                   messageId: "message-1",
-                  senderBotId: "chief",
-                  recipientBotIds: ["sales-outbound"],
+                  senderAgentId: "chief",
+                  recipientAgentIds: ["sales-outbound"],
                   replyToMessageId: null,
                   deliveries: [
                     {
                       id: "delivery-1",
-                      recipientBotId: "sales-outbound",
+                      recipientAgentId: "sales-outbound",
                       status: "queued",
                       position: 1,
                       error: null,
@@ -1026,32 +1026,32 @@ describe("OpenBot connected desktop shell", () => {
   });
 
   it("shows an incoming agent marker without duplicating raw collaborator input", async () => {
-    vi.mocked(window.openbot.agent.readConversation).mockImplementation(async (botId) => ({
-      botId,
+    vi.mocked(window.openbot.agent.readConversation).mockImplementation(async (agentId) => ({
+      agentId,
       threadId: "thread-chief",
       activeTurnId: null,
       revision: 1,
       messages:
-        botId === "chief"
+        agentId === "chief"
           ? [
               {
                 id: "delivery-reply-1",
                 author: "agent",
                 source: "agent",
-                senderBotId: "sales-outbound",
+                senderAgentId: "sales-outbound",
                 text: "RAW_COLLABORATOR_RESULT",
                 createdAt: "2026-08-12T10:00:00.000Z",
                 status: "completed",
                 exchange: {
                   direction: "incoming",
                   messageId: "reply-1",
-                  senderBotId: "sales-outbound",
-                  recipientBotIds: ["chief"],
+                  senderAgentId: "sales-outbound",
+                  recipientAgentIds: ["chief"],
                   replyToMessageId: "request-1",
                   deliveries: [
                     {
                       id: "delivery-reply-1",
-                      recipientBotId: "chief",
+                      recipientAgentId: "chief",
                       status: "completed",
                       position: null,
                       error: null,
@@ -1079,10 +1079,10 @@ describe("OpenBot connected desktop shell", () => {
   it("does not let a late history refresh overwrite a newer streamed snapshot", async () => {
     let resolveHistory: ((snapshot: ConversationSnapshot) => void) | undefined;
     vi.mocked(window.openbot.agent.readConversation).mockImplementation(
-      (botId) =>
+      (agentId) =>
         new Promise<ConversationSnapshot>((resolve) => {
           resolveHistory = resolve;
-          expect(botId).toBe("chief");
+          expect(agentId).toBe("chief");
         }),
     );
 
@@ -1091,7 +1091,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "conversation",
       snapshot: {
-        botId: "chief",
+        agentId: "chief",
         threadId: "thread-chief",
         activeTurnId: "turn-live",
         revision: 2,
@@ -1109,7 +1109,7 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByText("Newest streamed answer")).toBeInTheDocument();
 
     resolveHistory?.({
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-chief",
       activeTurnId: null,
       revision: 1,

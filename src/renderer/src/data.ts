@@ -3,9 +3,9 @@ import type {
   AgentModelId,
   AgentProviderId,
   AgentReasoningEffort,
+  AgentSummary,
   AttachmentSummary,
-  BotAvatarHue,
-  BotSummary,
+  AvatarHue,
   ConversationQuestionPrompt,
   ConversationReaction,
   HostedSiteConversationEvent,
@@ -90,10 +90,10 @@ export interface MessageReactionSummary {
   overflowCount?: number;
 }
 
-export interface BotMessage {
+export interface AgentMessage {
   id: string;
   turnId?: string;
-  author: "you" | "bot";
+  author: "you" | "agent";
   body: string;
   time: string;
   createdAt?: string;
@@ -102,7 +102,7 @@ export interface BotMessage {
   itemType?: string;
   kind?: MessageKind;
   status?: string;
-  senderBotId?: string;
+  senderAgentId?: string;
   replyToMessageId?: string | null;
   attachments?: AttachmentSummary[];
   imageGeneration?: ImageGenerationInfo;
@@ -123,7 +123,7 @@ export interface BotMessage {
   itemIds?: string[];
 }
 
-export interface BotProfile {
+export interface AgentProfile {
   id: string;
   name: string;
   title: string;
@@ -134,9 +134,9 @@ export interface BotProfile {
   reasoningEffort: AgentReasoningEffort;
   threadId: string | null;
   avatarSeed: string;
-  avatarHue: BotAvatarHue | null;
+  avatarHue: AvatarHue | null;
   avatarUrl: string | null;
-  marketplaceSource?: BotSummary["marketplaceSource"];
+  marketplaceSource?: AgentSummary["marketplaceSource"];
   updatedAt?: string | null;
   time: string;
   preview: string;

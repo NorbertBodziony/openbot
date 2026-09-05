@@ -16,7 +16,7 @@ import { computeSidebarAgentStates } from "./sidebar-agent-states";
 import { useTurns } from "./turns";
 
 /**
- * The list of Bots and people. It reads the most domains of any pane, and every
+ * The list of Agents and people. It reads the most domains of any pane, and every
  * one of them for the same reason: a sidebar row shows who exists, who is
  * working, who has replied and who is pinned, which is four domains before any
  * of the actions on the row context menu.
@@ -30,13 +30,13 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
   const { activeServer, activeServerSupportsCapability } = useServers();
   const { openServerSettings } = useServerSettings();
   const { setSkillsMarketplaceOpen } = useSettings();
-  const { botList, activeBot, botSetupDraft, duplicatingBotIds, openBotSetup } = useAgents();
-  const { editBot, duplicateBot, deleteBot } = useAgentActions();
+  const { agentList, activeAgent, agentSetupDraft, duplicatingAgentIds, openBotSetup } = useAgents();
+  const { editAgent, duplicateAgent, deleteAgent } = useAgentActions();
   const { activeTurns, queues } = useTurns();
   const { unreadReplies, recentReplies } = useConversation();
   const { directPeople } = usePresence();
   const { activeDirectMember, activeDirectMemberId, directThreads } = useDirectMessages();
-  const { selectBot, selectDirectMember } = useNavigation();
+  const { selectAgent, selectDirectMember } = useNavigation();
   const {
     sidebarLayout,
     collapsedSidebarSectionIds,
@@ -52,7 +52,7 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
 
   const sidebarAgentStates = createMemo(() =>
     computeSidebarAgentStates({
-      botIds: botList().map((bot) => bot.id),
+      agentIds: agentList().map((agent) => agent.id),
       activeTurns: activeTurns(),
       queues: queues(),
       unreadReplies: unreadReplies(),
@@ -67,8 +67,8 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
         const server = activeServer();
         if (server) openServerSettings(server.id, trigger);
       }}
-      bots={botList()}
-      activeBotId={activeDirectMember() ? "" : (activeBot()?.id ?? "")}
+      agents={agentList()}
+      activeAgentId={activeDirectMember() ? "" : (activeAgent()?.id ?? "")}
       showPeople={props.peopleEnabled}
       people={directPeople()}
       directThreads={directThreads()}
@@ -85,24 +85,24 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
       onUnpin={unpinSidebarItem}
       onReorderPinned={reorderPinnedSidebarItems}
       onReorderPeople={reorderSidebarPeople}
-      onSelectBot={selectBot}
+      onSelectAgent={selectAgent}
       onSelectPerson={(memberId) => void selectDirectMember(memberId)}
       onPreloadDirectConversation={props.peopleEnabled ? () => void DirectConversation.preload() : undefined}
-      onCreateBot={openBotSetup}
-      onEditBot={editBot}
+      onCreateAgent={openBotSetup}
+      onEditAgent={editAgent}
       duplicateSupported={activeServerSupportsCapability("agent-duplication")}
-      duplicatingBotIds={duplicatingBotIds()}
-      onDuplicateBot={duplicateBot}
-      onDeleteBot={deleteBot}
+      duplicatingAgentIds={duplicatingAgentIds()}
+      onDuplicateAgent={duplicateAgent}
+      onDeleteAgent={deleteAgent}
       compact={layout.leftPanelCompact()}
       onExpand={layout.expandSidebar}
       onOpenMarketplace={() => setSkillsMarketplaceOpen(true)}
       emptyAction={
-        botList().length === 0
+        agentList().length === 0
           ? {
-              label: "Create your first Bot",
-              avatarSeed: botSetupDraft().avatarSeed,
-              avatarHue: botSetupDraft().avatarHue,
+              label: "Create your first agent",
+              avatarSeed: agentSetupDraft().avatarSeed,
+              avatarHue: agentSetupDraft().avatarHue,
               onSelect: openBotSetup,
             }
           : undefined

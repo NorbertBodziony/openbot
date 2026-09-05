@@ -6,7 +6,7 @@ import type { SidebarAgentState } from "../src/components/Sidebar";
 import { Sidebar } from "../src/components/Sidebar";
 import { MAX_SIDEBAR_PINNED_ITEMS, normalizeSidebarPinnedItems, type SidebarPinnedItem } from "../src/sidebar-pins";
 import { defaultSidebarLayout } from "../src/sidebar-sections";
-import { STORY_BOTS, STORY_DIRECT_THREADS, STORY_PRESENCE } from "./fixtures";
+import { STORY_AGENTS, STORY_DIRECT_THREADS, STORY_PRESENCE } from "./fixtures";
 
 const agentStates: Record<string, SidebarAgentState> = {
   chief: { kind: "working" },
@@ -14,11 +14,11 @@ const agentStates: Record<string, SidebarAgentState> = {
   sales: { kind: "responded" },
 };
 
-const sidebarBots = STORY_BOTS.map((bot) => {
-  if (bot.id === "chief") return { ...bot, title: "CEO" };
-  if (bot.id === "research") return { ...bot, title: "Analyst" };
-  if (bot.id === "sales") return { ...bot, name: "Sales", title: "Growth" };
-  return bot;
+const sidebarAgents = STORY_AGENTS.map((agent) => {
+  if (agent.id === "chief") return { ...agent, title: "CEO" };
+  if (agent.id === "research") return { ...agent, title: "Analyst" };
+  if (agent.id === "sales") return { ...agent, name: "Sales", title: "Growth" };
+  return agent;
 });
 
 const pinnedOne: SidebarPinnedItem[] = [{ kind: "agent", id: "chief" }];
@@ -27,14 +27,14 @@ const pinnedThree: SidebarPinnedItem[] = [...pinnedTwo, { kind: "agent", id: "sa
 const pinnedFour: SidebarPinnedItem[] = [...pinnedThree, { kind: "agent", id: "stress-agent-1" }];
 const pinnedFive: SidebarPinnedItem[] = [...pinnedFour, { kind: "agent", id: "stress-agent-2" }];
 const pinnedSix: SidebarPinnedItem[] = [...pinnedFive, { kind: "agent", id: "stress-agent-3" }];
-const longLabelBots = sidebarBots.map((bot) =>
-  bot.id === "chief"
+const longLabelAgents = sidebarAgents.map((agent) =>
+  agent.id === "chief"
     ? {
-        ...bot,
+        ...agent,
         name: "Strategic Operations Coordinator",
         title: "Executive Planning and Delivery Partner",
       }
-    : bot,
+    : agent,
 );
 const demoSectionId = "11111111-1111-4111-8111-111111111111";
 const emptySectionId = "22222222-2222-4222-8222-222222222222";
@@ -61,10 +61,10 @@ const longSectionLayout: SidebarLayoutSnapshot = {
   agentOrder: ["chief", "research", "sales"],
 };
 const stressSectionIds = Array.from({ length: 6 }, (_, index) => `44444444-4444-4444-8444-44444444444${index}`);
-const stressBots = [
-  ...sidebarBots,
+const stressAgents = [
+  ...sidebarAgents,
   ...Array.from({ length: 27 }, (_, index) => {
-    const source = sidebarBots[index % sidebarBots.length] ?? sidebarBots[0];
+    const source = sidebarAgents[index % sidebarAgents.length] ?? sidebarAgents[0];
     return {
       ...source,
       id: `stress-agent-${index + 1}`,
@@ -80,16 +80,16 @@ const stressLayout: SidebarLayoutSnapshot = {
   sections: stressSectionIds.map((id, index) => ({ id, name: `Team ${index + 1}` })),
   order: ["people", ...stressSectionIds, "unassigned"],
   agentAssignments: Object.fromEntries(
-    stressBots.slice(0, -3).map((bot, index) => [bot.id, stressSectionIds[index % stressSectionIds.length]]),
+    stressAgents.slice(0, -3).map((agent, index) => [agent.id, stressSectionIds[index % stressSectionIds.length]]),
   ),
-  agentOrder: stressBots.map((bot) => bot.id),
+  agentOrder: stressAgents.map((agent) => agent.id),
 };
 
 const args: Parameters<typeof Sidebar>[0] = {
   serverName: "Local",
   onOpenServerSettings: fn(),
-  bots: sidebarBots,
-  activeBotId: "chief",
+  agents: sidebarAgents,
+  activeAgentId: "chief",
   people: STORY_PRESENCE.members,
   directThreads: STORY_DIRECT_THREADS,
   activeDirectMemberId: null,
@@ -104,11 +104,11 @@ const args: Parameters<typeof Sidebar>[0] = {
   onUnpin: fn(),
   onReorderPinned: fn(),
   onReorderPeople: fn(),
-  onSelectBot: fn(),
+  onSelectAgent: fn(),
   onSelectPerson: fn(),
-  onCreateBot: fn(),
-  onEditBot: fn(),
-  onDeleteBot: async () => undefined,
+  onCreateAgent: fn(),
+  onEditAgent: fn(),
+  onDeleteAgent: async () => undefined,
   compact: false,
   onExpand: fn(),
   onOpenMarketplace: fn(),
@@ -324,25 +324,25 @@ export const PinnedThree: Story = {
 };
 
 export const PinnedFour: Story = {
-  args: { bots: stressBots, pinnedItems: pinnedFour },
+  args: { agents: stressAgents, pinnedItems: pinnedFour },
   decorators: [(Story) => <div style={{ width: "280px", height: "100vh" }}>{Story()}</div>],
   play: async ({ canvasElement }) => expectPinnedLayout(canvasElement, 4),
 };
 
 export const PinnedFive: Story = {
-  args: { bots: stressBots, pinnedItems: pinnedFive },
+  args: { agents: stressAgents, pinnedItems: pinnedFive },
   decorators: [(Story) => <div style={{ width: "280px", height: "100vh" }}>{Story()}</div>],
   play: async ({ canvasElement }) => expectPinnedLayout(canvasElement, 5),
 };
 
 export const PinnedSix: Story = {
-  args: { bots: stressBots, pinnedItems: pinnedSix },
+  args: { agents: stressAgents, pinnedItems: pinnedSix },
   decorators: [(Story) => <div style={{ width: "280px", height: "100vh" }}>{Story()}</div>],
   play: async ({ canvasElement }) => expectPinnedLayout(canvasElement, 6),
 };
 
 export const PinnedLongLabels: Story = {
-  args: { bots: longLabelBots, pinnedItems: pinnedOne },
+  args: { agents: longLabelAgents, pinnedItems: pinnedOne },
   decorators: [(Story) => <div style={{ width: "280px", height: "100vh" }}>{Story()}</div>],
   play: async ({ canvasElement }) => {
     await expectPinnedLayout(canvasElement, 1);
@@ -369,11 +369,11 @@ export const AgentTiles: Story = {
   decorators: [(Story) => <div style={{ width: "280px", height: "100vh" }}>{Story()}</div>],
   play: async ({ canvas }) => {
     const tile = canvas.getByRole("button", { name: /Chief, CEO/ });
-    const avatar = tile.querySelector<HTMLElement>(".bot-row-avatar");
-    const title = tile.querySelector<HTMLElement>(".bot-row-title strong");
-    const badge = tile.querySelector<HTMLElement>(".bot-role-badge");
-    const preview = tile.querySelector<HTMLElement>(".bot-row-preview");
-    const time = tile.querySelector<HTMLElement>(".bot-row-time");
+    const avatar = tile.querySelector<HTMLElement>(".agent-row-avatar");
+    const title = tile.querySelector<HTMLElement>(".agent-row-title strong");
+    const badge = tile.querySelector<HTMLElement>(".agent-role-badge");
+    const preview = tile.querySelector<HTMLElement>(".agent-row-preview");
+    const time = tile.querySelector<HTMLElement>(".agent-row-time");
     if (!avatar || !title || !badge || !preview || !time) throw new Error("Agent tile anatomy is incomplete.");
     await expect(tile.getBoundingClientRect().height).toBe(54);
     await expect(avatar.getBoundingClientRect().width).toBe(36);
@@ -390,7 +390,7 @@ export const AgentTiles: Story = {
 
 export const AgentLongLabels: Story = {
   args: {
-    bots: longLabelBots,
+    agents: longLabelAgents,
     people: [],
     directThreads: [],
     agentStates: {},
@@ -502,7 +502,7 @@ export const Sections: Story = {
 };
 
 export const DragStress: Story = {
-  args: { bots: stressBots, layout: stressLayout, pinnedItems: pinnedSix },
+  args: { agents: stressAgents, layout: stressLayout, pinnedItems: pinnedSix },
   decorators: [(Story) => <div style={{ width: "280px", height: "100vh" }}>{Story()}</div>],
   play: async ({ canvasElement }) => {
     await expect(canvasElement.querySelectorAll("[data-pinned-key]")).toHaveLength(6);
@@ -597,7 +597,7 @@ export const EmptyPinDropTarget: Story = {
  *  three rows a shift needs, and no section grows tall enough to win the nearest-centre hit test
  *  away from the one being hovered. The pinned agents are excluded from the section list, which is
  *  why the section holds stress agents rather than the three real ones. */
-const dragOffsetBots = stressBots.slice(0, 6);
+const dragOffsetAgents = stressAgents.slice(0, 6);
 const dragOffsetLayout: SidebarLayoutSnapshot = {
   revision: 1,
   sections: [
@@ -610,7 +610,7 @@ const dragOffsetLayout: SidebarLayoutSnapshot = {
     "stress-agent-2": demoSectionId,
     "stress-agent-3": demoSectionId,
   },
-  agentOrder: dragOffsetBots.map((bot) => bot.id),
+  agentOrder: dragOffsetAgents.map((agent) => agent.id),
 };
 
 /**
@@ -678,7 +678,7 @@ function dragRows(root: HTMLElement, selector: string, what: string): HTMLElemen
 }
 
 export const DragOffsets: Story = {
-  args: { bots: dragOffsetBots, layout: dragOffsetLayout, pinnedItems: pinnedThree },
+  args: { agents: dragOffsetAgents, layout: dragOffsetLayout, pinnedItems: pinnedThree },
   decorators: [(Story) => <div style={{ width: "280px", height: "100vh" }}>{Story()}</div>],
   play: async ({ canvasElement }) => {
     // The first row is always dragged onto the second, so the row that has to move is the one being
@@ -705,7 +705,7 @@ export const DragOffsets: Story = {
 
 export const Empty: Story = {
   args: {
-    bots: [],
+    agents: [],
     people: [],
     directThreads: [],
     agentStates: {},

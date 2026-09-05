@@ -65,31 +65,31 @@ export function SidebarSectionHeader(headerProps: { sectionId: string; name: str
           </ContextMenu.Trigger>
           <Show when={layoutMutable()}>
             <ContextMenu.Portal>
-              <ContextMenu.Content class="bot-context-menu" aria-label="Section actions">
+              <ContextMenu.Content class="agent-context-menu" aria-label="Section actions">
                 <Show when={custom()}>
                   <ContextMenu.Item onSelect={() => startRenameSection(headerProps.sectionId)}>
-                    <Pencil class="bot-context-icon size-4" aria-hidden="true" />
+                    <Pencil class="agent-context-icon size-4" aria-hidden="true" />
                     <span>Rename</span>
                   </ContextMenu.Item>
                 </Show>
                 <ContextMenu.Item disabled={position() <= 0} onSelect={() => moveSection(headerProps.sectionId, "up")}>
-                  <ArrowUp class="bot-context-icon size-4" aria-hidden="true" />
+                  <ArrowUp class="agent-context-icon size-4" aria-hidden="true" />
                   <span>Move up</span>
                 </ContextMenu.Item>
                 <ContextMenu.Item
                   disabled={position() < 0 || position() >= visibleSectionIds().length - 1}
                   onSelect={() => moveSection(headerProps.sectionId, "down")}
                 >
-                  <ArrowDown class="bot-context-icon size-4" aria-hidden="true" />
+                  <ArrowDown class="agent-context-icon size-4" aria-hidden="true" />
                   <span>Move down</span>
                 </ContextMenu.Item>
                 <Show when={custom()}>
                   <ContextMenu.Separator />
                   <ContextMenu.Item
-                    class="ui-action-menu-danger bot-context-danger"
+                    class="ui-action-menu-danger agent-context-danger"
                     onSelect={() => openDelete("section", headerProps.sectionId)}
                   >
-                    <Trash2 class="bot-context-icon bot-context-danger-icon size-4" aria-hidden="true" />
+                    <Trash2 class="agent-context-icon agent-context-danger-icon size-4" aria-hidden="true" />
                     <span>Delete</span>
                   </ContextMenu.Item>
                 </Show>

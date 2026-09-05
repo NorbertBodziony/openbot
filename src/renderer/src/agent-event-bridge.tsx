@@ -7,7 +7,7 @@ import {
   reconcileAttentionPrompts,
 } from "./agent-runtime-snapshot";
 import { useAgents } from "./agents";
-import { withoutBot } from "./app-message-projection";
+import { withoutAgent } from "./app-message-projection";
 import { useAuth } from "./auth";
 import { useBrowserTabs } from "./browser-tabs";
 import { playCompletionSoundForAgentEvent } from "./completion-sound";
@@ -44,7 +44,7 @@ export function AgentEventBridge() {
   const { activeServerId } = useServers();
   const { invalidateAccountUsage } = useAuth();
   const { applyAgentStatus } = useProviders();
-  const { botList, setModelOptions, explicitlyOpenedAgentChatId, applyStoredBots, appendUiError } = useAgents();
+  const { agentList, setModelOptions, explicitlyOpenedAgentChatId, applyStoredAgents, appendUiError } = useAgents();
   const {
     setLiveMessages,
     conversationReads,
@@ -69,7 +69,7 @@ export function AgentEventBridge() {
     submittedPromptRequests,
     setSubmittedPromptRequests,
     setPendingApprovals,
-    completedTurnByBot,
+    completedTurnByAgent,
     queueSnapshotRequests,
     refreshRoutineIds,
   } = useTurns();
@@ -91,8 +91,8 @@ export function AgentEventBridge() {
       case "usage-changed":
         invalidateAccountUsage();
         return;
-      case "bots-changed":
-        applyStoredBots(event.bots);
+      case "agents-changed":
+        applyStoredAgents(event.agents);
         return;
       case "sidebar-layout-changed":
         setSidebarLayout(event.layout);
@@ -102,20 +102,20 @@ export function AgentEventBridge() {
         return;
       case "conversation-page":
         {
-          const existingUnreadCount = conversationReads()[event.page.botId]?.unreadCount ?? 0;
-          const trackingKey = agentConversationKey(activeServerId(), event.page.botId);
+          const existingUnreadCount = conversationReads()[event.page.agentId]?.unreadCount ?? 0;
+          const trackingKey = agentConversationKey(activeServerId(), event.page.agentId);
           const markNewMessagesRead =
-            isAgentChatReadable(event.page.botId) &&
+            isAgentChatReadable(event.page.agentId) &&
             (event.page.readState === undefined || event.page.readState.unreadCount > 0) &&
             (existingUnreadCount === 0 ||
-              explicitlyOpenedAgentChatId() === event.page.botId ||
+              explicitlyOpenedAgentChatId() === event.page.agentId ||
               agentChatsToRetryRead.has(trackingKey));
           const pageApplied = applyConversationPage(event.page, "latest", "latest");
           const latestIncomingMessage = markNewMessagesRead
             ? latestIncomingConversationMessage(event.page.messages)
             : undefined;
           if (pageApplied && latestIncomingMessage) {
-            autoMarkAgentMessageRead(event.page.botId, latestIncomingMessage.id, existingUnreadCount === 0);
+            autoMarkAgentMessageRead(event.page.agentId, latestIncomingMessage.id, existingUnreadCount === 0);
           }
         }
         return;
@@ -137,18 +137,18 @@ export function AgentEventBridge() {
       case "turn-progress":
         setTurnProgress((current) => ({
           ...current,
-          [event.botId]: { turnId: event.turnId, detail: cleanAgentMessageText(event.detail) },
+          [event.agentId]: { turnId: event.turnId, detail: cleanAgentMessageText(event.detail) },
         }));
         return;
       case "queue-changed":
-        queueSnapshotRequests.set(event.snapshot.botId, (queueSnapshotRequests.get(event.snapshot.botId) ?? 0) + 1);
+        queueSnapshotRequests.set(event.snapshot.agentId, (queueSnapshotRequests.get(event.snapshot.agentId) ?? 0) + 1);
         setQueues((current) => ({
           ...current,
-          [event.snapshot.botId]: event.snapshot,
+          [event.snapshot.agentId]: event.snapshot,
         }));
         return;
       case "routines-changed":
-        refreshRoutineIds(event.botId, activeServerId());
+        refreshRoutineIds(event.agentId, activeServerId());
         return;
       case "browser-changed":
         if (platform.landingPreview) return;
@@ -159,65 +159,67 @@ export function AgentEventBridge() {
         setBrowserControlState(event.state);
         return;
       case "turn-started":
-        completedTurnByBot.delete(event.botId);
-        setTurnProgress((current) => withoutBot(current, event.botId));
-        clearRecentReply(event.botId);
-        setFailedTurns((current) => withoutBot(current, event.botId));
+        completedTurnByAgent.delete(event.agentId);
+        setTurnProgress((current) => withoutAgent(current, event.agentId));
+        clearRecentReply(event.agentId);
+        setFailedTurns((current) => withoutAgent(current, event.agentId));
         setActiveTurns((current) => ({
           ...current,
-          [event.botId]: event.turnId,
+          [event.agentId]: event.turnId,
         }));
         return;
       case "turn-completed":
-        completedTurnByBot.set(event.botId, event.turnId);
+        completedTurnByAgent.set(event.agentId, event.turnId);
         setTurnProgress((current) =>
-          current[event.botId]?.turnId === event.turnId ? withoutBot(current, event.botId) : current,
+          current[event.agentId]?.turnId === event.turnId ? withoutAgent(current, event.agentId) : current,
         );
         setFailedTurns((current) =>
-          event.status === "failed" ? { ...current, [event.botId]: event.turnId } : withoutBot(current, event.botId),
+          event.status === "failed"
+            ? { ...current, [event.agentId]: event.turnId }
+            : withoutAgent(current, event.agentId),
         );
-        setActiveTurns((current) => ({ ...current, [event.botId]: null }));
+        setActiveTurns((current) => ({ ...current, [event.agentId]: null }));
         setQueues((current) => {
-          const snapshot = current[event.botId];
+          const snapshot = current[event.agentId];
           if (!snapshot) return current;
           const next = queueAfterTurnCompleted(snapshot, event.turnId);
-          return next === snapshot ? current : { ...current, [event.botId]: next };
+          return next === snapshot ? current : { ...current, [event.agentId]: next };
         });
         setPendingPrompts((current) => {
-          const pending = current[event.botId];
-          const submittedRequestKey = submittedPromptRequests()[event.botId];
+          const pending = current[event.agentId];
+          const submittedRequestKey = submittedPromptRequests()[event.agentId];
           if (
             pending?.type === "prompt" &&
             promptRequestKey(pending.turnId, pending.requestId) === submittedRequestKey
           ) {
             return current;
           }
-          return { ...current, [event.botId]: undefined };
+          return { ...current, [event.agentId]: undefined };
         });
-        setPendingApprovals((current) => ({ ...current, [event.botId]: undefined }));
+        setPendingApprovals((current) => ({ ...current, [event.agentId]: undefined }));
         if (event.status === "completed") {
-          markReplyCompleted(event.botId);
-          playCompletionSoundForAgentEvent(event, botList());
+          markReplyCompleted(event.agentId);
+          playCompletionSoundForAgentEvent(event, agentList());
         }
         return;
       case "prompt":
-        setPendingPrompts((current) => ({ ...current, [event.botId]: event }));
-        setPresentedPromptResolutions((current) => ({ ...current, [event.botId]: undefined }));
-        setSubmittedPromptRequests((current) => ({ ...current, [event.botId]: undefined }));
+        setPendingPrompts((current) => ({ ...current, [event.agentId]: event }));
+        setPresentedPromptResolutions((current) => ({ ...current, [event.agentId]: undefined }));
+        setSubmittedPromptRequests((current) => ({ ...current, [event.agentId]: undefined }));
         return;
       case "agent-input-resolved":
         if (event.kind === "prompt") {
           setPendingPrompts((current) => {
-            const prompt = current[event.botId];
+            const prompt = current[event.agentId];
             return prompt?.type === "prompt" && String(prompt.requestId) === String(event.requestId)
-              ? { ...current, [event.botId]: undefined }
+              ? { ...current, [event.agentId]: undefined }
               : current;
           });
         } else {
           setPendingApprovals((current) => {
-            const approval = current[event.botId];
+            const approval = current[event.agentId];
             return approval && String(approval.requestId) === String(event.requestId)
-              ? { ...current, [event.botId]: undefined }
+              ? { ...current, [event.agentId]: undefined }
               : current;
           });
         }
@@ -225,7 +227,7 @@ export function AgentEventBridge() {
       case "approval":
         setPendingApprovals((current) => ({
           ...current,
-          [event.approval.botId]: event.approval,
+          [event.approval.agentId]: event.approval,
         }));
         return;
       case "runtime-snapshot":
@@ -234,39 +236,39 @@ export function AgentEventBridge() {
       case "browser-takeover-requested":
         setPendingPrompts((current) => ({
           ...current,
-          [event.request.botId]: event,
+          [event.request.agentId]: event,
         }));
         return;
       case "browser-takeover-resolved":
         setPendingPrompts((current) => {
-          const pending = current[event.botId];
+          const pending = current[event.agentId];
           return pending?.type === "browser-takeover-requested" && pending.request.requestId === event.requestId
-            ? { ...current, [event.botId]: undefined }
+            ? { ...current, [event.agentId]: undefined }
             : current;
         });
         return;
       case "error":
-        if (event.botId) appendUiError(event.botId, event.message, "Error", activeServerId());
+        if (event.agentId) appendUiError(event.agentId, event.message, "Error", activeServerId());
     }
   }
 
   function applyAgentRuntimeSnapshot(snapshot: AgentRuntimeSnapshot): void {
-    const runtimeTurns = new Map(snapshot.activeTurns.map((turn) => [turn.botId, turn.turnId]));
+    const runtimeTurns = new Map(snapshot.activeTurns.map((turn) => [turn.agentId, turn.turnId]));
     setActiveTurns(Object.fromEntries(runtimeTurns));
     setTurnProgress((current) =>
       Object.fromEntries(
-        Object.entries(current).filter(([botId, progress]) => progress?.turnId === runtimeTurns.get(botId)),
+        Object.entries(current).filter(([agentId, progress]) => progress?.turnId === runtimeTurns.get(agentId)),
       ),
     );
-    setFailedTurns(Object.fromEntries(snapshot.failedTurns.map((turn) => [turn.botId, turn.turnId])));
+    setFailedTurns(Object.fromEntries(snapshot.failedTurns.map((turn) => [turn.agentId, turn.turnId])));
     setQueues((current) => reconcileQueuesWithRuntimeWork(current, snapshot.work, runtimeTurns));
     setPendingPrompts((current) => reconcileAttentionPrompts(current, snapshot, submittedPromptRequests()));
     setPendingApprovals((current) => reconcileAttentionApprovals(current, snapshot));
-    for (const botId of new Set(snapshot.latestMessages.map((message) => message.botId))) {
-      deleteAgentMessageBodies(rawAgentMessageBodies, botId);
+    for (const agentId of new Set(snapshot.latestMessages.map((message) => message.agentId))) {
+      deleteAgentMessageBodies(rawAgentMessageBodies, agentId);
     }
     for (const message of snapshot.latestMessages) {
-      rawAgentMessageBodies.set(agentMessageKey(message.botId, message.id), message.text);
+      rawAgentMessageBodies.set(agentMessageKey(message.agentId, message.id), message.text);
     }
     setLiveMessages((current) => appendLatestRuntimeMessages(current, snapshot.latestMessages));
   }
@@ -278,7 +280,7 @@ export function AgentEventBridge() {
     return () => {
       readRefresh += 1;
       unsubscribe();
-      completedTurnByBot.clear();
+      completedTurnByAgent.clear();
     };
   });
 

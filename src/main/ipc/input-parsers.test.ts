@@ -10,10 +10,10 @@ import {
   parseBrowserTakeoverResponse,
   parseCancelQueuedMessage,
   parseChooseAttachments,
-  parseCreateBot,
-  parseCreateBotMemory,
+  parseCreateAgent,
+  parseCreateAgentMemory,
   parseCreateRoutine,
-  parseDeleteBotMemory,
+  parseDeleteAgentMemory,
   parseDeleteRoutine,
   parseImportAttachments,
   parseInterrupt,
@@ -28,8 +28,8 @@ import {
   parseSendMessage,
   parseSidebarLayoutAction,
   parseSteerQueuedMessage,
-  parseUpdateBot,
-  parseUpdateBotMemory,
+  parseUpdateAgent,
+  parseUpdateAgentMemory,
   parseUpdateQueuedMessage,
   parseUpdateRoutine,
 } from "./agent-inputs";
@@ -112,8 +112,8 @@ describe("app IPC input parsing", () => {
 
   it("validates model usage agent identifiers", () => {
     expect(parseAgentId("chief")).toBe("chief");
-    expect(() => parseAgentId(42)).toThrowError("botId is required.");
-    expect(() => parseAgentId("x".repeat(INPUT_LIMITS.identifier + 1))).toThrowError("botId is too long.");
+    expect(() => parseAgentId(42)).toThrowError("agentId is required.");
+    expect(() => parseAgentId("x".repeat(INPUT_LIMITS.identifier + 1))).toThrowError("agentId is too long.");
   });
 
   it("keeps setup and permission error messages", () => {
@@ -134,7 +134,7 @@ describe("app IPC input parsing", () => {
       mode: "working",
       working: [
         {
-          bot: { id: "chief", name: "Chief", avatarSeed: "chief", avatarHue: 215, avatarUrl: null },
+          agent: { id: "chief", name: "Chief", avatarSeed: "chief", avatarHue: 215, avatarUrl: null },
           task: "Checking the release",
         },
       ],
@@ -162,7 +162,7 @@ describe("app IPC input parsing", () => {
       mode: "takeover",
       item: {
         requestId: "takeover-1",
-        bot: presentation.working[0].bot,
+        agent: presentation.working[0].agent,
         title: "Browser step needs you",
         detail: "Complete the sign-in in the browser.",
       },
@@ -173,29 +173,29 @@ describe("app IPC input parsing", () => {
       mode: "failed",
       item: {
         turnId: "turn-failed",
-        bot: presentation.working[0].bot,
+        agent: presentation.working[0].agent,
         title: "Task failed",
         detail: "The browser tab closed unexpectedly.",
       },
     } as const;
     expect(parseDynamicIslandPresentation(failedPresentation)).toEqual(failedPresentation);
-    expect(parseDynamicIslandAction({ type: "open-bot", serverId: "local", botId: "chief" })).toEqual({
-      type: "open-bot",
+    expect(parseDynamicIslandAction({ type: "open-agent", serverId: "local", agentId: "chief" })).toEqual({
+      type: "open-agent",
       serverId: "local",
-      botId: "chief",
+      agentId: "chief",
     });
     expect(
       parseDynamicIslandAction({
         type: "answer-prompt",
         serverId: "local",
-        botId: "chief",
+        agentId: "chief",
         requestId: "prompt-1",
         answers: { source: ["Official data"] },
       }),
     ).toEqual({
       type: "answer-prompt",
       serverId: "local",
-      botId: "chief",
+      agentId: "chief",
       requestId: "prompt-1",
       answers: { source: ["Official data"] },
     });
@@ -203,24 +203,24 @@ describe("app IPC input parsing", () => {
       parseDynamicIslandAction({
         type: "open-failure",
         serverId: "local",
-        botId: "chief",
+        agentId: "chief",
         turnId: "turn-failed",
       }),
     ).toEqual({
       type: "open-failure",
       serverId: "local",
-      botId: "chief",
+      agentId: "chief",
       turnId: "turn-failed",
     });
     expect(() =>
       parseDynamicIslandPresentation({ ...presentation, working: Array(4).fill(presentation.working[0]) }),
     ).toThrow();
-    expect(() => parseDynamicIslandAction({ type: "approve", serverId: "local", botId: "chief" })).toThrow();
+    expect(() => parseDynamicIslandAction({ type: "approve", serverId: "local", agentId: "chief" })).toThrow();
     expect(() =>
       parseDynamicIslandAction({
         type: "answer-prompt",
         serverId: "local",
-        botId: "chief",
+        agentId: "chief",
         requestId: "prompt-1",
         answers: {},
       }),
@@ -316,56 +316,56 @@ describe("server IPC input parsing", () => {
 
 describe("agent IPC input parsing", () => {
   it("parses scoped requests and message actions", () => {
-    expect(parseAgentRequest({ serverId: "local", payload: { botId: "bot-1" } })).toEqual({
+    expect(parseAgentRequest({ serverId: "local", payload: { agentId: "bot-1" } })).toEqual({
       serverId: "local",
-      payload: { botId: "bot-1" },
+      payload: { agentId: "bot-1" },
     });
-    expect(parseSendMessage({ botId: "bot-1", text: "Hello" })).toEqual({
-      botId: "bot-1",
+    expect(parseSendMessage({ agentId: "bot-1", text: "Hello" })).toEqual({
+      agentId: "bot-1",
       text: "Hello",
       attachmentDraftIds: [],
       replyToMessageId: null,
     });
-    expect(parseMessageReaction({ botId: "bot-1", messageId: "message-1", emoji: "👍" })).toEqual({
-      botId: "bot-1",
+    expect(parseMessageReaction({ agentId: "bot-1", messageId: "message-1", emoji: "👍" })).toEqual({
+      agentId: "bot-1",
       messageId: "message-1",
       emoji: "👍",
     });
-    expect(parseMessageReaction({ botId: "bot-1", messageId: "message-1", emoji: "👨‍👩‍👧‍👦" })).toEqual({
-      botId: "bot-1",
+    expect(parseMessageReaction({ agentId: "bot-1", messageId: "message-1", emoji: "👨‍👩‍👧‍👦" })).toEqual({
+      agentId: "bot-1",
       messageId: "message-1",
       emoji: "👨‍👩‍👧‍👦",
     });
-    expect(parseInterrupt({ botId: "bot-1", turnId: "turn-1" })).toEqual({
-      botId: "bot-1",
+    expect(parseInterrupt({ agentId: "bot-1", turnId: "turn-1" })).toEqual({
+      agentId: "bot-1",
       turnId: "turn-1",
     });
-    expect(parseAcknowledgeFailedTurn({ botId: "bot-1", turnId: "turn-1" })).toEqual({
-      botId: "bot-1",
+    expect(parseAcknowledgeFailedTurn({ agentId: "bot-1", turnId: "turn-1" })).toEqual({
+      agentId: "bot-1",
       turnId: "turn-1",
     });
-    expect(parseMarkConversationRead({ botId: "bot-1", throughMessageId: "message-1" })).toEqual({
-      botId: "bot-1",
+    expect(parseMarkConversationRead({ agentId: "bot-1", throughMessageId: "message-1" })).toEqual({
+      agentId: "bot-1",
       throughMessageId: "message-1",
     });
-    expect(parseCreateBotMemory({ botId: "bot-1", text: "Uses metric units." })).toEqual({
-      botId: "bot-1",
+    expect(parseCreateAgentMemory({ agentId: "bot-1", text: "Uses metric units." })).toEqual({
+      agentId: "bot-1",
       text: "Uses metric units.",
     });
-    expect(parseUpdateBotMemory({ botId: "bot-1", memoryId: "memory-1", text: "Uses SI units." })).toEqual({
-      botId: "bot-1",
+    expect(parseUpdateAgentMemory({ agentId: "bot-1", memoryId: "memory-1", text: "Uses SI units." })).toEqual({
+      agentId: "bot-1",
       memoryId: "memory-1",
       text: "Uses SI units.",
     });
-    expect(parseDeleteBotMemory({ botId: "bot-1", memoryId: "memory-1" })).toEqual({
-      botId: "bot-1",
+    expect(parseDeleteAgentMemory({ agentId: "bot-1", memoryId: "memory-1" })).toEqual({
+      agentId: "bot-1",
       memoryId: "memory-1",
     });
   });
 
-  it("parses bot, attachment, queue, and prompt values", () => {
+  it("parses agent, attachment, queue, and prompt values", () => {
     expect(
-      parseCreateBot({
+      parseCreateAgent({
         name: "Trip Planner",
         description: "Builds practical itineraries.",
         avatarSeed: "setup:trip",
@@ -379,8 +379,8 @@ describe("agent IPC input parsing", () => {
       avatarHue: 215,
       initialMessage: "Help me plan a trip.",
     });
-    expect(parseUpdateBot({ botId: "bot-1", name: "Ada", title: "Coordinator", notifications: true })).toEqual({
-      botId: "bot-1",
+    expect(parseUpdateAgent({ agentId: "bot-1", name: "Ada", title: "Coordinator", notifications: true })).toEqual({
+      agentId: "bot-1",
       name: "Ada",
       title: "Coordinator",
       notifications: true,
@@ -408,38 +408,38 @@ describe("agent IPC input parsing", () => {
     expect(parseOpenSharedFile({ path: "~/OpenBot/Shared/report.csv" })).toEqual({
       path: "~/OpenBot/Shared/report.csv",
     });
-    expect(parseOpenWorkspaceFile({ botId: "bot-1", path: "app/page.tsx" })).toEqual({
-      botId: "bot-1",
+    expect(parseOpenWorkspaceFile({ agentId: "bot-1", path: "app/page.tsx" })).toEqual({
+      agentId: "bot-1",
       path: "app/page.tsx",
     });
-    expect(parseCancelQueuedMessage({ botId: "bot-1", deliveryId: "delivery-1" })).toEqual({
-      botId: "bot-1",
+    expect(parseCancelQueuedMessage({ agentId: "bot-1", deliveryId: "delivery-1" })).toEqual({
+      agentId: "bot-1",
       deliveryId: "delivery-1",
     });
     expect(
       parseSteerQueuedMessage({
-        botId: "bot-1",
+        agentId: "bot-1",
         deliveryId: "delivery-1",
         expectedTurnId: "turn-1",
       }),
-    ).toEqual({ botId: "bot-1", deliveryId: "delivery-1", expectedTurnId: "turn-1" });
+    ).toEqual({ agentId: "bot-1", deliveryId: "delivery-1", expectedTurnId: "turn-1" });
     expect(
       parseUpdateQueuedMessage({
-        botId: "bot-1",
+        agentId: "bot-1",
         deliveryId: "delivery-1",
         text: "Edited",
         keepAttachmentIds: ["attachment-1"],
         attachmentDraftIds: ["draft-1"],
       }),
     ).toEqual({
-      botId: "bot-1",
+      agentId: "bot-1",
       deliveryId: "delivery-1",
       text: "Edited",
       keepAttachmentIds: ["attachment-1"],
       attachmentDraftIds: ["draft-1"],
     });
-    expect(parseReorderQueue({ botId: "bot-1", deliveryIds: ["delivery-2", "delivery-1"] })).toEqual({
-      botId: "bot-1",
+    expect(parseReorderQueue({ agentId: "bot-1", deliveryIds: ["delivery-2", "delivery-1"] })).toEqual({
+      agentId: "bot-1",
       deliveryIds: ["delivery-2", "delivery-1"],
     });
     expect(parsePromptResponse({ requestId: 7, answers: { question: ["answer"] } })).toEqual({
@@ -458,7 +458,7 @@ describe("agent IPC input parsing", () => {
 
   it("keeps agent input error messages", () => {
     expect(() =>
-      parseCreateBot({
+      parseCreateAgent({
         name: " ",
         description: "Builds practical itineraries.",
         avatarSeed: "setup:trip",
@@ -467,7 +467,7 @@ describe("agent IPC input parsing", () => {
       }),
     ).toThrowError("name is required.");
     expect(() =>
-      parseCreateBot({
+      parseCreateAgent({
         name: "Trip Planner",
         description: "Builds practical itineraries.",
         avatarSeed: "setup:trip",
@@ -475,46 +475,50 @@ describe("agent IPC input parsing", () => {
         initialMessage: " ",
       }),
     ).toThrowError("initialMessage is required.");
-    expect(() => parseUpdateBot({ botId: "bot-1", role: "Coordinator" })).toThrowError("Invalid role.");
+    expect(() => parseUpdateAgent({ agentId: "bot-1", role: "Coordinator" })).toThrowError("Invalid role.");
     expect(() => parseAgentRequest(null)).toThrowError("Invalid agent request.");
-    expect(() => parseSendMessage({ botId: "bot-1", text: " " })).toThrowError("A message or attachment is required.");
-    expect(() => parseMessageReaction({ botId: "bot-1", messageId: "message-1", emoji: "invalid" })).toThrowError(
+    expect(() => parseSendMessage({ agentId: "bot-1", text: " " })).toThrowError(
+      "A message or attachment is required.",
+    );
+    expect(() => parseMessageReaction({ agentId: "bot-1", messageId: "message-1", emoji: "invalid" })).toThrowError(
       "Invalid message reaction.",
     );
-    expect(() => parseUpdateBot({ botId: "bot-1", notifications: "yes" })).toThrowError("Invalid notifications value.");
+    expect(() => parseUpdateAgent({ agentId: "bot-1", notifications: "yes" })).toThrowError(
+      "Invalid notifications value.",
+    );
     expect(() => parseImportAttachments({ paths: [""], data: [] })).toThrowError("Invalid attachment path.");
     expect(() => parseChooseAttachments({ filter: "documents" })).toThrowError("Invalid attachment picker filter.");
     expect(() => parseOpenAttachment({ attachmentId: "attachment-1", action: "delete" })).toThrowError(
       "Invalid attachment action.",
     );
     expect(() => parseOpenSharedFile({ path: "" })).toThrowError("path is required.");
-    expect(() => parseOpenWorkspaceFile({ botId: "bot-1", path: "" })).toThrowError("path is required.");
+    expect(() => parseOpenWorkspaceFile({ agentId: "bot-1", path: "" })).toThrowError("path is required.");
     expect(() => parseCancelQueuedMessage(null)).toThrowError("Invalid queue cancellation request.");
     expect(() => parseSteerQueuedMessage(null)).toThrowError("Invalid queued steer request.");
     expect(() =>
       parseUpdateQueuedMessage({
-        botId: "bot-1",
+        agentId: "bot-1",
         deliveryId: "delivery-1",
         text: " ",
         keepAttachmentIds: [],
         attachmentDraftIds: [],
       }),
     ).toThrowError("A message or attachment is required.");
-    expect(() => parseReorderQueue({ botId: "bot-1", deliveryIds: ["delivery-1", "delivery-1"] })).toThrowError(
+    expect(() => parseReorderQueue({ agentId: "bot-1", deliveryIds: ["delivery-1", "delivery-1"] })).toThrowError(
       "Duplicate delivery ids.",
     );
     expect(() => parseInterrupt(null)).toThrowError("Invalid interrupt request.");
-    expect(() => parseMarkConversationRead({ botId: "bot-1", throughMessageId: 1 })).toThrowError(
+    expect(() => parseMarkConversationRead({ agentId: "bot-1", throughMessageId: 1 })).toThrowError(
       "Invalid conversation read boundary.",
     );
-    expect(() => parseCreateBotMemory({ botId: "bot-1", text: " " })).toThrowError("text is required.");
+    expect(() => parseCreateAgentMemory({ agentId: "bot-1", text: " " })).toThrowError("text is required.");
     expect(() =>
-      parseCreateBotMemory({ botId: "bot-1", text: "x".repeat(INPUT_LIMITS.agentMemoryText + 1) }),
+      parseCreateAgentMemory({ agentId: "bot-1", text: "x".repeat(INPUT_LIMITS.agentMemoryText + 1) }),
     ).toThrowError("text is too long.");
-    expect(() => parseUpdateBotMemory({ botId: "bot-1", memoryId: "", text: "Fact" })).toThrowError(
+    expect(() => parseUpdateAgentMemory({ agentId: "bot-1", memoryId: "", text: "Fact" })).toThrowError(
       "memoryId is required.",
     );
-    expect(() => parseDeleteBotMemory({ botId: "", memoryId: "memory-1" })).toThrowError("botId is required.");
+    expect(() => parseDeleteAgentMemory({ agentId: "", memoryId: "memory-1" })).toThrowError("agentId is required.");
     expect(() => parsePromptResponse({ requestId: 1, answers: null })).toThrowError("Prompt answers are required.");
     expect(() =>
       parsePromptResponse({
@@ -542,7 +546,7 @@ describe("routine IPC input parsing", () => {
     const schedule = { kind: "weekdays" as const, time: "07:00" };
     expect(
       parseCreateRoutine({
-        botId: "chief",
+        agentId: "chief",
         name: "Morning brief",
         instruction: "Prepare the brief.",
         active: true,
@@ -550,24 +554,24 @@ describe("routine IPC input parsing", () => {
         schedule,
       }),
     ).toEqual({
-      botId: "chief",
+      agentId: "chief",
       name: "Morning brief",
       instruction: "Prepare the brief.",
       active: true,
       timezone: "Europe/Warsaw",
       schedule,
     });
-    expect(parseUpdateRoutine({ botId: "chief", routineId: "routine-1", active: false })).toEqual({
-      botId: "chief",
+    expect(parseUpdateRoutine({ agentId: "chief", routineId: "routine-1", active: false })).toEqual({
+      agentId: "chief",
       routineId: "routine-1",
       active: false,
     });
-    expect(parseDeleteRoutine({ botId: "chief", routineId: "routine-1" })).toEqual({
-      botId: "chief",
+    expect(parseDeleteRoutine({ agentId: "chief", routineId: "routine-1" })).toEqual({
+      agentId: "chief",
       routineId: "routine-1",
     });
-    expect(parseListRoutineRuns({ botId: "chief", routineId: "routine-1" })).toEqual({
-      botId: "chief",
+    expect(parseListRoutineRuns({ agentId: "chief", routineId: "routine-1" })).toEqual({
+      agentId: "chief",
       routineId: "routine-1",
       limit: 50,
     });
@@ -576,7 +580,7 @@ describe("routine IPC input parsing", () => {
   it("rejects invalid routine IPC values", () => {
     expect(() =>
       parseCreateRoutine({
-        botId: "chief",
+        agentId: "chief",
         name: "Morning brief",
         instruction: "Prepare the brief.",
         active: true,
@@ -586,7 +590,7 @@ describe("routine IPC input parsing", () => {
     ).toThrow("routine schedule");
     expect(() =>
       parseCreateRoutine({
-        botId: "chief",
+        agentId: "chief",
         name: "Morning brief",
         instruction: "Prepare the brief.",
         active: true,
@@ -594,9 +598,11 @@ describe("routine IPC input parsing", () => {
         schedule: [{ kind: "weekdays", time: "07:00" }],
       }),
     ).toThrow("routine schedule");
-    expect(() => parseUpdateRoutine({ botId: "chief", routineId: "routine-1" })).toThrow("update is required");
-    expect(() => parseDeleteRoutine({ botId: "chief", routineId: "" })).toThrow("routineId is required");
-    expect(() => parseListRoutineRuns({ botId: "chief", routineId: "routine-1", limit: 101 })).toThrow("history limit");
+    expect(() => parseUpdateRoutine({ agentId: "chief", routineId: "routine-1" })).toThrow("update is required");
+    expect(() => parseDeleteRoutine({ agentId: "chief", routineId: "" })).toThrow("routineId is required");
+    expect(() => parseListRoutineRuns({ agentId: "chief", routineId: "routine-1", limit: 101 })).toThrow(
+      "history limit",
+    );
   });
 });
 
@@ -605,7 +611,7 @@ describe("browser IPC input parsing", () => {
     expect(parseBrowserOpen({ url: "https://example.com", ownerThreadId: "thread-1", focus: true })).toEqual({
       url: "https://example.com",
       ownerThreadId: "thread-1",
-      ownerBotId: null,
+      ownerAgentId: null,
       focus: true,
     });
     expect(parseBrowserNavigate({ tabId: "tab-1", direction: "back" })).toEqual({

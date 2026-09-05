@@ -82,12 +82,12 @@ function PermissionsReview(props: AccountProps) {
 }
 
 /**
- * Skills and marketplace agents, which install into a Bot's workspace on this
+ * Skills and marketplace agents, which install into an Agent's workspace on this
  * machine, so the picker is empty for a remote server.
  */
 function SkillsMarketplace() {
   const { skillsMarketplaceOpen, setSkillsMarketplaceOpen } = useSettings();
-  const { botList, activeBot } = useAgents();
+  const { agentList, activeAgent } = useAgents();
   const { activeServer } = useServers();
   const { openInstalledMarketplaceAgent } = useServerSelection();
   const local = createMemo(() => activeServer()?.kind === "local");
@@ -97,8 +97,8 @@ function SkillsMarketplace() {
       <Loading>
         <SkillsMarketplaceModal
           open={true}
-          bots={local() ? botList() : []}
-          activeBotId={local() ? (activeBot()?.id ?? "") : ""}
+          agents={local() ? agentList() : []}
+          activeAgentId={local() ? (activeAgent()?.id ?? "") : ""}
           onOpenChange={setSkillsMarketplaceOpen}
           onAgentInstalled={openInstalledMarketplaceAgent}
         />
@@ -249,8 +249,8 @@ function AppSettings(props: AccountProps) {
 
 /** Search across every conversation on the active server. */
 function GlobalMessageSearch() {
-  const { botList } = useAgents();
-  const { globalSearchOpen, searchGlobalMessages, setGlobalSearchVisibility, selectBot, selectGlobalSearchMessage } =
+  const { agentList } = useAgents();
+  const { globalSearchOpen, searchGlobalMessages, setGlobalSearchVisibility, selectAgent, selectGlobalSearchMessage } =
     useNavigation();
 
   return (
@@ -258,10 +258,10 @@ function GlobalMessageSearch() {
       <Loading>
         <GlobalSearch
           open={true}
-          bots={botList()}
+          agents={agentList()}
           onSearchMessages={searchGlobalMessages}
           onOpenChange={setGlobalSearchVisibility}
-          onSelectBot={selectBot}
+          onSelectAgent={selectAgent}
           onSelectMessage={selectGlobalSearchMessage}
         />
       </Loading>

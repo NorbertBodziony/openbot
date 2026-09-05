@@ -45,11 +45,11 @@ const ServerScope = createSimpleContext({
     const { centralAuth } = useAuth();
     const { setupState } = useSetup();
     const { servers, activeServerId, initialServersReady } = useServers();
-    const { pendingBotSelection, setPendingBotSelection } = useServerSwitch();
+    const { pendingAgentSelection, setPendingAgentSelection } = useServerSwitch();
     const { setTeamPresence } = usePresence();
     const { activeDirectMemberId, directConversations, refreshDirectThreads, markDirectMessagesRead } =
       useDirectMessages();
-    const { setModelOptions, activeBot, setAgentChatOpenRevision, setAgentStatus, applyStoredBots } = useAgents();
+    const { setModelOptions, activeAgent, setAgentChatOpenRevision, setAgentStatus, applyStoredAgents } = useAgents();
     const {
       setBrowserControlState,
       supportsBrowser,
@@ -57,8 +57,8 @@ const ServerScope = createSimpleContext({
       loadControlState: loadBrowserControlState,
       beginBrowserLoad,
     } = useBrowserTabs();
-    const { setSidebarLayout, loadLayout: loadSidebarLayout } = useSidebar();
-    const { globalSearchOpen, setGlobalSearchVisibility, selectBot } = useNavigation();
+    const { setSidebarLayout, loadLayout: loadSidebarLayout, reconcileActiveServerPins } = useSidebar();
+    const { globalSearchOpen, setGlobalSearchVisibility, selectAgent } = useNavigation();
     const {
       conversationReads,
       setRecentReplies,
@@ -95,11 +95,11 @@ const ServerScope = createSimpleContext({
       const handleWindowFocus = () => {
         flush(() => {
           setRecentReplies({});
-          const botId = activeBot()?.id;
-          if (botId && isAgentChatOpen(botId) && (conversationReads()[botId]?.unreadCount ?? 0) > 0) {
-            const trackingKey = agentConversationKey(activeServerId(), botId);
+          const agentId = activeAgent()?.id;
+          if (agentId && isAgentChatOpen(agentId) && (conversationReads()[agentId]?.unreadCount ?? 0) > 0) {
+            const trackingKey = agentConversationKey(activeServerId(), agentId);
             agentChatsToMarkRead.add(trackingKey);
-            agentChatsRetriedOnOpen.delete(botId);
+            agentChatsRetriedOnOpen.delete(agentId);
             setAgentChatOpenRevision((current) => current + 1);
           }
           const memberId = activeDirectMemberId();
@@ -127,8 +127,11 @@ const ServerScope = createSimpleContext({
             .then(setModelOptions)
             .catch(() => undefined),
           window.openbot.agent
-            .listBots()
-            .then(applyStoredBots)
+            .listAgents()
+            .then((storedAgents) => {
+              applyStoredAgents(storedAgents);
+              reconcileActiveServerPins(storedAgents.map((agent) => agent.id));
+            })
             .catch((error) => {
               setAgentStatus((current) => ({ ...current, message: String(error) }));
             }),
@@ -169,11 +172,11 @@ const ServerScope = createSimpleContext({
     // switch lands in. It is taken rather than read so a later mount cannot
     // replay it.
     createEffect(
-      () => pendingBotSelection(),
-      (botId) => {
-        if (!botId) return;
-        setPendingBotSelection(null);
-        selectBot(botId);
+      () => pendingAgentSelection(),
+      (agentId) => {
+        if (!agentId) return;
+        setPendingAgentSelection(null);
+        selectAgent(agentId);
       },
     );
 

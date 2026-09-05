@@ -51,7 +51,7 @@ describe("OpenBot connected desktop shell", () => {
     ));
     await waitFor(() => expect(screen.getByLabelText("Unread replies")).toHaveTextContent("1"));
     unreadCount = 0;
-    emitAgentEvent?.({ type: "conversation-invalidated", botId: "chief", revision: 1 });
+    emitAgentEvent?.({ type: "conversation-invalidated", agentId: "chief", revision: 1 });
     await waitFor(() => expect(screen.getByLabelText("Unread replies")).toHaveTextContent("0"));
     expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalled();
   });
@@ -421,7 +421,7 @@ describe("OpenBot connected desktop shell", () => {
       expect(window.openbot.agent.markConversationRead).toHaveBeenNthCalledWith(
         2,
         {
-          botId: "chief",
+          agentId: "chief",
           throughMessageId: "reply-read-retry",
         },
         "local",
@@ -430,7 +430,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
   });
 
-  it("does not carry a failed automatic read to the same bot on another server", async () => {
+  it("does not carry a failed automatic read to the same agent on another server", async () => {
     const local = testServer("local", true);
     const remote = testServer("remote-1", false);
     let selectedServerId = "local";
@@ -448,7 +448,7 @@ describe("OpenBot connected desktop shell", () => {
     vi.mocked(window.openbot.agent.readConversationPage).mockImplementation(async (input) => {
       if (selectedServerId === "remote-1") {
         return testConversationPage(
-          input.botId,
+          input.agentId,
           [
             {
               id: "reply-remote-loaded",
@@ -465,7 +465,7 @@ describe("OpenBot connected desktop shell", () => {
       }
       if (returningToLocal) {
         return testConversationPage(
-          input.botId,
+          input.agentId,
           [
             {
               id: "reply-local",
@@ -480,7 +480,7 @@ describe("OpenBot connected desktop shell", () => {
           },
         );
       }
-      return testConversationPage(input.botId);
+      return testConversationPage(input.agentId);
     });
     vi.mocked(window.openbot.agent.listConversationReads)
       .mockResolvedValueOnce({})
@@ -560,7 +560,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(window.openbot.agent.markConversationRead).toHaveBeenNthCalledWith(
         2,
-        { botId: "chief", throughMessageId: "reply-local" },
+        { agentId: "chief", throughMessageId: "reply-local" },
         "local",
       ),
     );
@@ -653,7 +653,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(window.openbot.agent.markConversationRead).toHaveBeenCalledTimes(2));
     expect(window.openbot.agent.markConversationRead).toHaveBeenNthCalledWith(
       2,
-      { botId: "chief", throughMessageId: "reply-second-local" },
+      { agentId: "chief", throughMessageId: "reply-second-local" },
       "local",
     );
   });
@@ -691,7 +691,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
         {
-          botId: "chief",
+          agentId: "chief",
           throughMessageId: "reply-newer-boundary",
         },
         "local",
@@ -720,7 +720,7 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalledWith(
       {
-        botId: "chief",
+        agentId: "chief",
         throughMessageId: "reply-older-boundary",
       },
       "local",
@@ -749,7 +749,7 @@ describe("OpenBot connected desktop shell", () => {
     );
     vi.mocked(window.openbot.agent.listConversationReads).mockResolvedValueOnce({ chief: unreadState });
     vi.mocked(window.openbot.agent.readConversation).mockResolvedValue({
-      botId: "chief",
+      agentId: "chief",
       threadId: currentPage.threadId,
       activeTurnId: null,
       revision: currentPage.revision,
@@ -790,7 +790,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
         {
-          botId: "chief",
+          agentId: "chief",
           throughMessageId: "reply-current-revision",
         },
         "local",
@@ -798,7 +798,7 @@ describe("OpenBot connected desktop shell", () => {
     );
     expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalledWith(
       {
-        botId: "chief",
+        agentId: "chief",
         throughMessageId: "reply-stale-revision",
       },
       "local",
@@ -847,7 +847,7 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(window.openbot.agent.readConversationPage).toHaveBeenCalledTimes(callsBeforeOpen + 2);
     expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
-      { botId: "chief", throughMessageId: "reply-applied-revision" },
+      { agentId: "chief", throughMessageId: "reply-applied-revision" },
       "local",
     );
     expect(window.openbot.agent.listQueue).toHaveBeenCalledTimes(queueCallsBeforeOpen);
@@ -905,7 +905,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(window.openbot.agent.markConversationRead).toHaveBeenNthCalledWith(
         2,
-        { botId: "chief", throughMessageId: "reply-explicit-newer" },
+        { agentId: "chief", throughMessageId: "reply-explicit-newer" },
         "local",
       ),
     );
@@ -942,7 +942,7 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByText("Reload unavailable")).toBeInTheDocument();
     await waitFor(() =>
       expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
-        { botId: "chief", throughMessageId: "reply-before-load-failure" },
+        { agentId: "chief", throughMessageId: "reply-before-load-failure" },
         "local",
       ),
     );
@@ -959,7 +959,7 @@ describe("OpenBot connected desktop shell", () => {
       chief: readState,
     });
     vi.mocked(window.openbot.agent.readConversation).mockResolvedValue({
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-chief",
       activeTurnId: null,
       revision: 3,
@@ -976,20 +976,20 @@ describe("OpenBot connected desktop shell", () => {
           id: "agent-new-1",
           author: "agent",
           source: "agent",
-          senderBotId: "sales-outbound",
+          senderAgentId: "sales-outbound",
           text: "First unseen agent answer",
           createdAt: "2026-08-19T09:01:00.000Z",
           status: "completed",
           exchange: {
             direction: "incoming",
             messageId: "agent-new-1",
-            senderBotId: "sales-outbound",
-            recipientBotIds: ["chief"],
+            senderAgentId: "sales-outbound",
+            recipientAgentIds: ["chief"],
             replyToMessageId: null,
             deliveries: [
               {
                 id: "agent-new-1",
-                recipientBotId: "chief",
+                recipientAgentId: "chief",
                 status: "completed",
                 position: null,
                 error: null,
@@ -1022,7 +1022,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
         {
-          botId: "chief",
+          agentId: "chief",
           throughMessageId: "agent-new-2",
         },
         "local",
@@ -1076,7 +1076,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
         {
-          botId: "chief",
+          agentId: "chief",
           throughMessageId: "agent-background-answer",
         },
         "local",
@@ -1098,7 +1098,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "conversation",
       snapshot: {
-        botId: "chief",
+        agentId: "chief",
         threadId: "thread-chief",
         activeTurnId: null,
         revision: 2,
@@ -1178,7 +1178,7 @@ describe("OpenBot connected desktop shell", () => {
     window.dispatchEvent(new Event("focus"));
     await waitFor(() =>
       expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
-        { botId: "chief", throughMessageId: "agent-focus-old" },
+        { agentId: "chief", throughMessageId: "agent-focus-old" },
         "local",
       ),
     );
@@ -1192,7 +1192,7 @@ describe("OpenBot connected desktop shell", () => {
 
     await waitFor(() =>
       expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
-        { botId: "chief", throughMessageId: "agent-focus-new" },
+        { agentId: "chief", throughMessageId: "agent-focus-new" },
         "local",
       ),
     );
@@ -1257,7 +1257,7 @@ describe("OpenBot connected desktop shell", () => {
     window.dispatchEvent(new Event("focus"));
     await waitFor(() =>
       expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
-        { botId: "chief", throughMessageId: "agent-stale-read-old" },
+        { agentId: "chief", throughMessageId: "agent-stale-read-old" },
         "local",
       ),
     );
@@ -1276,7 +1276,7 @@ describe("OpenBot connected desktop shell", () => {
     window.dispatchEvent(new Event("focus"));
     await waitFor(() =>
       expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
-        { botId: "chief", throughMessageId: "agent-stale-read-new" },
+        { agentId: "chief", throughMessageId: "agent-stale-read-new" },
         "local",
       ),
     );
@@ -1318,7 +1318,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
         mode: "message",
-        message: { bot: { id: "sales-outbound" }, messageId: "sales-background-answer" },
+        message: { agent: { id: "sales-outbound" }, messageId: "sales-background-answer" },
       }),
     );
 
@@ -1328,7 +1328,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
         {
-          botId: "sales-outbound",
+          agentId: "sales-outbound",
           throughMessageId: "sales-background-answer",
         },
         "local",
@@ -1349,7 +1349,7 @@ describe("OpenBot connected desktop shell", () => {
 
     emitAgentEvent?.({
       type: "turn-completed",
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-chief",
       turnId: "turn-foreground",
       status: "completed",
@@ -1359,7 +1359,7 @@ describe("OpenBot connected desktop shell", () => {
     window.dispatchEvent(new Event("blur"));
     emitAgentEvent?.({
       type: "turn-completed",
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-chief",
       turnId: "turn-background",
       status: "completed",
@@ -1381,7 +1381,7 @@ describe("OpenBot connected desktop shell", () => {
 
     emitAgentEvent?.({
       type: "conversation-delta",
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-chief",
       turnId: "turn-live",
       messageId: "agent-visible-answer",
@@ -1400,7 +1400,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
         {
-          botId: "chief",
+          agentId: "chief",
           throughMessageId: "agent-visible-answer",
         },
         "local",
@@ -1417,10 +1417,10 @@ describe("OpenBot connected desktop shell", () => {
     vi.mocked(window.openbot.agent.listConversationReads).mockResolvedValueOnce({
       "sales-outbound": unreadState,
     });
-    vi.mocked(window.openbot.agent.readConversation).mockImplementation(async (botId) =>
-      botId === "sales-outbound"
+    vi.mocked(window.openbot.agent.readConversation).mockImplementation(async (agentId) =>
+      agentId === "sales-outbound"
         ? {
-            botId,
+            agentId,
             threadId: "thread-sales",
             activeTurnId: null,
             revision: 1,
@@ -1436,7 +1436,7 @@ describe("OpenBot connected desktop shell", () => {
             ],
           }
         : {
-            botId,
+            agentId,
             threadId: null,
             activeTurnId: null,
             revision: 0,
@@ -1453,7 +1453,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
         {
-          botId: "sales-outbound",
+          agentId: "sales-outbound",
           throughMessageId: "sales-new",
         },
         "local",
@@ -1471,7 +1471,7 @@ describe("OpenBot connected desktop shell", () => {
     };
     vi.mocked(window.openbot.agent.listConversationReads).mockResolvedValueOnce({ chief: unreadState });
     vi.mocked(window.openbot.agent.readConversation).mockResolvedValue({
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-chief",
       activeTurnId: null,
       revision: 1,
@@ -1496,7 +1496,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
         {
-          botId: "chief",
+          agentId: "chief",
           throughMessageId: "chief-new",
         },
         "local",
@@ -1527,7 +1527,7 @@ describe("OpenBot connected desktop shell", () => {
     );
     vi.mocked(window.openbot.agent.listConversationReads).mockResolvedValueOnce({ chief: unreadState });
     vi.mocked(window.openbot.agent.readConversation).mockResolvedValue({
-      botId: "chief",
+      agentId: "chief",
       threadId: unreadPage.threadId,
       activeTurnId: null,
       revision: unreadPage.revision,
@@ -1564,7 +1564,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
         {
-          botId: "chief",
+          agentId: "chief",
           throughMessageId: "chief-status-reply",
         },
         "local",
@@ -1581,7 +1581,7 @@ describe("OpenBot connected desktop shell", () => {
     };
     vi.mocked(window.openbot.agent.listConversationReads).mockResolvedValueOnce({ chief: unreadState });
     vi.mocked(window.openbot.agent.readConversation).mockResolvedValue({
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-chief",
       activeTurnId: null,
       revision: 1,
@@ -1616,7 +1616,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
         {
-          botId: "chief",
+          agentId: "chief",
           throughMessageId: "chief-old-reply",
         },
         "local",
@@ -1659,7 +1659,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
         {
-          botId: "chief",
+          agentId: "chief",
           throughMessageId: "chief-newer-reply",
         },
         "local",
@@ -1678,7 +1678,7 @@ describe("OpenBot connected desktop shell", () => {
       chief: readState,
     });
     vi.mocked(window.openbot.agent.readConversation).mockResolvedValue({
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-chief",
       activeTurnId: null,
       revision: 2,
@@ -1712,7 +1712,7 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("separator", { name: "New messages" })).toBeInTheDocument();
     expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
       {
-        botId: "chief",
+        agentId: "chief",
         throughMessageId: "agent-new",
       },
       "local",

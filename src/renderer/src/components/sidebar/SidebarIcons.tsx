@@ -32,7 +32,7 @@ export function SidebarToggleIcon() {
 
 export function EditIcon() {
   return (
-    <svg aria-hidden="true" viewBox="0 0 20 20" class="bot-context-icon size-4 fill-none stroke-current">
+    <svg aria-hidden="true" viewBox="0 0 20 20" class="agent-context-icon size-4 fill-none stroke-current">
       <path d="m12.6 4.2 3.2 3.2-8.7 8.7-3.8.6.6-3.8 8.7-8.7Z" stroke-width="1.4" />
       <path d="m10.9 5.9 3.2 3.2" stroke-width="1.4" />
     </svg>
@@ -44,7 +44,7 @@ export function DeleteIcon() {
     <svg
       aria-hidden="true"
       viewBox="0 0 20 20"
-      class="bot-context-icon bot-context-danger-icon size-4 fill-none stroke-current"
+      class="agent-context-icon agent-context-danger-icon size-4 fill-none stroke-current"
     >
       <path
         d="M4.5 6.2h11M8 3.8h4M6.2 6.2l.7 9.3h6.2l.7-9.3M8.4 8.7v4.5M11.6 8.7v4.5"

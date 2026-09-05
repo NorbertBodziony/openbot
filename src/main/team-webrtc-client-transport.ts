@@ -4,6 +4,10 @@ import type { AgentEvent, TeamRealtimeEvent } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { TEAM_CURRENT_CAPABILITIES } from "@openbot/contracts/team-protocol/current";
 import {
+  type TeamProtocolV1CurrentEventControl,
+  toWireTeamProtocolV1ClientEvent,
+} from "@openbot/contracts/team-protocol/v1-adapter";
+import {
   decodeTeamProtocolV2AuthFrame,
   decodeTeamProtocolV2EventFrame,
   decodeTeamProtocolV2RpcFrame,
@@ -179,8 +183,8 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
     await this.#sendEventControl(hostId, { type: "runtime-snapshot-request" });
   }
 
-  async setTyping(hostId: string, botId: string | null, typing: boolean): Promise<void> {
-    await this.#sendEventControl(hostId, { type: "team-typing", botId, typing });
+  async setTyping(hostId: string, agentId: string | null, typing: boolean): Promise<void> {
+    await this.#sendEventControl(hostId, { type: "team-typing", agentId, typing });
   }
 
   async setDirectTyping(hostId: string, recipientMemberId: string, typing: boolean): Promise<void> {
@@ -440,18 +444,16 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
     throw new Error("The remote connection was cancelled.");
   }
 
-  async #sendEventControl(
-    hostId: string,
-    control:
-      | { type: "runtime-snapshot-request" }
-      | { type: "team-typing"; botId: string | null; typing: boolean }
-      | { type: "team-direct-typing"; recipientMemberId: string; typing: boolean },
-  ): Promise<void> {
+  async #sendEventControl(hostId: string, control: TeamProtocolV1CurrentEventControl): Promise<void> {
     await this.#ensureConnected(hostId);
     await this.#options.bridge.send(
       hostId,
       "events",
-      encodeTeamProtocolV2Frame({ version: 2, type: "event-control", control }),
+      encodeTeamProtocolV2Frame({
+        version: 2,
+        type: "event-control",
+        control: toWireTeamProtocolV1ClientEvent(control),
+      }),
     );
   }
 

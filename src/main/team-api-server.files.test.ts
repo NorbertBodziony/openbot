@@ -21,9 +21,9 @@ describe("TeamApiServer files", () => {
         name: path.includes("large") ? "large.csv" : "report.csv",
         size: path.includes("large") ? ATTACHMENT_LIMITS.fileBytes + 1 : 21,
       }),
-      resolveWorkspaceFile: async (botId, path) => ({
+      resolveWorkspaceFile: async (agentId, path) => ({
         path: filePath,
-        name: `${botId}-${path.split("/").at(-1)}`,
+        name: `${agentId}-${path.split("/").at(-1)}`,
         size: 21,
       }),
     });
@@ -46,6 +46,8 @@ describe("TeamApiServer files", () => {
     expect(unauthorized.status).toBe(401);
 
     const workspaceResponse = await fetch(
+      // The released URL spells this `botId`, and the versioned adapters translate JSON bodies only,
+      // so a shipped client's query string reaches the handler exactly as it was written.
       `${base}/v1/workspace-files?botId=chief&path=${encodeURIComponent("app/page.tsx")}`,
       {
         headers: { Authorization: `Bearer ${token}` },

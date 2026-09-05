@@ -16,7 +16,7 @@ Every site must contain `index.html`. Allowed files are HTML, CSS, JavaScript, J
 Use these tools:
 
 - `openbot.list_sites` lists the user's sites. Use it before a retry.
-- `openbot.publish_site` publishes a new site from this bot's workspace or OpenBot Shared.
+- `openbot.publish_site` publishes a new site from this agent's workspace or OpenBot Shared.
 - `openbot.replace_site` replaces one owned site and keeps its URL.
 - `openbot.delete_site` deletes one owned site and makes its URL return `410 Gone`.
 

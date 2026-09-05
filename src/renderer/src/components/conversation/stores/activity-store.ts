@@ -1,12 +1,12 @@
 import { createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
-import type { BotProfile } from "../../../data";
+import type { AgentProfile } from "../../../data";
 import type { ConversationProps } from "../../ConversationView";
 import { type AgentActivityPresentation, nextAgentActivityPresentation } from "../AgentActivity";
 import { agentActivityExitDelay, agentActivityExitDuration, agentActivityShowDelay } from "../activity-timing";
 
 export interface RenderedAgentActivity {
   activityId: string;
-  bot: BotProfile | undefined;
+  agent: AgentProfile | undefined;
   detail: string | null;
   phase: "active" | "exiting";
   presentation: AgentActivityPresentation;
@@ -24,21 +24,21 @@ export function createActivityStore(deps: ActivityStoreDeps) {
   const streamingAgentMessage = createMemo(() => {
     for (let index = deps.props.messages.length - 1; index >= 0; index -= 1) {
       const message = deps.props.messages[index];
-      if (message?.author === "bot" && message.streaming) return message;
+      if (message?.author === "agent" && message.streaming) return message;
     }
     return null;
   });
   const activeActivityId = createMemo(() => {
-    const botId = deps.props.bot?.id;
-    if (!botId) return null;
+    const agentId = deps.props.agent?.id;
+    if (!agentId) return null;
     const delivery = deps.activeDeliveries()[0];
-    if (delivery) return `${botId}:delivery:${delivery.id}`;
-    if (deps.props.activeTurnId) return `${botId}:turn:${deps.props.activeTurnId}`;
+    if (delivery) return `${agentId}:delivery:${delivery.id}`;
+    if (deps.props.activeTurnId) return `${agentId}:turn:${deps.props.activeTurnId}`;
     const streamingMessage = streamingAgentMessage();
     if (!streamingMessage) return null;
     const current = untrack(renderedAgentActivity);
-    if (current?.bot?.id === botId) return current.activityId;
-    return `${botId}:message:${streamingMessage.id}`;
+    if (current?.agent?.id === agentId) return current.activityId;
+    return `${agentId}:message:${streamingMessage.id}`;
   });
   const latestActiveCommentary = createMemo(() => {
     const activeTurnId = deps.props.activeTurnId;
@@ -61,13 +61,13 @@ export function createActivityStore(deps: ActivityStoreDeps) {
   );
   const agentActivity = createMemo<"Working" | null>(() => (activeActivityId() ? "Working" : null));
   const activityPresentation = createMemo<AgentActivityPresentation | null>(() => {
-    const botId = deps.props.bot?.id;
+    const agentId = deps.props.agent?.id;
     const activityId = activeActivityId();
-    if (!botId || !activityId) return null;
-    const previous = deps.agentActivityPresentations.get(botId);
+    if (!agentId || !activityId) return null;
+    const previous = deps.agentActivityPresentations.get(agentId);
     if (previous?.activityId === activityId) return previous.presentation;
     const presentation = nextAgentActivityPresentation(previous?.presentation);
-    deps.agentActivityPresentations.set(botId, { activityId, presentation });
+    deps.agentActivityPresentations.set(agentId, { activityId, presentation });
     return presentation;
   });
   let agentActivityShowTimer: number | undefined;
@@ -91,23 +91,23 @@ export function createActivityStore(deps: ActivityStoreDeps) {
   createEffect(
     () => ({
       activityId: activeActivityId(),
-      bot: deps.props.bot,
+      agent: deps.props.agent,
       presentation: activityPresentation(),
     }),
-    ({ activityId, bot, presentation }) => {
+    ({ activityId, agent, presentation }) => {
       clearAgentActivityShowTimer();
       clearAgentActivityExitDelayTimer();
       clearAgentActivityExitTimer();
       if (activityId && presentation) {
         const nextActivity = {
           activityId,
-          bot,
+          agent,
           detail: untrack(activeActivityDetail),
           phase: "active" as const,
           presentation,
         };
         const current = untrack(renderedAgentActivity);
-        if (current?.bot?.id === bot?.id) {
+        if (current?.agent?.id === agent?.id) {
           setAgentActivitySpaceReserved(true);
           setRenderedAgentActivity(nextActivity);
           return;
@@ -125,7 +125,7 @@ export function createActivityStore(deps: ActivityStoreDeps) {
 
       const current = untrack(renderedAgentActivity);
       if (!current) return;
-      if (current.bot?.id !== bot?.id) {
+      if (current.agent?.id !== agent?.id) {
         setRenderedAgentActivity(null);
         return;
       }

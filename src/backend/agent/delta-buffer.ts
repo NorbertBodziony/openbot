@@ -3,7 +3,7 @@ import type { OpenBotDatabase } from "../openbot-database";
 import type { ConversationRuntime } from "./conversation-runtime";
 
 export interface PendingDeltaInput {
-  botId: string;
+  agentId: string;
   externalThreadId: string;
   publicThreadId: string;
   turnId: string;
@@ -65,7 +65,7 @@ export class DeltaBuffer {
     if (!pending) return;
     this.#pending.delete(key);
     if (pending.timer) clearTimeout(pending.timer);
-    const snapshot = this.#conversation.ensureSnapshot(pending.botId, pending.publicThreadId);
+    const snapshot = this.#conversation.ensureSnapshot(pending.agentId, pending.publicThreadId);
     const persisted = this.#database.persistConversation(snapshot, "response.delta-flushed", {
       turnId: pending.turnId,
       messageId: pending.messageId,
@@ -74,7 +74,7 @@ export class DeltaBuffer {
     snapshot.revision = persisted.revision;
     this.#hooks.emit({
       type: "conversation-delta",
-      botId: pending.botId,
+      agentId: pending.agentId,
       threadId: pending.publicThreadId,
       turnId: pending.turnId,
       messageId: pending.messageId,

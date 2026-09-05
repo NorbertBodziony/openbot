@@ -4,7 +4,7 @@ import { OPENBOT_DOWNLOAD_LINKS, OPENBOT_LINKS } from "./landing-links";
 
 export const OPENPANEL_API_URL = "https://analytics.openbot.run/api";
 const OPENPANEL_CLIENT_ID = "6c989975-87ef-4f0c-857e-ab449a65b5c2";
-const ANALYTICS_SCHEMA_VERSION = 4;
+const ANALYTICS_SCHEMA_VERSION = 5;
 
 export type LandingAcquisitionSource = "direct" | "search" | "social" | "github" | "other";
 

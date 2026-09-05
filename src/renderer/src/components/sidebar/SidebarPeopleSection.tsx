@@ -61,7 +61,7 @@ export function SidebarPeopleSection(sectionProps: { sectionId: string }) {
                     <Button
                       variant="ghost"
                       type="button"
-                      class={["bot-row person-row", { "bot-row-active": props.activeDirectMemberId === member.id }]}
+                      class={["agent-row person-row", { "agent-row-active": props.activeDirectMemberId === member.id }]}
                       aria-label={`${teamMemberName(member)}. ${thread()?.lastMessage.text ?? (member.online ? "Online now" : "Offline")}`}
                       aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
                       aria-pressed={props.activeDirectMemberId === member.id ? "true" : "false"}
@@ -81,7 +81,7 @@ export function SidebarPeopleSection(sectionProps: { sectionId: string }) {
                         }
                       }}
                     >
-                      <span class="bot-row-avatar">
+                      <span class="agent-row-avatar">
                         <TeamPersonAvatar member={member} motion="hover" />
                         <Show when={(thread()?.unreadCount ?? 0) > 0}>
                           <Badge class="person-unread-badge" tone="accent" shape="pill" aria-hidden="true">
@@ -89,12 +89,12 @@ export function SidebarPeopleSection(sectionProps: { sectionId: string }) {
                           </Badge>
                         </Show>
                       </span>
-                      <span class="bot-row-copy">
-                        <span class="bot-row-heading">
+                      <span class="agent-row-copy">
+                        <span class="agent-row-heading">
                           <strong>{teamMemberName(member)}</strong>
                           <span>{thread() ? sidebarMessageTime(thread()?.updatedAt ?? "") : ""}</span>
                         </span>
-                        <span class="bot-row-preview">
+                        <span class="agent-row-preview">
                           {thread()?.lastMessage.text ?? (member.online ? "Online now" : "Offline")}
                         </span>
                       </span>

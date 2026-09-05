@@ -37,7 +37,7 @@ describe.sequential("AgentMemories: staging, epochs and turn commitment", () => 
     const events: AgentEvent[] = [];
     service.on("event", (event) => events.push(event));
     await service.initialize();
-    await service.sendMessage({ botId: "chief", text: "I prefer concise status updates." });
+    await service.sendMessage({ agentId: "chief", text: "I prefer concise status updates." });
     await waitFor(() => events.some((event) => event.type === "turn-started"));
 
     const client = clients.get("codex");
@@ -68,9 +68,9 @@ describe.sequential("AgentMemories: staging, epochs and turn commitment", () => 
       notification("turn/completed", { threadId, turn: { id: turnId, status: "completed" } }),
     );
     await waitFor(() => service?.listMemories("chief").length === 1);
-    expect(events).toContainEqual({ type: "memories-changed", botId: "chief" });
+    expect(events).toContainEqual({ type: "memories-changed", agentId: "chief" });
 
-    await service.sendMessage({ botId: "chief", text: "Prepare an update." });
+    await service.sendMessage({ agentId: "chief", text: "Prepare an update." });
     await waitFor(() => client.requests.filter((request) => request.method === "thread/resume").length > 0);
     const resume = client.requests.findLast((request) => request.method === "thread/resume");
     expect(JSON.stringify(resume?.params)).toContain("The user prefers concise status updates.");
@@ -88,10 +88,10 @@ describe.sequential("AgentMemories: staging, epochs and turn commitment", () => 
     service.on("event", (event) => events.push(event));
     await service.initialize();
     await store.getOrCreate("chief");
-    const manual = service.createMemory({ botId: "chief", text: "Use Bun for scripts." });
+    const manual = service.createMemory({ agentId: "chief", text: "Use Bun for scripts." });
     await store.getOrCreate("research");
-    const otherMemory = service.createMemory({ botId: "research", text: "Research-only memory." });
-    await service.sendMessage({ botId: "chief", text: "Change my package manager preference." });
+    const otherMemory = service.createMemory({ agentId: "research", text: "Research-only memory." });
+    await service.sendMessage({ agentId: "chief", text: "Change my package manager preference." });
     await waitFor(() => events.some((event) => event.type === "turn-started"));
 
     const client = clients.get("codex");
@@ -127,7 +127,7 @@ describe.sequential("AgentMemories: staging, epochs and turn commitment", () => 
       },
     });
     await waitFor(() => client.responses.some((response) => response.id === "update-memory-request"));
-    service.updateMemory({ botId: "chief", memoryId: manual.id, text: "Use Bun 1.3 for scripts." });
+    service.updateMemory({ agentId: "chief", memoryId: manual.id, text: "Use Bun 1.3 for scripts." });
     client.emit(
       "notification",
       notification("turn/completed", { threadId, turn: { id: turnId, status: "completed" } }),
@@ -135,7 +135,7 @@ describe.sequential("AgentMemories: staging, epochs and turn commitment", () => 
     await waitFor(() => events.some((event) => event.type === "turn-completed"));
     expect(service.listMemories("chief").map((memory) => memory.text)).toEqual(["Use Bun 1.3 for scripts."]);
 
-    await service.sendMessage({ botId: "chief", text: "Remember one temporary value." });
+    await service.sendMessage({ agentId: "chief", text: "Remember one temporary value." });
     await waitFor(() => events.filter((event) => event.type === "turn-started").length === 2);
     const failedTurnId = events.filter((event) => event.type === "turn-started")[1]?.turnId;
     if (!failedTurnId) throw new Error("The failed memory turn did not start.");
@@ -159,7 +159,7 @@ describe.sequential("AgentMemories: staging, epochs and turn commitment", () => 
     await waitFor(() => events.filter((event) => event.type === "turn-completed").length === 2);
     expect(service.listMemories("chief").map((memory) => memory.text)).toEqual(["Use Bun 1.3 for scripts."]);
 
-    await service.sendMessage({ botId: "chief", text: "Remember a value, then stop." });
+    await service.sendMessage({ agentId: "chief", text: "Remember a value, then stop." });
     await waitFor(() => events.filter((event) => event.type === "turn-started").length === 3);
     const interruptedTurnId = events.filter((event) => event.type === "turn-started")[2]?.turnId;
     if (!interruptedTurnId) throw new Error("The interrupted memory turn did not start.");
@@ -183,7 +183,7 @@ describe.sequential("AgentMemories: staging, epochs and turn commitment", () => 
     await waitFor(() => events.filter((event) => event.type === "turn-completed").length === 3);
     expect(service.listMemories("chief").map((memory) => memory.text)).toEqual(["Use Bun 1.3 for scripts."]);
 
-    await service.sendMessage({ botId: "chief", text: "Remember a value while I clear memory." });
+    await service.sendMessage({ agentId: "chief", text: "Remember a value while I clear memory." });
     await waitFor(() => events.filter((event) => event.type === "turn-started").length === 4);
     const clearedTurnId = events.filter((event) => event.type === "turn-started")[3]?.turnId;
     if (!clearedTurnId) throw new Error("The clear-memory turn did not start.");

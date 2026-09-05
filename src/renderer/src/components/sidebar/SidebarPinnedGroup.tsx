@@ -46,8 +46,8 @@ export function SidebarPinnedGroup() {
           <For each={resolvedPinnedItems()}>
             {(item) => {
               const key = () => sidebarPinnedItemKey(item.ref);
-              const name = () => item.bot.name;
-              const title = () => item.bot.title.trim();
+              const name = () => item.agent.name;
+              const title = () => item.agent.title.trim();
               return (
                 <li
                   class={[
@@ -64,7 +64,7 @@ export function SidebarPinnedGroup() {
                     startNativeItemDragging(event, {
                       className: "sidebar-pinned-drag-preview",
                       data: key(),
-                      source: { kind: "agent", id: item.bot.id, key: key(), origin: "pinned" },
+                      source: { kind: "agent", id: item.agent.id, key: key(), origin: "pinned" },
                     });
                   }}
                   onDragEnd={stopSidebarDragging}
@@ -85,16 +85,16 @@ export function SidebarPinnedGroup() {
                       type="button"
                       class={[
                         buttonVariants({ variant: "ghost" }),
-                        "bot-row sidebar-pinned-row",
+                        "agent-row sidebar-pinned-row",
                         "agent-row",
-                        { "bot-row-active": props.activeBotId === item.bot.id },
+                        { "agent-row-active": props.activeAgentId === item.agent.id },
                       ]}
-                      aria-label={`${item.bot.name}, pinned agent`}
-                      aria-pressed={props.activeBotId === item.bot.id ? "true" : "false"}
-                      onClick={() => props.onSelectBot(item.bot.id)}
+                      aria-label={`${item.agent.name}, pinned agent`}
+                      aria-pressed={props.activeAgentId === item.agent.id ? "true" : "false"}
+                      onClick={() => props.onSelectAgent(item.agent.id)}
                     >
-                      <SidebarPinnedAvatar item={item} agentState={() => props.agentStates[item.bot.id]} />
-                      <span class="bot-row-copy sidebar-pinned-copy">
+                      <SidebarPinnedAvatar item={item} agentState={() => props.agentStates[item.agent.id]} />
+                      <span class="agent-row-copy sidebar-pinned-copy">
                         <strong class="sidebar-pinned-name" title={name()}>
                           {name()}
                         </strong>
@@ -106,11 +106,11 @@ export function SidebarPinnedGroup() {
                           )}
                         </Show>
                       </span>
-                      <Show when={props.agentStates[item.bot.id]}>
+                      <Show when={props.agentStates[item.agent.id]}>
                         {(state) => <span class="sr-only">{sidebarAgentStateLabel(state())}</span>}
                       </Show>
                     </ContextMenu.Trigger>
-                    <SidebarAgentContextMenu bot={item.bot} pinned={true} />
+                    <SidebarAgentContextMenu agent={item.agent} pinned={true} />
                   </ContextMenu.Root>
                 </li>
               );

@@ -41,7 +41,7 @@ describe.sequential("AgentService: restart", () => {
       (provider) => new FakeAgentClient(provider),
     );
     await service.initialize();
-    await service.sendMessage({ botId: "chief", text: "Reply to this" });
+    await service.sendMessage({ agentId: "chief", text: "Reply to this" });
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "completed");
     const snapshot = await service.readConversation("chief");
     const boundary = snapshot.messages.at(-1)?.id;
@@ -53,13 +53,13 @@ describe.sequential("AgentService: restart", () => {
       if (event.type === "conversation-invalidated") events.push(event);
     });
     await service.markConversationRead("chief", "member-owner", boundary);
-    expect(events).toEqual([{ type: "conversation-invalidated", botId: "chief", revision: snapshot.revision }]);
+    expect(events).toEqual([{ type: "conversation-invalidated", agentId: "chief", revision: snapshot.revision }]);
     expect(service.listConversationReads("member-owner").chief?.unreadCount).toBe(0);
     expect(service.listConversationReads("member-other").chief).toEqual(unread);
     await service.markConversationRead("chief", "member-owner", boundary);
     expect(events).toHaveLength(1);
     await service.markConversationUnread("chief", "member-owner");
-    expect(events.at(-1)).toEqual({ type: "conversation-invalidated", botId: "chief", revision: snapshot.revision });
+    expect(events.at(-1)).toEqual({ type: "conversation-invalidated", agentId: "chief", revision: snapshot.revision });
     expect(events).toHaveLength(2);
     expect(service.listConversationReads("member-owner").chief?.unreadCount).toBeGreaterThan(0);
     expect(service.listConversationReads("member-other").chief).toEqual(unread);
@@ -71,7 +71,7 @@ describe.sequential("AgentService: restart", () => {
     const { store, mailbox } = stores(root);
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
-    await service.sendMessage({ botId: "chief", text: "Remember this" });
+    await service.sendMessage({ agentId: "chief", text: "Remember this" });
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
     const threadId = (await store.getOrCreate("chief")).threadId;
     await service.stop();
@@ -79,7 +79,7 @@ describe.sequential("AgentService: restart", () => {
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
     expect(service.listQueue("chief").deliveries[0]?.status).toBe("interrupted");
-    await service.sendMessage({ botId: "chief", text: "Continue" });
+    await service.sendMessage({ agentId: "chief", text: "Continue" });
     await waitFor(async () => (await protocolMessages(logPath)).some((message) => message.method === "thread/resume"));
     const resume = (await protocolMessages(logPath)).find((message) => message.method === "thread/resume");
     expect(resume?.params).toMatchObject({
@@ -95,11 +95,11 @@ describe.sequential("AgentService: restart", () => {
     const { store, mailbox } = stores(root);
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
-    await service.sendMessage({ botId: "chief", text: "Start a recoverable turn" });
+    await service.sendMessage({ agentId: "chief", text: "Start a recoverable turn" });
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
-    const bot = await store.getOrCreate("chief");
+    const agent = await store.getOrCreate("chief");
     await service.stop();
-    const snapshot = store.database.readConversation("chief", bot.threadId);
+    const snapshot = store.database.readConversation("chief", agent.threadId);
     snapshot.activeTurnId = "turn-with-question";
     snapshot.messages.push({
       id: "question-prompt:turn-with-question:request-1",
@@ -147,7 +147,7 @@ describe.sequential("AgentService: restart", () => {
       });
     service = createService();
     await service.initialize();
-    await service.sendMessage({ botId: "chief", text: "Remember this" });
+    await service.sendMessage({ agentId: "chief", text: "Remember this" });
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "completed");
     const before = await service.readConversation("chief");
     await service.stop();
@@ -175,7 +175,7 @@ describe.sequential("AgentService: restart", () => {
     const events: AgentEvent[] = [];
     service.on("event", (event) => events.push(event));
     await service.initialize();
-    await service.sendMessage({ botId: "chief", text: "Remember this" });
+    await service.sendMessage({ agentId: "chief", text: "Remember this" });
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
     await store.getOrCreate("chief");
     const externalThreadId = store.activeProviderSession("chief")?.externalSessionId;
@@ -184,7 +184,7 @@ describe.sequential("AgentService: restart", () => {
     service = new AgentService(store, mailbox, fakeBrowser());
     service.on("event", (event) => events.push(event));
     await service.initialize();
-    await service.sendMessage({ botId: "chief", text: "Continue" });
+    await service.sendMessage({ agentId: "chief", text: "Continue" });
     await waitFor(() => service?.listQueue("chief").deliveries[1]?.status === "running");
 
     const requests = await protocolMessages(logPath);
@@ -211,15 +211,15 @@ describe.sequential("AgentService: restart", () => {
     );
   });
 
-  it("deletes idle bots and refuses to orphan active work", async () => {
+  it("deletes idle agents and refuses to orphan active work", async () => {
     const { store, mailbox } = stores(root);
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
 
-    const deletedBot = await store.getOrCreate("sales-outbound");
-    store.ensureThreadIdNow(deletedBot.id);
+    const deletedAgent = await store.getOrCreate("sales-outbound");
+    store.ensureThreadIdNow(deletedAgent.id);
     store.database.recordPendingHostedSiteTerminalEvent({
-      botId: deletedBot.id,
+      agentId: deletedAgent.id,
       threadId: "provider-thread-sales-outbound",
       turnId: "turn-delete-agent",
       operationId: "operation-delete-agent",
@@ -231,12 +231,12 @@ describe.sequential("AgentService: restart", () => {
         hostname: null,
         url: null,
       },
-      markerCommandId: `hosted-site-event:${deletedBot.id}:operation-delete-agent:succeeded`,
+      markerCommandId: `hosted-site-event:${deletedAgent.id}:operation-delete-agent:succeeded`,
       createdAt: "2026-09-01T12:00:00.000Z",
     });
     expect(store.database.pendingHostedSiteTerminalEvents()).toHaveLength(1);
-    await service.deleteBot("sales-outbound");
-    expect(service.listBots().some((bot) => bot.id === "sales-outbound")).toBe(false);
+    await service.deleteAgent("sales-outbound");
+    expect(service.listAgents().some((agent) => agent.id === "sales-outbound")).toBe(false);
     expect(store.database.pendingHostedSiteTerminalEvents()).toEqual([]);
     expect(
       store.database.connection
@@ -255,12 +255,12 @@ describe.sequential("AgentService: restart", () => {
         .get(),
     ).toMatchObject({ count: 0 });
 
-    await service.sendMessage({ botId: "chief", text: "Keep working" });
+    await service.sendMessage({ agentId: "chief", text: "Keep working" });
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
-    await expect(service.deleteBot("chief")).rejects.toThrow(
+    await expect(service.deleteAgent("chief")).rejects.toThrow(
       "Stop the agent and cancel its queued messages before deleting it.",
     );
-    expect(service.listBots().some((bot) => bot.id === "chief")).toBe(true);
+    expect(service.listAgents().some((agent) => agent.id === "chief")).toBe(true);
   });
 
   it("queues independent manual routine runs and renders routine metadata", async () => {
@@ -272,9 +272,9 @@ describe.sequential("AgentService: restart", () => {
       return client;
     });
     await service.initialize();
-    const bot = await store.getOrCreate("chief");
+    const agent = await store.getOrCreate("chief");
     const routine = service.createRoutine({
-      botId: bot.id,
+      agentId: agent.id,
       name: "Queue health",
       instruction: "Check the current queue health.",
       active: true,
@@ -282,19 +282,19 @@ describe.sequential("AgentService: restart", () => {
       schedule: { kind: "daily", time: "09:00" },
     });
 
-    await service.testRoutine({ botId: bot.id, routineId: routine.id });
-    await service.testRoutine({ botId: bot.id, routineId: routine.id });
-    await waitFor(() => service?.listQueue(bot.id).deliveries.some((delivery) => delivery.status === "running"));
+    await service.testRoutine({ agentId: agent.id, routineId: routine.id });
+    await service.testRoutine({ agentId: agent.id, routineId: routine.id });
+    await waitFor(() => service?.listQueue(agent.id).deliveries.some((delivery) => delivery.status === "running"));
 
-    const queue = service.listQueue(bot.id);
+    const queue = service.listQueue(agent.id);
     expect(queue.deliveries.map((delivery) => delivery.status)).toEqual(["running", "queued"]);
     expect(queue.deliveries.every((delivery) => delivery.sender.kind === "routine")).toBe(true);
-    const conversation = await service.readConversation(bot.id);
+    const conversation = await service.readConversation(agent.id);
     expect(conversation.messages.filter((message) => message.routine?.name === "Queue health")).toHaveLength(2);
 
     const running = queue.deliveries.find((delivery) => delivery.status === "running");
     const client = clients.get("codex");
-    const threadId = store.activeProviderSession(bot.id)?.externalSessionId;
+    const threadId = store.activeProviderSession(agent.id)?.externalSessionId;
     if (!running?.turnId || !client || !threadId) throw new Error("The routine turn did not start.");
     const routineInput = firstInputText(client.requests.find((request) => request.method === "turn/start")?.params);
     expect(routineInput).toContain("Execute one run of an existing OpenBot routine now.");
@@ -309,12 +309,12 @@ describe.sequential("AgentService: restart", () => {
     });
     await waitFor(() =>
       service
-        ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        ?.listRoutineRuns({ agentId: agent.id, routineId: routine.id, limit: 10 })
         .some((run) => run.status === "needs-attention"),
     );
     expect(client.responses).toEqual([]);
     await service.respondToApproval({ requestId: "routine-approval", decision: "accept" });
-    expect(service.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })).toEqual(
+    expect(service.listRoutineRuns({ agentId: agent.id, routineId: routine.id, limit: 10 })).toEqual(
       expect.arrayContaining([expect.objectContaining({ status: "running" })]),
     );
     expect(client.responses).toEqual([
@@ -323,9 +323,9 @@ describe.sequential("AgentService: restart", () => {
 
     const queued = queue.deliveries.find((delivery) => delivery.status === "queued");
     if (!queued) throw new Error("The second routine run was not queued.");
-    await service.cancelQueuedMessage(bot.id, queued.id);
+    await service.cancelQueuedMessage(agent.id, queued.id);
     expect(
-      service.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 }).map((run) => run.status),
+      service.listRoutineRuns({ agentId: agent.id, routineId: routine.id, limit: 10 }).map((run) => run.status),
     ).toEqual(expect.arrayContaining(["running", "cancelled"]));
     expect(client.requests.some((request) => request.method === "turn/start")).toBe(true);
 
@@ -338,24 +338,26 @@ describe.sequential("AgentService: restart", () => {
     );
     await waitFor(() =>
       service
-        ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        ?.listRoutineRuns({ agentId: agent.id, routineId: routine.id, limit: 10 })
         .some((run) => run.status === "failed"),
     );
     const failedRuntime = service.getRuntimeSnapshot();
     expect(isAgentEvent({ type: "runtime-snapshot", snapshot: failedRuntime })).toBe(true);
-    expect(failedRuntime.failedTurns).toEqual([{ botId: bot.id, turnId: running.turnId }]);
+    expect(failedRuntime.failedTurns).toEqual([{ agentId: agent.id, turnId: running.turnId }]);
     expect(failedRuntime.work).toEqual([
-      expect.objectContaining({ id: running.id, botId: bot.id, status: "failed", turnId: running.turnId }),
+      expect.objectContaining({ id: running.id, agentId: agent.id, status: "failed", turnId: running.turnId }),
     ]);
-    service.acknowledgeFailedTurn(bot.id, running.turnId);
+    service.acknowledgeFailedTurn(agent.id, running.turnId);
     expect(service.getRuntimeSnapshot().failedTurns).toEqual([]);
     expect(service.getRuntimeSnapshot().work).toEqual([]);
 
-    await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await service.testRoutine({ agentId: agent.id, routineId: routine.id });
     await waitFor(
-      () => service?.listQueue(bot.id).deliveries.filter((delivery) => delivery.status === "running").length === 1,
+      () => service?.listQueue(agent.id).deliveries.filter((delivery) => delivery.status === "running").length === 1,
     );
-    const interruptedDelivery = service.listQueue(bot.id).deliveries.find((delivery) => delivery.status === "running");
+    const interruptedDelivery = service
+      .listQueue(agent.id)
+      .deliveries.find((delivery) => delivery.status === "running");
     if (!interruptedDelivery?.turnId) throw new Error("The interrupted routine turn did not start.");
     client.emit(
       "notification",
@@ -366,10 +368,10 @@ describe.sequential("AgentService: restart", () => {
     );
     await waitFor(() =>
       service
-        ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        ?.listRoutineRuns({ agentId: agent.id, routineId: routine.id, limit: 10 })
         .some((run) => run.status === "interrupted"),
     );
-    const transitionStatuses = (await service.readConversation(bot.id)).messages.flatMap(
+    const transitionStatuses = (await service.readConversation(agent.id)).messages.flatMap(
       (message) => routineRunConversationEvent(message)?.status ?? [],
     );
     expect(transitionStatuses).toEqual(
@@ -389,10 +391,10 @@ describe.sequential("AgentService: restart", () => {
       (provider) => new FakeAgentClient(provider),
     );
     await service.initialize();
-    const bot = await store.getOrCreate("chief");
+    const agent = await store.getOrCreate("chief");
     vi.useFakeTimers({ now: new Date("2026-08-25T11:07:00.000Z") });
     const routine = service.createRoutine({
-      botId: bot.id,
+      agentId: agent.id,
       name: "Quarter-hour check",
       instruction: "Check the current queue.",
       active: true,
@@ -402,16 +404,16 @@ describe.sequential("AgentService: restart", () => {
     store.database.connection
       .prepare("UPDATE projection_routine_triggers SET next_run_at = ? WHERE trigger_id = ?")
       .run("2026-08-25T10:15:00.000Z", routine.trigger.id);
-    service.updateRoutine({ botId: bot.id, routineId: routine.id, name: routine.name });
-    const routineChanged = nextRoutinesChanged(service, bot.id);
+    service.updateRoutine({ agentId: agent.id, routineId: routine.id, name: routine.name });
+    const routineChanged = nextRoutinesChanged(service, agent.id);
 
     await vi.advanceTimersByTimeAsync(0);
     await routineChanged;
 
-    expect(service.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })).toEqual([
+    expect(service.listRoutineRuns({ agentId: agent.id, routineId: routine.id, limit: 10 })).toEqual([
       expect.objectContaining({ kind: "scheduled", scheduledFor: "2026-08-25T11:00:00.000Z" }),
     ]);
-    expect(service.listRoutines(bot.id)[0]?.trigger.nextRunAt).toBe("2026-08-25T11:15:00.000Z");
+    expect(service.listRoutines(agent.id)[0]?.trigger.nextRunAt).toBe("2026-08-25T11:15:00.000Z");
 
     await service.stop();
     service = new AgentService(
@@ -424,6 +426,6 @@ describe.sequential("AgentService: restart", () => {
     );
     await service.initialize();
 
-    expect(service.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })).toHaveLength(1);
+    expect(service.listRoutineRuns({ agentId: agent.id, routineId: routine.id, limit: 10 })).toHaveLength(1);
   });
 });

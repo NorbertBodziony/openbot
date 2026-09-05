@@ -14,17 +14,17 @@ export function SidebarAgentSection(sectionProps: { sectionId: string }) {
   const {
     customSectionById,
     dragOffset,
-    filteredBotsBySection,
+    filteredAgentsBySection,
     normalizedQuery,
     sectionDragClasses,
     sectionIsCollapsed,
   } = useSidebarScope();
   const sectionId = () => sectionProps.sectionId;
-  const bots = () => filteredBotsBySection().get(sectionId()) ?? [];
+  const agents = () => filteredAgentsBySection().get(sectionId()) ?? [];
   const name = () =>
     sectionId() === SIDEBAR_UNASSIGNED_SECTION_ID ? "Unassigned" : (customSectionById().get(sectionId())?.name ?? "");
   return (
-    <Show when={name() && (bots().length > 0 || (customSectionById().has(sectionId()) && !normalizedQuery()))}>
+    <Show when={name() && (agents().length > 0 || (customSectionById().has(sectionId()) && !normalizedQuery()))}>
       <section
         class={["sidebar-chat-group sidebar-section", sectionDragClasses(sectionId())]}
         style={`--sidebar-drag-y: ${dragOffset(sectionId()).y}px;`}
@@ -39,7 +39,7 @@ export function SidebarAgentSection(sectionProps: { sectionId: string }) {
           inert={sectionIsCollapsed(sectionId()) ? true : undefined}
         >
           <div id={`sidebar-section-body-${sectionId()}`} class="sidebar-section-body">
-            <For each={bots()}>{(bot) => <SidebarAgentRow bot={bot} />}</For>
+            <For each={agents()}>{(agent) => <SidebarAgentRow agent={agent} />}</For>
           </div>
         </div>
       </section>

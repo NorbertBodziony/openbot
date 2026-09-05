@@ -1,6 +1,6 @@
 import { lstat, mkdir, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import type { BotSummary } from "@openbot/contracts/ipc";
+import type { AgentSummary } from "@openbot/contracts/ipc";
 import { createOpenBotLogger, toLogValue } from "@openbot/logging";
 
 const MANAGED_SKILL_SLUG = "openbot-site-hosting";
@@ -27,7 +27,7 @@ export class ManagedSkillService {
     },
   ) {}
 
-  async syncAll(bots: BotSummary[]): Promise<void> {
+  async syncAll(agents: AgentSummary[]): Promise<void> {
     let content: string;
     try {
       content = await this.content();
@@ -35,22 +35,22 @@ export class ManagedSkillService {
       this.reportFailure(this.sourcePath, error);
       return;
     }
-    const results = await Promise.allSettled(bots.map((bot) => syncTargets(bot.workspacePath, content)));
+    const results = await Promise.allSettled(agents.map((agent) => syncTargets(agent.workspacePath, content)));
     for (let index = 0; index < results.length; index += 1) {
       const result = results[index];
       if (result.status === "fulfilled") {
         this.reportResult(result.value);
       } else {
-        this.reportFailure(bots[index]?.workspacePath ?? "unknown workspace", result.reason);
+        this.reportFailure(agents[index]?.workspacePath ?? "unknown workspace", result.reason);
       }
     }
   }
 
-  async syncBot(bot: BotSummary): Promise<void> {
+  async syncAgent(agent: AgentSummary): Promise<void> {
     try {
-      this.reportResult(await syncTargets(bot.workspacePath, await this.content()));
+      this.reportResult(await syncTargets(agent.workspacePath, await this.content()));
     } catch (error) {
-      this.reportFailure(bot.workspacePath, error);
+      this.reportFailure(agent.workspacePath, error);
     }
   }
 

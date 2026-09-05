@@ -35,7 +35,7 @@ describe("MailboxStore", () => {
     await source.close();
 
     await expect(store.listExportAttachments()).resolves.toEqual([]);
-    await store.enqueue({ sender: { kind: "user" }, recipientBotIds: ["chief"], text: "Unrelated work" });
+    await store.enqueue({ sender: { kind: "user" }, recipientAgentIds: ["chief"], text: "Unrelated work" });
     const restored = new MailboxStore(join(root, "user-data"), join(root, "Shared"));
     await restored.initialize();
     await expect(restored.listExportAttachments()).resolves.toEqual([]);
@@ -58,11 +58,11 @@ describe("MailboxStore", () => {
     const source = join(root, "runtime.txt");
     await writeFile(source, "runtime attachment");
     const [draft] = await store.prepareAttachments([source]);
-    const botIds = Array.from({ length: AGENT_RUNTIME_WORKING_ITEMS_LIMIT + 2 }, (_, index) => `bot-${index}`);
-    for (const [index, botId] of botIds.entries()) {
+    const agentIds = Array.from({ length: AGENT_RUNTIME_WORKING_ITEMS_LIMIT + 2 }, (_, index) => `bot-${index}`);
+    for (const [index, agentId] of agentIds.entries()) {
       const receipt = await store.enqueue({
         sender: { kind: "user" },
-        recipientBotIds: [botId],
+        recipientAgentIds: [agentId],
         text: index === 0 ? "x".repeat(AGENT_RUNTIME_TEXT_LIMIT + 100) : `Work ${index}`,
         draftIds: index === 0 ? [draft.id] : undefined,
       });
@@ -70,9 +70,9 @@ describe("MailboxStore", () => {
       await store.markStarting(deliveryId);
       await store.markRunning(deliveryId, `turn-${index}`);
     }
-    await store.enqueue({ sender: { kind: "user" }, recipientBotIds: ["queued"], text: "Still queued" });
+    await store.enqueue({ sender: { kind: "user" }, recipientAgentIds: ["queued"], text: "Still queued" });
 
-    const runtime = store.listRuntimeWork([...botIds, "queued"], new Map());
+    const runtime = store.listRuntimeWork([...agentIds, "queued"], new Map());
 
     expect(runtime).toHaveLength(AGENT_RUNTIME_WORKING_ITEMS_LIMIT);
     expect(runtime[0]).toMatchObject({
@@ -82,6 +82,9 @@ describe("MailboxStore", () => {
     expect(runtime.some((delivery) => delivery.text === "Still queued")).toBe(false);
   });
 
+  // The fixture is a `mailbox.json` a released build wrote, so it speaks that build's vocabulary:
+  // `recipientBotId`, `pausedBotIds`, and a `bot` sender. The validators run before normalization and
+  // reject rather than degrade, so tolerating those spellings is what keeps such a file openable.
   it("imports mailbox.json once and keeps a legacy backup", async () => {
     const userData = join(root, "legacy-user-data");
     await mkdir(userData, { recursive: true });
@@ -90,7 +93,7 @@ describe("MailboxStore", () => {
       messages: [
         {
           id: "message-1",
-          sender: { kind: "user" },
+          sender: { kind: "bot", botId: "researcher" },
           text: "Legacy request",
           attachments: [],
           replyToMessageId: null,
@@ -121,6 +124,9 @@ describe("MailboxStore", () => {
     expect(imported.listQueue("chief").deliveries).toMatchObject([
       { id: "delivery-1", text: "Legacy request", status: "completed" },
     ]);
+    expect(imported.conversationMessages("researcher")[0]).toMatchObject({
+      exchange: { direction: "outgoing", senderAgentId: "researcher", recipientAgentIds: ["chief"] },
+    });
     await expect(readFile(join(userData, "legacy-backup-v1", "mailbox.json"), "utf8")).resolves.toContain(
       "Legacy request",
     );
@@ -166,7 +172,7 @@ describe("MailboxStore", () => {
         {
           id: "delivery-1",
           messageId: "message-1",
-          recipientBotId: "chief",
+          recipientAgentId: "chief",
           status: "completed",
           turnId: "turn-1",
           error: null,
@@ -174,7 +180,7 @@ describe("MailboxStore", () => {
         },
       ],
       drafts: [],
-      pausedBotIds: [],
+      pausedAgentIds: [],
       idempotency: {},
       reactions: [],
     };
@@ -193,7 +199,7 @@ describe("MailboxStore", () => {
     const drafts = await store.prepareAttachments([original]);
     const receipt = await store.enqueue({
       sender: { kind: "user" },
-      recipientBotIds: ["chief", "sales-outbound"],
+      recipientAgentIds: ["chief", "sales-outbound"],
       text: "Review this data",
       draftIds: drafts.map((draft) => draft.id),
     });
@@ -210,11 +216,11 @@ describe("MailboxStore", () => {
       await readFile(join(root, "Shared", "Transfers", receipt.messageId, ".openbot-transfer.json"), "utf8"),
     );
     expect(manifest).toMatchObject({
-      version: 1,
+      version: 2,
       kind: "message-transfer",
       messageId: receipt.messageId,
       sender: { kind: "user" },
-      recipientBotIds: ["chief", "sales-outbound"],
+      recipientAgentIds: ["chief", "sales-outbound"],
       attachments: [
         {
           name: "report.csv",
@@ -232,7 +238,7 @@ describe("MailboxStore", () => {
     const [draft] = await store.prepareAttachments([source]);
     const receipt = await store.enqueue({
       sender: { kind: "user" },
-      recipientBotIds: ["chief"],
+      recipientAgentIds: ["chief"],
       text: "Review",
       draftIds: [draft.id],
     });
@@ -252,7 +258,7 @@ describe("MailboxStore", () => {
     const [draft] = await store.prepareAttachments([original]);
     const receipt = await store.enqueue({
       sender: { kind: "user" },
-      recipientBotIds: ["chief"],
+      recipientAgentIds: ["chief"],
       text: `Review ${serializeAttachmentReference(draft.name, draft.id)}`,
       draftIds: [draft.id],
     });
@@ -289,14 +295,14 @@ describe("MailboxStore", () => {
 
   it("persists cancellation and idempotent agent sends", async () => {
     const first = await store.enqueue({
-      sender: { kind: "bot", botId: "chief" },
-      recipientBotIds: ["sales-outbound"],
+      sender: { kind: "agent", agentId: "chief" },
+      recipientAgentIds: ["sales-outbound"],
       text: "Prepare a report",
       idempotencyKey: "thread:turn:call",
     });
     const duplicate = await store.enqueue({
-      sender: { kind: "bot", botId: "chief" },
-      recipientBotIds: ["sales-outbound"],
+      sender: { kind: "agent", agentId: "chief" },
+      recipientAgentIds: ["sales-outbound"],
       text: "Prepare a report",
       idempotencyKey: "thread:turn:call",
     });
@@ -315,15 +321,15 @@ describe("MailboxStore", () => {
     await writeFile(original, "retry me\n");
     const [draft] = await store.prepareAttachments([original]);
     const first = await store.enqueue({
-      sender: { kind: "bot", botId: "planner" },
-      recipientBotIds: ["chief"],
+      sender: { kind: "agent", agentId: "planner" },
+      recipientAgentIds: ["chief"],
       text: "",
       draftIds: [draft.id],
       idempotencyKey: "session:turn:call",
     });
     const second = await store.enqueue({
-      sender: { kind: "bot", botId: "planner" },
-      recipientBotIds: ["chief"],
+      sender: { kind: "agent", agentId: "planner" },
+      recipientAgentIds: ["chief"],
       text: "ignored duplicate",
       idempotencyKey: "session:turn:call",
     });
@@ -344,7 +350,7 @@ describe("MailboxStore", () => {
   it("persists one reaction per actor without overwriting other actors", async () => {
     const receipt = await store.enqueue({
       sender: { kind: "user" },
-      recipientBotIds: ["chief"],
+      recipientAgentIds: ["chief"],
       text: "Yes, continue",
       replyToMessageId: "assistant-1",
     });
@@ -355,56 +361,56 @@ describe("MailboxStore", () => {
     });
 
     await store.setReaction("chief", "assistant-1", { kind: "user" }, "❤️");
-    await store.setReaction("chief", "assistant-1", { kind: "bot", botId: "chief" }, "🎉");
+    await store.setReaction("chief", "assistant-1", { kind: "agent", agentId: "chief" }, "🎉");
     const restored = new MailboxStore(join(root, "user-data"), join(root, "Shared"));
     await restored.initialize();
     expect(restored.reactionFor("chief", "assistant-1")).toBe("❤️");
-    expect(restored.reactionFor("chief", "assistant-1", { kind: "bot", botId: "chief" })).toBe("🎉");
+    expect(restored.reactionFor("chief", "assistant-1", { kind: "agent", agentId: "chief" })).toBe("🎉");
     expect(restored.reactionsFor("chief").get("assistant-1")).toEqual([
       { emoji: "❤️", actor: { kind: "user" } },
-      { emoji: "🎉", actor: { kind: "bot", botId: "chief" } },
+      { emoji: "🎉", actor: { kind: "agent", agentId: "chief" } },
     ]);
     await restored.setReaction("chief", "assistant-1", { kind: "user" }, null);
     expect(restored.reactionFor("chief", "assistant-1")).toBeNull();
-    expect(restored.reactionFor("chief", "assistant-1", { kind: "bot", botId: "chief" })).toBe("🎉");
+    expect(restored.reactionFor("chief", "assistant-1", { kind: "agent", agentId: "chief" })).toBe("🎉");
   });
 
-  it("tracks the initiating bot through a reply chain and detects explicit replies", async () => {
+  it("tracks the initiating agent through a reply chain and detects explicit replies", async () => {
     const rootMessage = await store.enqueue({
-      sender: { kind: "bot", botId: "researcher" },
-      recipientBotIds: ["weather"],
+      sender: { kind: "agent", agentId: "researcher" },
+      recipientAgentIds: ["weather"],
       text: "Check tomorrow's weather.",
     });
     const weatherQuestion = await store.enqueue({
-      sender: { kind: "bot", botId: "weather" },
-      recipientBotIds: ["researcher"],
+      sender: { kind: "agent", agentId: "weather" },
+      recipientAgentIds: ["researcher"],
       text: "Which city?",
       replyToMessageId: rootMessage.messageId,
     });
     const locationReply = await store.enqueue({
-      sender: { kind: "bot", botId: "researcher" },
-      recipientBotIds: ["weather"],
+      sender: { kind: "agent", agentId: "researcher" },
+      recipientAgentIds: ["weather"],
       text: "Kraków.",
       replyToMessageId: weatherQuestion.messageId,
     });
 
-    expect(store.chainOriginBotId(locationReply.messageId)).toBe("researcher");
+    expect(store.chainOriginAgentId(locationReply.messageId)).toBe("researcher");
     expect(store.hasReplyFrom("weather", locationReply.messageId)).toBe(false);
     await store.enqueue({
-      sender: { kind: "bot", botId: "weather" },
-      recipientBotIds: ["researcher"],
+      sender: { kind: "agent", agentId: "weather" },
+      recipientAgentIds: ["researcher"],
       text: "It will be sunny.",
       replyToMessageId: locationReply.messageId,
     });
     expect(store.hasReplyFrom("weather", locationReply.messageId)).toBe(true);
     await store.enqueue({
-      sender: { kind: "bot", botId: "weather" },
-      recipientBotIds: ["researcher"],
+      sender: { kind: "agent", agentId: "weather" },
+      recipientAgentIds: ["researcher"],
       text: "A second explicit update.",
       idempotencyKey: "thread-weather:turn-weather:call-1",
     });
-    expect(store.hasBotMessageFromTurnTo("weather", "turn-weather", "researcher")).toBe(true);
-    expect(store.hasBotMessageFromTurnTo("weather", "turn-weather", "other-agent")).toBe(false);
+    expect(store.hasAgentMessageFromTurnTo("weather", "turn-weather", "researcher")).toBe(true);
+    expect(store.hasAgentMessageFromTurnTo("weather", "turn-weather", "other-agent")).toBe(false);
   });
 
   it("rejects directories and oversized recipient lists", async () => {
@@ -414,14 +420,14 @@ describe("MailboxStore", () => {
     await expect(
       store.enqueue({
         sender: { kind: "user" },
-        recipientBotIds: Array.from({ length: 33 }, (_, index) => `bot-${index}`),
+        recipientAgentIds: Array.from({ length: 33 }, (_, index) => `bot-${index}`),
         text: "Too many",
       }),
     ).rejects.toThrow("32 recipients");
     await expect(
       store.enqueue({
         sender: { kind: "user" },
-        recipientBotIds: ["x".repeat(INPUT_LIMITS.identifier + 1)],
+        recipientAgentIds: ["x".repeat(INPUT_LIMITS.identifier + 1)],
         text: "Invalid recipient",
       }),
     ).rejects.toThrow("recipient is invalid");
@@ -486,7 +492,7 @@ describe("MailboxStore", () => {
     });
     const receipt = await store.enqueue({
       sender: { kind: "user" },
-      recipientBotIds: ["chief"],
+      recipientAgentIds: ["chief"],
       text: "",
       draftIds: [draft.id],
     });
@@ -520,16 +526,16 @@ describe("MailboxStore", () => {
     await expect(readFile(resolved?.path ?? "")).resolves.toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
   });
 
-  it("deletes generated attachments owned by a deleted bot", async () => {
+  it("deletes generated attachments owned by a deleted agent", async () => {
     const attachment = await store.storeGeneratedAttachment({
       bytes: new Uint8Array([1, 2, 3]),
       name: "generated.bin",
-      ownerBotId: "chief",
+      ownerAgentId: "chief",
       ownerThreadId: "thread-chief",
     });
 
     await expect(store.resolveAttachment(attachment.id)).resolves.toBeTruthy();
-    await store.deleteBotData("chief");
+    await store.deleteAgentData("chief");
 
     await expect(store.resolveAttachment(attachment.id)).resolves.toBeNull();
     await expect(store.listExportAttachments()).resolves.toEqual([]);
@@ -547,24 +553,24 @@ describe("MailboxStore", () => {
     await expect(restored.resolveAttachment(draft.id)).resolves.toBeNull();
   });
 
-  it("removes deleted bot deliveries while preserving messages visible to other bots", async () => {
+  it("removes deleted agent deliveries while preserving messages visible to other agents", async () => {
     await store.enqueue({
       sender: { kind: "user" },
-      recipientBotIds: ["chief"],
+      recipientAgentIds: ["chief"],
       text: "Private to Chief",
     });
     await store.enqueue({
-      sender: { kind: "bot", botId: "chief" },
-      recipientBotIds: ["sales-outbound"],
+      sender: { kind: "agent", agentId: "chief" },
+      recipientAgentIds: ["sales-outbound"],
       text: "Keep this for Sales",
     });
 
-    await store.deleteBotData("chief");
+    await store.deleteAgentData("chief");
 
     expect(store.listQueue("chief").deliveries).toEqual([]);
     expect(store.conversationMessages("chief").map((message) => message.text)).not.toContain("Private to Chief");
     expect(store.conversationMessages("sales-outbound")).toEqual([
-      expect.objectContaining({ text: "Keep this for Sales", senderBotId: "chief" }),
+      expect.objectContaining({ text: "Keep this for Sales", senderAgentId: "chief" }),
     ]);
   });
 
@@ -576,7 +582,7 @@ describe("MailboxStore", () => {
     const [draft] = await store.prepareAttachments([source]);
     const receipt = await store.enqueue({
       sender: { kind: "user" },
-      recipientBotIds: ["chief"],
+      recipientAgentIds: ["chief"],
       text: "Review",
       draftIds: [draft.id],
     });
@@ -608,8 +614,8 @@ describe("MailboxStore", () => {
 
   it("reconstructs persistent outgoing and incoming exchanges with live delivery states", async () => {
     const receipt = await store.enqueue({
-      sender: { kind: "bot", botId: "chief" },
-      recipientBotIds: ["sales-outbound", "inbox-manager"],
+      sender: { kind: "agent", agentId: "chief" },
+      recipientAgentIds: ["sales-outbound", "inbox-manager"],
       text: "Prepare your reports",
       replyToMessageId: "previous-message",
     });
@@ -621,14 +627,14 @@ describe("MailboxStore", () => {
       id: `outbox-${receipt.messageId}`,
       exchange: {
         direction: "outgoing",
-        recipientBotIds: ["sales-outbound", "inbox-manager"],
+        recipientAgentIds: ["sales-outbound", "inbox-manager"],
         replyToMessageId: "previous-message",
         deliveries: [{ status: "running" }, { status: "queued" }],
       },
     });
     expect(store.conversationMessages("sales-outbound")[0]).toMatchObject({
       author: "agent",
-      senderBotId: "chief",
+      senderAgentId: "chief",
       exchange: { direction: "incoming" },
     });
 
@@ -647,13 +653,13 @@ describe("MailboxStore", () => {
     const [originalDraft] = await store.prepareAttachments([original]);
     const first = await store.enqueue({
       sender: { kind: "user" },
-      recipientBotIds: ["chief"],
+      recipientAgentIds: ["chief"],
       text: "Keep this message",
       draftIds: [originalDraft.id],
     });
     const second = await store.enqueue({
       sender: { kind: "user" },
-      recipientBotIds: ["chief"],
+      recipientAgentIds: ["chief"],
       text: "Move me first",
     });
     const firstDeliveryId = first.deliveries[0].id;
@@ -701,7 +707,7 @@ describe("MailboxStore", () => {
   it("rejects queue edits and reorders for non-queued deliveries", async () => {
     const receipt = await store.enqueue({
       sender: { kind: "user" },
-      recipientBotIds: ["chief"],
+      recipientAgentIds: ["chief"],
       text: "Already running",
     });
     const deliveryId = receipt.deliveries[0].id;

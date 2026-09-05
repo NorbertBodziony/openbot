@@ -5,7 +5,7 @@ import type { DeliveryContext } from "./mailbox-store";
 import type { ThreadItem, ThreadResponse } from "./protocol";
 
 export function snapshotFromThread(
-  botId: string,
+  agentId: string,
   thread: ThreadResponse["thread"],
   findDelivery: (deliveryId: string) => DeliveryContext | null,
 ): ConversationSnapshot {
@@ -33,9 +33,9 @@ export function snapshotFromThread(
           messages.push({
             id: delivery?.delivery.id ?? item.id,
             turnId: turn.id,
-            author: delivery?.delivery.sender.kind === "bot" ? "agent" : "user",
-            source: delivery?.delivery.sender.kind === "bot" ? "agent" : "user",
-            senderBotId: delivery?.delivery.sender.kind === "bot" ? delivery.delivery.sender.botId : undefined,
+            author: delivery?.delivery.sender.kind === "agent" ? "agent" : "user",
+            source: delivery?.delivery.sender.kind === "agent" ? "agent" : "user",
+            senderAgentId: delivery?.delivery.sender.kind === "agent" ? delivery.delivery.sender.agentId : undefined,
             replyToMessageId: delivery?.delivery.replyToMessageId,
             attachments: delivery?.delivery.attachments,
             delivery: delivery
@@ -85,7 +85,7 @@ export function snapshotFromThread(
     }
   }
   sortConversationMessages(messages);
-  return { botId, threadId: thread.id, activeTurnId: null, revision: 0, messages };
+  return { agentId, threadId: thread.id, activeTurnId: null, revision: 0, messages };
 }
 
 export function mergeConversationSnapshots(
@@ -108,7 +108,7 @@ export function mergeConversationSnapshots(
     );
   }
   const merged: ConversationSnapshot = {
-    botId: live.botId,
+    agentId: live.agentId,
     threadId: live.threadId ?? stored.threadId,
     activeTurnId: live.activeTurnId,
     revision: live.revision,

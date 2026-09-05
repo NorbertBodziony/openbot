@@ -1,4 +1,4 @@
-import type { AgentEvent, BotSummary, ConversationSnapshot } from "@openbot/contracts/ipc";
+import type { AgentEvent, AgentSummary, ConversationSnapshot } from "@openbot/contracts/ipc";
 import { sortConversationMessages } from "../conversation-snapshots";
 import type { MailboxStore } from "../mailbox-store";
 import type { OpenBotDatabase } from "../openbot-database";
@@ -8,7 +8,7 @@ import type { RoutineScheduler } from "./routine-scheduler";
 
 export interface MailboxSyncHooks {
   emit(event: AgentEvent): void;
-  emitError(code: string, error: unknown, botId?: string): void;
+  emitError(code: string, error: unknown, agentId?: string): void;
 }
 
 export interface MailboxSyncOptions {
@@ -57,7 +57,7 @@ export class MailboxSync {
 
   syncMailboxMessages(snapshot: ConversationSnapshot): void {
     const indexes = new Map(snapshot.messages.map((message, index) => [message.id, index]));
-    for (const mailboxMessage of this.#mailbox.conversationMessages(snapshot.botId)) {
+    for (const mailboxMessage of this.#mailbox.conversationMessages(snapshot.agentId)) {
       const index = indexes.get(mailboxMessage.id);
       if (index !== undefined) snapshot.messages[index] = mailboxMessage;
       else {
@@ -65,7 +65,7 @@ export class MailboxSync {
         snapshot.messages.push(mailboxMessage);
       }
     }
-    const reactions = this.#mailbox.reactionsFor(snapshot.botId);
+    const reactions = this.#mailbox.reactionsFor(snapshot.agentId);
     for (const message of snapshot.messages) {
       message.reactions = reactions.get(message.id) ?? [];
       message.reaction = message.reactions.find((reaction) => reaction.actor.kind === "user")?.emoji ?? null;
@@ -73,47 +73,47 @@ export class MailboxSync {
     sortConversationMessages(snapshot.messages);
   }
 
-  reconcilePersistedMailboxMessages(bot: BotSummary): void {
-    if (!bot.threadId) return;
-    const persisted = this.#database.readConversation(bot.id, bot.threadId);
+  reconcilePersistedMailboxMessages(agent: AgentSummary): void {
+    if (!agent.threadId) return;
+    const persisted = this.#database.readConversation(agent.id, agent.threadId);
     const previousSignature = conversationContentSignature(persisted);
     this.syncMailboxMessages(persisted);
     if (conversationContentSignature(persisted) === previousSignature) return;
     this.#database.persistConversation(persisted, "conversation.mailbox-reconciled", {
       messageCount: persisted.messages.length,
     });
-    const live = this.#conversation.snapshot(bot.id);
+    const live = this.#conversation.snapshot(agent.id);
     if (live) this.syncMailboxMessages(live);
   }
 
-  emitQueue(botId: string): void {
-    const queue = this.#mailbox.listQueue(botId);
+  emitQueue(agentId: string): void {
+    const queue = this.#mailbox.listQueue(agentId);
     let routinesChanged = false;
     for (const delivery of queue.deliveries) {
       if (this.#routines.reconcileDelivery(delivery)) routinesChanged = true;
     }
     this.#hooks.emit({ type: "queue-changed", snapshot: queue });
-    if (routinesChanged) this.#routines.stateChanged(botId);
-    const affectedBots = new Set([botId, ...this.#mailbox.senderBotIdsForRecipient(botId)]);
-    for (const affectedBotId of affectedBots) {
-      const snapshot = this.#conversation.snapshot(affectedBotId);
+    if (routinesChanged) this.#routines.stateChanged(agentId);
+    const affectedAgents = new Set([agentId, ...this.#mailbox.senderAgentIdsForRecipient(agentId)]);
+    for (const affectedAgentId of affectedAgents) {
+      const snapshot = this.#conversation.snapshot(affectedAgentId);
       if (!snapshot) continue;
       const previousSignature = conversationContentSignature(snapshot);
       this.syncMailboxMessages(snapshot);
       if (conversationContentSignature(snapshot) !== previousSignature) this.#conversation.emitConversation(snapshot);
-      else if (!this.#conversation.hasPublishedConversation(affectedBotId))
+      else if (!this.#conversation.hasPublishedConversation(affectedAgentId))
         this.#conversation.publishConversation(snapshot);
     }
   }
 
-  retryDeliveryReconciliation(botId: string): void {
+  retryDeliveryReconciliation(agentId: string): void {
     queueMicrotask(() => {
       try {
-        this.emitQueue(botId);
-        const snapshot = this.#conversation.snapshot(botId);
+        this.emitQueue(agentId);
+        const snapshot = this.#conversation.snapshot(agentId);
         if (snapshot) this.#conversation.emitConversation(snapshot);
       } catch (error) {
-        this.#hooks.emitError("delivery_reconciliation_pending", error, botId);
+        this.#hooks.emitError("delivery_reconciliation_pending", error, agentId);
       }
     });
   }

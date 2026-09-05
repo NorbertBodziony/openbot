@@ -267,7 +267,7 @@ describe("TeamApiServer routing", () => {
     const sidebarLayout = new SidebarLayoutStore(join(root, "sidebar-layout.json"));
     await sidebarLayout.initialize();
     const { base } = await start({
-      agents: createAgents({ listBots: () => [] }),
+      agents: createAgents({ listAgents: () => [] }),
       sidebarLayout,
       logger: createOpenBotLogger("test", () => undefined),
     });
@@ -342,7 +342,7 @@ describe("TeamApiServer status contract", () => {
     // The stubs are here so that a route can be reached at all and then raise, and the silenced
     // logger keeps what they raise from burying the row that failed.
     const { base } = await fixture.start({
-      agents: createAgents({ listBots: () => [] }),
+      agents: createAgents({ listAgents: () => [] }),
       logger: createOpenBotLogger("test", () => undefined),
       ...options,
     });
@@ -377,7 +377,7 @@ describe("TeamApiServer status contract", () => {
     const { base, signIn } = await statusFixture("bad-identifier");
     const token = await signIn();
     const cases = [
-      ["GET", "/v1/agents/%ZZ/bogus", "botId is invalid."],
+      ["GET", "/v1/agents/%ZZ/bogus", "agentId is invalid."],
       ["PUT", "/v1/agents/a/memories/%ZZ", "memoryId is invalid."],
       ["PATCH", "/v1/agents/a/routines/%ZZ", "routineId is invalid."],
     ] as const;

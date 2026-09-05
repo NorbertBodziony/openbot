@@ -21,8 +21,8 @@ import {
   MessageHeader,
   Text,
 } from "../src/components/ui";
-import type { BotMessage } from "../src/data";
-import { STORY_ATTACHMENTS, STORY_BOTS } from "./fixtures";
+import type { AgentMessage } from "../src/data";
+import { STORY_AGENTS, STORY_ATTACHMENTS } from "./fixtures";
 
 const previewImage = new URL("../src/assets/openbot-logo-production.png", import.meta.url).href;
 const generatedImage: AttachmentSummary = {
@@ -35,15 +35,15 @@ const generatedImage: AttachmentSummary = {
   previewUrl: previewImage,
 };
 
-const assistantMessage: BotMessage = {
+const assistantMessage: AgentMessage = {
   id: "chat-primitives-assistant",
-  author: "bot",
+  author: "agent",
   body: "The launch brief is ready. I tightened the milestones, assigned owners, and kept the rollout reversible.",
   time: "10:02",
   kind: "text",
 };
 
-const userMessage: BotMessage = {
+const userMessage: AgentMessage = {
   id: "chat-primitives-user",
   author: "you",
   body: "Great — turn that into a checklist for the team.",
@@ -51,9 +51,9 @@ const userMessage: BotMessage = {
   kind: "text",
 };
 
-const markdownMessage: BotMessage = {
+const markdownMessage: AgentMessage = {
   id: "chat-primitives-markdown",
-  author: "bot",
+  author: "agent",
   body: [
     "## Launch checklist",
     "",
@@ -67,9 +67,9 @@ const markdownMessage: BotMessage = {
   kind: "text",
 };
 
-const codeMessage: BotMessage = {
+const codeMessage: AgentMessage = {
   id: "chat-primitives-code",
-  author: "bot",
+  author: "agent",
   body: [
     "Run the release checks from the workspace root:",
     "",
@@ -82,9 +82,9 @@ const codeMessage: BotMessage = {
   kind: "text",
 };
 
-const tableMessage: BotMessage = {
+const tableMessage: AgentMessage = {
   id: "chat-primitives-table",
-  author: "bot",
+  author: "agent",
   body: [
     "| Surface | Owner | State |",
     "| --- | --- | --- |",
@@ -96,9 +96,9 @@ const tableMessage: BotMessage = {
   kind: "text",
 };
 
-const imageMessage: BotMessage = {
+const imageMessage: AgentMessage = {
   id: "chat-primitives-image",
-  author: "bot",
+  author: "agent",
   body: "",
   time: "10:07",
   kind: "text",
@@ -111,18 +111,18 @@ const imageMessage: BotMessage = {
   },
 };
 
-const attachmentMessage: BotMessage = {
+const attachmentMessage: AgentMessage = {
   id: "chat-primitives-attachment",
-  author: "bot",
+  author: "agent",
   body: "",
   time: "10:08",
   kind: "text",
   attachments: [STORY_ATTACHMENTS[0]],
 };
 
-const streamingMessage: BotMessage = {
+const streamingMessage: AgentMessage = {
   id: "chat-primitives-streaming",
-  author: "bot",
+  author: "agent",
   body: "I’m checking the final dependency graph and preparing the rollout notes…",
   time: "10:09",
   kind: "text",
@@ -140,8 +140,8 @@ const messageBodyCallbacks = {
 const onPrototypeReply = fn();
 
 function PrototypeMessage(props: {
-  message: BotMessage;
-  referencedMessage?: BotMessage;
+  message: AgentMessage;
+  referencedMessage?: AgentMessage;
   variant?: BubbleVariant;
   actions?: boolean;
   reaction?: MessageReaction;
@@ -152,14 +152,14 @@ function PrototypeMessage(props: {
   const [expandedEmoji, setExpandedEmoji] = createSignal(false);
   const [copied, setCopied] = createSignal(false);
   const [reaction, setReaction] = createSignal<MessageReaction | null | undefined>(props.reaction);
-  const message = createMemo<BotMessage>(() => ({ ...props.message, reaction: reaction() }));
+  const message = createMemo<AgentMessage>(() => ({ ...props.message, reaction: reaction() }));
   const own = () => props.message.author === "you";
   const variant = () => props.variant ?? (own() ? "secondary" : "muted");
 
   return (
     <Message
       align={own() ? "end" : "start"}
-      class={["chat-prototype-message", "message-entry", own() ? "message-entry-user" : "message-entry-bot"]}
+      class={["chat-prototype-message", "message-entry", own() ? "message-entry-user" : "message-entry-agent"]}
       data-author={own() ? "user" : "assistant"}
       aria-label={`${own() ? "You" : "Assistant"} at ${props.message.time}`}
     >
@@ -175,7 +175,7 @@ function PrototypeMessage(props: {
               <MessageBody
                 message={message()}
                 referencedMessage={props.referencedMessage}
-                bots={STORY_BOTS}
+                agents={STORY_AGENTS}
                 {...messageBodyCallbacks}
               />
             </BubbleContent>

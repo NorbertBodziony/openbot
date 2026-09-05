@@ -3,15 +3,14 @@ import { Link } from "expo-router";
 import { Typography } from "heroui-native";
 import { ArrowLeft, Monitor } from "lucide-react-native";
 import { Alert, View, type ViewStyle } from "react-native";
-
-import { BloubAvatar } from "@/features/bots/components/bloub-avatar";
-import { BotPinAvatar } from "@/features/bots/components/bot-pin-avatar";
+import { AgentPinAvatar } from "@/features/agents/components/agent-pin-avatar";
+import { BloubAvatar } from "@/features/agents/components/bloub-avatar";
 import { ChatGlassIconButton } from "@/features/chat/components/chat-glass-icon-button";
-import type { MobileBot } from "@/features/workspace/context/mobile-workspace-context";
+import type { MobileAgent } from "@/features/workspace/context/mobile-workspace-context";
 import { SheetScrollEdgeEffect } from "@/shared/components/sheet-scroll-edge-effect";
 
 interface ChatHeaderProps {
-  bot: MobileBot;
+  agent: MobileAgent;
   fallbackBackground: ViewStyle["backgroundColor"];
   foreground: ViewStyle["backgroundColor"];
   liquidGlassAvailable: boolean;
@@ -20,7 +19,7 @@ interface ChatHeaderProps {
 }
 
 export function ChatHeader({
-  bot,
+  agent,
   fallbackBackground,
   foreground,
   liquidGlassAvailable,
@@ -61,12 +60,12 @@ export function ChatHeader({
           }}
         >
           <Link.AppleZoomTarget>
-            <BotPinAvatar botId={bot.id} location="chat" size={28}>
-              <BloubAvatar hue={bot.avatarHue} seed={bot.avatarSeed} size={28} />
-            </BotPinAvatar>
+            <AgentPinAvatar agentId={agent.id} location="chat" size={28}>
+              <BloubAvatar hue={agent.avatarHue} seed={agent.avatarSeed} size={28} />
+            </AgentPinAvatar>
           </Link.AppleZoomTarget>
           <Typography.Paragraph className="min-w-0 shrink" weight="semibold" numberOfLines={1}>
-            {bot.name}
+            {agent.name}
           </Typography.Paragraph>
         </GlassView>
 

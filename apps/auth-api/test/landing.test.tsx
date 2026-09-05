@@ -7,6 +7,6 @@ describe("landing page", () => {
     const markup = renderToString(() => <AppPreviewPage />);
 
     expect(markup).toContain('aria-label="Loading OpenBot preview"');
-    expect(markup).not.toContain('aria-label="Bot navigation"');
+    expect(markup).not.toContain('aria-label="Agent navigation"');
   });
 });

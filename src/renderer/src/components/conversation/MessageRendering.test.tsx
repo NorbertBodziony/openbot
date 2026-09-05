@@ -4,12 +4,12 @@ import type { AttachmentSummary, InstalledSkill } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
-import type { BotProfile } from "../../data";
+import type { AgentProfile } from "../../data";
 import { ImageGeneration } from "./ImageGeneration";
 import { MarkdownMessageText } from "./MarkdownMessageText";
 import { MessageBody } from "./MessageRendering";
 
-const bots: BotProfile[] = [
+const agents: AgentProfile[] = [
   {
     id: "research",
     provider: "codex",
@@ -76,7 +76,7 @@ describe("MessageBody", () => {
           time: "10:00",
           attachments,
         }}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onPreview={onPreview}
@@ -108,12 +108,12 @@ describe("MessageBody", () => {
       <MessageBody
         message={{
           id: "message-plain-file",
-          author: "bot",
+          author: "agent",
           body: "Here is **raport.csv**.",
           time: "10:00",
           attachments: [attachment],
         }}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onPreview={onPreview}
@@ -143,14 +143,14 @@ describe("MessageBody", () => {
       <MessageBody
         message={{
           id: "message-agent-screenshot",
-          author: "bot",
+          author: "agent",
           body: "",
           time: "10:00",
           status: "completed",
           itemType: "agent_attachment",
           attachments: [attachment],
         }}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onPreview={onPreview}
@@ -175,7 +175,7 @@ describe("MessageBody", () => {
       <MessageBody
         message={{
           id: "message-table",
-          author: "bot",
+          author: "agent",
           body: [
             "Model comparison:",
             "",
@@ -186,7 +186,7 @@ describe("MessageBody", () => {
           ].join("\n"),
           time: "10:00",
         }}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onPreview={vi.fn()}
@@ -207,7 +207,7 @@ describe("MessageBody", () => {
       <MessageBody
         message={{
           id: "message-markdown",
-          author: "bot",
+          author: "agent",
           body: [
             "## Recommendation",
             "",
@@ -237,7 +237,7 @@ describe("MessageBody", () => {
             },
           ],
         }}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenLink={onOpenLink}
         onPreview={vi.fn()}
@@ -274,11 +274,11 @@ describe("MessageBody", () => {
       <MessageBody
         message={{
           id: "message-markdown-tags",
-          author: "bot",
+          author: "agent",
           body: `Ask **@[Old Research](agent:research)** to use ${serializeChatTagReference("skill", "Old] Skill", "skill)1")}.`,
           time: "10:00",
         }}
-        bots={bots}
+        agents={agents}
         skills={skills}
         onSelectAgent={onSelectAgent}
         onOpenLink={vi.fn()}
@@ -298,17 +298,17 @@ describe("MessageBody", () => {
 
   it("renders absolute agent workspace Markdown paths as file controls", async () => {
     const onOpenWorkspaceFile = vi.fn();
-    const pagePath = "/Users/arozycka23/OpenBot/Bots/bot-7b62fdf2/app/page.tsx";
-    const cssPath = "/Users/arozycka23/OpenBot/Bots/bot-7b62fdf2/app/globals.css";
+    const pagePath = "/Users/arozycka23/OpenBot/Agents/bot-7b62fdf2/app/page.tsx";
+    const cssPath = "/Users/arozycka23/OpenBot/Agents/bot-7b62fdf2/app/globals.css";
     render(() => (
       <MessageBody
         message={{
           id: "message-workspace-paths",
-          author: "bot",
+          author: "agent",
           body: `Pliki:\n\n- [page.tsx](${pagePath})\n- [globals.css](${cssPath})`,
           time: "10:00",
         }}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onPreview={vi.fn()}
@@ -337,11 +337,11 @@ describe("MessageBody", () => {
       <MessageBody
         message={{
           id: "message-shared-path",
-          author: "bot",
+          author: "agent",
           body: `Shared result: [shared-access-test.txt](${sharedPath})`,
           time: "10:00",
         }}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onPreview={vi.fn()}
@@ -366,14 +366,14 @@ describe("MessageBody", () => {
       <MessageBody
         message={{
           id: "message-windows-shared-paths",
-          author: "bot",
+          author: "agent",
           body: [
             String.raw`[**Pobierz aktualny plik Excel**]\(<${forwardSlashPath}>)`,
             String.raw`[Pobierz drugi plik]\(<${backslashPath}>\)`,
           ].join("\n\n"),
           time: "10:00",
         }}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onPreview={vi.fn()}
@@ -410,7 +410,7 @@ describe("MessageBody", () => {
     render(() => (
       <MarkdownMessageText
         body={`[Open \`report.xlsx\`]\\(<${path}>\\)`}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onOpenSharedFile={vi.fn()}
@@ -432,7 +432,7 @@ describe("MessageBody", () => {
       <MessageBody
         message={{
           id: "message-escaped-web-link",
-          author: "bot",
+          author: "agent",
           body: [
             String.raw`[OpenAI]\(<https://example.com/OpenBot/Shared/docs.xlsx>\)`,
             String.raw`[Report]\(<//example.com/OpenBot/Shared/report.xlsx>\)`,
@@ -440,7 +440,7 @@ describe("MessageBody", () => {
           ].join("\n"),
           time: "10:00",
         }}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onPreview={vi.fn()}
@@ -484,7 +484,7 @@ describe("MessageBody", () => {
           "",
           `>     ${nestedCode}`,
         ].join("\n")}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onOpenSharedFile={vi.fn()}
@@ -518,11 +518,11 @@ describe("MessageBody", () => {
       <MessageBody
         message={{
           id: "message-shared-file-list",
-          author: "bot",
+          author: "agent",
           body: `Created four formats in \`${directory}\`:\n\n${names.map((name) => `- \`${name}\``).join("\n")}`,
           time: "10:00",
         }}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onPreview={vi.fn()}
@@ -546,11 +546,11 @@ describe("MessageBody", () => {
       <MessageBody
         message={{
           id: "message-relative-file-list",
-          author: "bot",
+          author: "agent",
           body: "Updated `package.json` and `src/main.ts`.",
           time: "10:00",
         }}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onPreview={vi.fn()}
@@ -571,11 +571,11 @@ describe("MessageBody", () => {
       <MessageBody
         message={{
           id: "message-relative-workspace-path",
-          author: "bot",
+          author: "agent",
           body: "Gotowe: [otwórz tablicę Lutra w HTML](< lutra-brand-board.html >)",
           time: "10:00",
         }}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onPreview={vi.fn()}
@@ -599,12 +599,12 @@ describe("MessageBody", () => {
       <MessageBody
         message={{
           id: "message-streaming-markdown",
-          author: "bot",
+          author: "agent",
           body: body(),
           time: "10:00",
           streaming: streaming(),
         }}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onPreview={vi.fn()}
@@ -640,12 +640,12 @@ describe("MessageBody", () => {
       <MessageBody
         message={{
           id: "message-streaming-punctuation",
-          author: "bot",
+          author: "agent",
           body: body(),
           time: "10:00",
           streaming: streaming(),
         }}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onPreview={vi.fn()}
@@ -671,12 +671,12 @@ describe("MessageBody", () => {
       <MessageBody
         message={{
           id: "message-streaming-underscore",
-          author: "bot",
+          author: "agent",
           body: body(),
           time: "10:00",
           streaming: streaming(),
         }}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onPreview={vi.fn()}
@@ -708,12 +708,12 @@ describe("MessageBody", () => {
       <MessageBody
         message={{
           id: `message-streaming-combined-${name}`,
-          author: "bot",
+          author: "agent",
           body: body(),
           time: "10:00",
           streaming: streaming(),
         }}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onPreview={vi.fn()}
@@ -738,12 +738,12 @@ describe("MessageBody", () => {
       <MessageBody
         message={{
           id: "message-streaming-nested-emphasis",
-          author: "bot",
+          author: "agent",
           body: body(),
           time: "10:00",
           streaming: streaming(),
         }}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onPreview={vi.fn()}
@@ -768,12 +768,12 @@ describe("MessageBody", () => {
       <MessageBody
         message={{
           id: "message-streaming-link",
-          author: "bot",
+          author: "agent",
           body: "Use **[Kobal](https://example.com), keep [label **literal](https://example.com/label)",
           time: "10:00",
           streaming: true,
         }}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onPreview={vi.fn()}
@@ -794,12 +794,12 @@ describe("MessageBody", () => {
         <MessageBody
           message={{
             id: `message-streaming-marker-${body.at(-1)}`,
-            author: "bot",
+            author: "agent",
             body,
             time: "10:00",
             streaming: true,
           }}
-          bots={bots}
+          agents={agents}
           onSelectAgent={vi.fn()}
           onOpenLink={vi.fn()}
           onPreview={vi.fn()}
@@ -819,12 +819,12 @@ describe("MessageBody", () => {
         <MessageBody
           message={{
             id: `message-streaming-literal-${body.at(-1)}`,
-            author: "bot",
+            author: "agent",
             body,
             time: "10:00",
             streaming: true,
           }}
-          bots={bots}
+          agents={agents}
           onSelectAgent={vi.fn()}
           onOpenLink={vi.fn()}
           onPreview={vi.fn()}
@@ -844,12 +844,12 @@ describe("MessageBody", () => {
       <MessageBody
         message={{
           id: `message-streaming-${name.replaceAll(" ", "-")}`,
-          author: "bot",
+          author: "agent",
           body,
           time: "10:00",
           streaming: true,
         }}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onPreview={vi.fn()}
@@ -865,12 +865,12 @@ describe("MessageBody", () => {
       <MessageBody
         message={{
           id: "message-streaming-code",
-          author: "bot",
+          author: "agent",
           body: "Earlier **literal\n\n```js\nconst answer = 4",
           time: "10:00",
           streaming: true,
         }}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onPreview={vi.fn()}
@@ -889,12 +889,12 @@ describe("MessageBody", () => {
       <MessageBody
         message={{
           id: "message-streaming-nested-table",
-          author: "bot",
+          author: "agent",
           body: body(),
           time: "10:00",
           streaming: streaming(),
         }}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onPreview={vi.fn()}
@@ -919,12 +919,12 @@ describe("MessageBody", () => {
       <MessageBody
         message={{
           id: "message-streaming-short-table-row",
-          author: "bot",
+          author: "agent",
           body: body(),
           time: "10:00",
           streaming: streaming(),
         }}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onPreview={vi.fn()}
@@ -949,12 +949,12 @@ describe("MessageBody", () => {
       <MessageBody
         message={{
           id: "message-streaming-closed-table-cell",
-          author: "bot",
+          author: "agent",
           body,
           time: "10:00",
           streaming: true,
         }}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onPreview={vi.fn()}
@@ -973,12 +973,12 @@ describe("MessageBody", () => {
       <MessageBody
         message={{
           id: "message-streaming-closed-nested-table",
-          author: "bot",
+          author: "agent",
           body,
           time: "10:00",
           streaming: true,
         }}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onPreview={vi.fn()}
@@ -994,12 +994,12 @@ describe("MessageBody", () => {
       <MessageBody
         message={{
           id: "message-streaming-table-header",
-          author: "bot",
+          author: "agent",
           body: "| A | **literal |\n| --- | --- |",
           time: "10:00",
           streaming: true,
         }}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onPreview={vi.fn()}
@@ -1020,7 +1020,7 @@ describe("MessageBody", () => {
           body: "| A | B |\n| --- | --- |\n| 1 | 2 |",
           time: "10:00",
         }}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onPreview={vi.fn()}
@@ -1044,11 +1044,11 @@ describe("MessageBody", () => {
         }}
         referencedMessage={{
           id: "message-agent-source",
-          author: "bot",
+          author: "agent",
           body: "A longer answer containing this exact selected sentence.",
           time: "10:00",
         }}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onPreview={vi.fn()}
@@ -1084,11 +1084,11 @@ describe("MessageBody", () => {
         }}
         referencedMessage={{
           id: "message-source",
-          author: "bot",
+          author: "agent",
           body: `Ask ${serializeChatTagReference("agent", "Old Research", "research")} to use ${serializeChatTagReference("skill", "Old Skill", "skill-1")}.`,
           time: "10:00",
         }}
-        bots={bots}
+        agents={agents}
         skills={skills}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
@@ -1109,7 +1109,7 @@ describe("MessageBody", () => {
       <MessageBody
         message={{
           id: "message-comparison-table",
-          author: "bot",
+          author: "agent",
           body: [
             "Plan comparison:",
             "",
@@ -1120,7 +1120,7 @@ describe("MessageBody", () => {
           ].join("\n"),
           time: "10:00",
         }}
-        bots={bots}
+        agents={agents}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onPreview={vi.fn()}
