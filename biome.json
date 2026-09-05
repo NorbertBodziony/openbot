@@ -128,6 +128,46 @@
       }
     },
     {
+      "includes": ["src/renderer/src/**/*.ts", "src/renderer/src/**/*.tsx"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["**/main/**", "**/backend/**", "**/preload/**"],
+                    "message": "The renderer reaches main only through the IPC contract. Declare a channel in packages/contracts and go through window.openbot."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/main/**/*.ts", "src/backend/**/*.ts", "src/preload/**/*.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["**/renderer/**"],
+                    "message": "Nothing behind the trust boundary imports renderer code. Share the type through packages/contracts instead."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
       "includes": ["**/*.test.ts", "**/*.test.tsx"],
       "plugins": [
         "./tools/biome/anti-slop/rules/no-class-assertions.grit",
