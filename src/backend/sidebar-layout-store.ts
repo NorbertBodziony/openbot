@@ -136,12 +136,22 @@ export class SidebarLayoutStore extends EventEmitter<SidebarLayoutStoreEvents> {
       // rename onto an id that is taken, so an agent spelled `bot-<uuid>` can be sitting beside the
       // `agent-<uuid>` it would otherwise have become, and this entry belongs to the one the user filed.
       const currentId = (agentId: string) => (agentIds.has(agentId) ? agentId : (renamedFrom.get(agentId) ?? agentId));
-      const agentAssignments = Object.fromEntries(
-        Object.entries(this.#layout.agentAssignments)
-          .map(([agentId, sectionId]) => [currentId(agentId), sectionId] as const)
-          .filter(([agentId]) => agentIds.has(agentId)),
-      );
-      const agentOrder = this.#layout.agentOrder.map(currentId).filter((agentId) => agentIds.has(agentId));
+      // Two entries can land on one id -- the layout can hold a `bot-<uuid>` the user filed before the
+      // upgrade beside the `agent-<uuid>` it became -- and the layout is validated on the way back in.
+      // An unmerged pair leaves the same agent twice in `agentOrder`, the file is rejected on the next
+      // launch, and the user's sections and ordering are reset. The entry already spelled the way the
+      // roster spells it is the one the user filed most recently, so it wins.
+      const agentAssignments: Record<string, string> = {};
+      for (const [agentId, sectionId] of Object.entries(this.#layout.agentAssignments)) {
+        const id = currentId(agentId);
+        if (!agentIds.has(id) || (id !== agentId && this.#layout.agentAssignments[id] !== undefined)) continue;
+        agentAssignments[id] = sectionId;
+      }
+      const agentOrder: string[] = [];
+      for (const entry of this.#layout.agentOrder) {
+        const agentId = currentId(entry);
+        if (agentIds.has(agentId) && !agentOrder.includes(agentId)) agentOrder.push(agentId);
+      }
       if (
         Object.keys(agentAssignments).length === Object.keys(this.#layout.agentAssignments).length &&
         Object.keys(agentAssignments).every((agentId) => agentId in this.#layout.agentAssignments) &&

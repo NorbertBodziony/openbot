@@ -113,8 +113,11 @@ const Sidebar = createSimpleContext({
         const items = current[serverId];
         if (!items) return current;
         const reowned = reownSidebarPinnedItems(items, roster);
-        if (reowned.every((item, index) => item.id === items[index]?.id)) return current;
-        const next = { ...current, [serverId]: reowned };
+        if (reowned.length === items.length && reowned.every((item, index) => item.id === items[index]?.id))
+          return current;
+        const next = { ...current };
+        if (reowned.length > 0) next[serverId] = reowned;
+        else delete next[serverId];
         writeSidebarPins(next);
         return next;
       });

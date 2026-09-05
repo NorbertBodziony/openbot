@@ -38,6 +38,16 @@ describe("sidebar pins", () => {
     // that have nothing to do with the rename.
     expect(reownSidebarPinnedItems(items, new Set([`agent-${uuid}`, `bot-${uuid}`]))).toEqual(items);
     expect(reownSidebarPinnedItems(items, new Set(["chief"]))).toEqual(items);
+
+    // Both spellings can be pinned at once -- the user pinned the agent before the upgrade and its twin
+    // after it -- and once the twin is gone they name one agent. Storing it twice shows it twice and
+    // spends two of the six slots on it.
+    expect(
+      reownSidebarPinnedItems([...items, { kind: "agent", id: `agent-${uuid}` }], new Set([`agent-${uuid}`])),
+    ).toEqual([
+      { kind: "agent", id: `agent-${uuid}` },
+      { kind: "agent", id: "chief" },
+    ]);
   });
 
   it("keeps at most six items", () => {

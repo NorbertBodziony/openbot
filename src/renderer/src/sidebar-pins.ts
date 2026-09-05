@@ -58,11 +58,16 @@ export function reownSidebarPinnedItems(
     const legacyId = legacyAgentId(agentId);
     if (legacyId !== agentId) renamedFrom.set(legacyId, agentId);
   }
-  return items.map((item) => {
-    if (item.kind !== "agent" || agentIds.has(item.id)) return item;
-    const currentId = renamedFrom.get(item.id);
-    return currentId === undefined ? item : { kind: item.kind, id: currentId };
-  });
+  // Reowning can land two pins on one agent -- a stale `bot-<uuid>` pin beside an `agent-<uuid>` one the
+  // user made after the upgrade -- so the result goes back through the normalizer. A duplicate that
+  // reached storage would show the agent twice and burn two of the six slots.
+  return normalizeSidebarPinnedItems(
+    items.map((item) => {
+      if (item.kind !== "agent" || agentIds.has(item.id)) return item;
+      const currentId = renamedFrom.get(item.id);
+      return currentId === undefined ? item : { kind: item.kind, id: currentId };
+    }),
+  );
 }
 
 export function readSidebarPins(storage: SidebarPinStorage = window.localStorage): SidebarPinsByServer {

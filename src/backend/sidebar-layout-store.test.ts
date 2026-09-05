@@ -194,6 +194,27 @@ describe("SidebarLayoutStore", () => {
 
     expect(kept.agentAssignments).toHaveProperty(legacyId);
     expect(kept.agentAssignments).not.toHaveProperty(currentId);
+
+    // A layout can hold both spellings at once, because the user filed the agent before the upgrade and
+    // the twin that took the new id after it. Once the twin is gone the two entries name one agent, and
+    // the reconciled layout is validated on the way back in -- so the same agent twice in `agentOrder`
+    // gets the file rejected on the next launch and resets every section the user made.
+    const merged = await createStore();
+    const both = new Set([legacyId, currentId]);
+    const filed = await merged.store.mutate({ type: "create", name: "Research", agentId: currentId }, both);
+    const group = filed.agentAssignments[currentId];
+    await merged.store.mutate({ type: "create", name: "Archive", agentId: legacyId }, both);
+    const ranked = await merged.store.mutate(
+      { type: "move-agent", agentId: currentId, sectionId: group ?? null, beforeAgentId: null },
+      both,
+    );
+    expect(ranked.agentOrder).toEqual(expect.arrayContaining([legacyId, currentId]));
+    const deduped = await merged.store.reconcileAgents(new Set([currentId]));
+
+    expect(deduped.agentOrder).toEqual([currentId]);
+    // The section the user picked under the spelling the roster uses is the one that survives, whichever
+    // order the two entries happen to sit in the file.
+    expect(deduped.agentAssignments).toEqual({ [currentId]: group });
   });
 
   it("backs up corrupt state and starts with the safe default", async () => {
