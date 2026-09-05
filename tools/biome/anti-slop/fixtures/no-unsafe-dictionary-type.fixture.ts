@@ -11,5 +11,11 @@ type LooseKey = Record<PropertyKey, unknown>; // flag
 type Objected = Record<string, object>; // flag
 type ObjectedKey = Record<PropertyKey, object>; // flag
 
+// A key type this rule cannot enumerate. `no-known-value-widening` used to own
+// these through a `Record<$key, …>` arm; the metavariable key is what lets that
+// arm go without opening a hole.
+type Aliased = Record<AgentId, unknown>; // flag
+const inAnnotation: Record<AgentId, unknown> = readDeliveries(); // flag
+
 // Wrong, but `noExplicitAny` already reports it as an error.
 type Anyed = Record<string, any>;
