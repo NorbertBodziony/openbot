@@ -2,8 +2,8 @@ import { serializeAttachmentReference } from "@openbot/contracts/attachment-refe
 import type { AttachmentSummary } from "@openbot/contracts/ipc";
 import { expect, fn, waitFor, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
-import { RichMessageText } from "../src/components/conversation/RichMessageText";
 import type { MessageCitation } from "../src/data";
+import { RichMessageText } from "../src/features/conversation/RichMessageText";
 import { STORY_AGENTS, STORY_ATTACHMENTS } from "./fixtures";
 
 const args: Parameters<typeof RichMessageText>[0] = {

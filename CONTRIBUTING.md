@@ -30,16 +30,16 @@ replace a concrete contract with a broad dictionary type.
 
 Biome's `suspicious/noImportCycles` rejects circular imports across the whole repository, so runtime
 imports point in one direction. When two modules need each other, move the shared piece into a third
-module both can import — as `components/conversation-controller-context.tsx` does for the
-conversation controller, and `team-typing.ts` for the one IPC call two differently scoped owners
-both need.
+module both can import — as `features/conversation/conversation-controller-context.tsx` does for the
+conversation controller, and `features/team/team-typing.ts` for the one IPC call two differently
+scoped owners both need.
 Type-only imports (`import type`) are erased by the compiler and stay allowed in both directions.
 
 ## Pull requests
 
 1. Create a branch from `main`.
 2. Add or update tests for behavior changes and reproduced bugs.
-3. Run `bun run check`. Coding agents do not: see `AGENTS.md` "Do not run repo-wide checks".
+3. Run `bun run check`. Coding agents do not: see `AGENTS.md` "CI owns the minutes-long suites".
 4. Describe user-visible changes, risks, and manual verification in the pull request.
 
 Do not commit generated `out`, `dist`, coverage, local browser profiles, Electron `userData`, CLI

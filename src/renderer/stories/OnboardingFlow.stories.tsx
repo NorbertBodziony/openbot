@@ -2,8 +2,8 @@ import type { AgentProviderId, AgentStatus, AppSetupState, ProviderRuntimeStatus
 import { createSignal, onCleanup } from "solid-js";
 import { expect, fn, waitFor, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
-import { OnboardingFlow } from "../src/components/OnboardingFlow";
 import { Toaster, toast } from "../src/components/ui";
+import { OnboardingFlow } from "../src/features/onboarding/OnboardingFlow";
 import { STORY_AGENT_STATUS } from "./fixtures";
 import { createMockOpenBot } from "./mock-openbot";
 

@@ -1,11 +1,11 @@
 import { Loading, Show } from "solid-js";
-import { useAgents } from "./agents";
-import { useAuth } from "./auth";
+import { useAuth } from "./features/account/account-context";
+import { useAgents } from "./features/agents/agents-context";
+import { useSetup } from "./features/onboarding/onboarding-context";
+import { useServerSelection } from "./features/servers/server-selection";
 import { AccountLogin, InitialSetup, OnboardingFlow } from "./lazy-views";
 import { usePlatform } from "./platform";
 import { useProviders } from "./providers";
-import { useServerSelection } from "./server-selection";
-import { useSetup } from "./setup";
 import { WorkspaceShell } from "./WorkspaceShell";
 
 /** The one placeholder every gate below falls back to, at every depth. */

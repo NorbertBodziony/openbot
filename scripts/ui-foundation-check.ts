@@ -72,7 +72,11 @@ export function checkUiFoundation(rendererRoot: string, labelRoot: string): UiFo
     );
   }
 
-  const componentSource = filesUnder(resolve(rendererRoot, "components"))
+  // Every renderer component outside the shared layer, wherever it lives. This
+  // used to walk `components/` alone, which stopped seeing a component the moment
+  // it moved into `features/` - the budget stayed at zero by going blind, not by
+  // being met.
+  const componentSource = filesUnder(rendererRoot)
     .filter((path) => path.endsWith(".tsx") && !insideUi(path))
     .filter((path) => !path.endsWith(".test.tsx"))
     .map((path) => readFileSync(path, "utf8"))
@@ -86,9 +90,11 @@ export function checkUiFoundation(rendererRoot: string, labelRoot: string): UiFo
   // a colour literal, so every stylesheet the renderer owns is scanned whole. This
   // used to slice styles.css after its :root block to spare the palette, which also
   // spared everything else declared in there. It then named styles.css and styles/
-  // explicitly, which spared a stylesheet placed anywhere else - preview/preview.css
-  // was outside the scan and nothing said so. The whole renderer tree is the scope,
-  // so a new stylesheet is covered by existing there rather than by being listed.
+  // explicitly, which spared a stylesheet placed anywhere else: preview/preview.css
+  // was outside the scan and nothing said so, and a feature stylesheet moving next
+  // to the components it dresses would have left the budget the same silent way.
+  // The whole renderer tree is the scope, so a new stylesheet is covered by
+  // existing there rather than by being listed.
   const legacyStyles = filesUnder(rendererRoot)
     .filter((path) => path.endsWith(".css"))
     .map((path) => readFileSync(path, "utf8"))

@@ -39,7 +39,7 @@ describe("ui foundation check", () => {
         // path-prefix comparison, so without a separator this line and the second composite
         // role below both disappear, and a components/ui-kit could hold anything.
         "components/ui-kit/Sneaky.tsx: use a component from components/ui instead of a native control",
-        budget("hand-rolled composite ARIA roles", 2),
+        budget("hand-rolled composite ARIA roles", 3),
         // A hex and a named colour in styles/legacy.css, an rgb() in preview/preview.css.
         // The rgb() is in the file the old hand-written scope missed, so a scope narrowed
         // back to a list of directory names reads 2; the named colour is matched by a
@@ -55,13 +55,15 @@ describe("ui foundation check", () => {
   });
 
   it("counts a composite role once, ignoring the copies in test files and components/ui", () => {
-    // Composite.tsx and ui-kit/Sneaky.tsx are the two that count; Bad.test.tsx and
-    // components/ui/Button.tsx each hold a role="dialog" the ratchet must not see. Either
-    // exclusion breaking raises this to 3, both to 4 - which is a clearer failure than the
+    // Three count, one per place the walk has to reach: components/Composite.tsx, the
+    // sibling directory ui-kit/Sneaky.tsx, and features/inbox/InboxPane.tsx, which is
+    // outside components/ altogether and is what keeps the walk renderer-wide. Bad.test.tsx
+    // and components/ui/Button.tsx each hold a role="dialog" the ratchet must not see;
+    // either exclusion breaking raises this to 4, both to 5 - a clearer failure than the
     // budget line, because it says how many exclusions went.
     const { manualCompositeCount } = checkUiFoundation(fixtureRenderer, fixtureRenderer);
 
-    expect(manualCompositeCount).toBe(2);
+    expect(manualCompositeCount).toBe(3);
   });
 
   it("reports nothing for a renderer that breaks no check", () => {

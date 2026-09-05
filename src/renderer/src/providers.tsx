@@ -1,8 +1,8 @@
 import type { AgentProviderId, AgentStatus, ProviderRuntimeSnapshot } from "@openbot/contracts/ipc";
 import { createSignal, flush, onSettled } from "solid-js";
-import { useAgents } from "./agents";
 import { desktopAnalytics } from "./analytics";
 import { FALLBACK_PROVIDER_RUNTIMES } from "./app-defaults";
+import { useAgents } from "./features/agents/agents-context";
 import { createSimpleContext } from "./simple-context";
 
 /**

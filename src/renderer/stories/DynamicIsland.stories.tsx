@@ -8,8 +8,8 @@ import type { JSX } from "@solidjs/web";
 import { createMemo } from "solid-js";
 import { fn } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
-import { OpenBotDynamicIsland } from "../src/components/OpenBotDynamicIsland";
 import type { DynamicIslandViewState } from "../src/components/ui";
+import { OpenBotDynamicIsland } from "../src/features/dynamic-island/OpenBotDynamicIsland";
 import { DynamicIslandDisplayComparison } from "./DynamicIslandDisplayComparison";
 import { STORY_AGENTS } from "./fixtures";
 

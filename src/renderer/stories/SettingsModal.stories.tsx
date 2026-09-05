@@ -9,9 +9,9 @@ import type {
 import { createSignal, onCleanup } from "solid-js";
 import { expect, fn, waitFor, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
-import { DEFAULT_GENERAL_SETTINGS } from "../src/app-settings";
-import { SettingsModal } from "../src/components/SettingsModal";
 import { Button, Heading, Text, Toaster, toast } from "../src/components/ui";
+import { DEFAULT_GENERAL_SETTINGS } from "../src/features/settings/app-settings";
+import { SettingsModal } from "../src/features/settings/SettingsModal";
 import { createMockOpenBot } from "./mock-openbot";
 
 const storyAppInfo = { name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" } as const;

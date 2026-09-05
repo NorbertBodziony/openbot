@@ -1,10 +1,10 @@
 # OpenBot UI foundation
 
-OpenBot jest dark-first i korzysta z kompaktowej skali kontrolek: 24 px dla elementów pomocniczych, 28 px dla toolbarów, 32 px jako standard oraz 36 px dla ważnych akcji. Paleta i wszystkie globalne tokeny `--openbot-*` mieszkają w `packages/brand/src/tokens.css` — jednym pliku, który importują też web i mobile; `src/renderer/src/styles.css` tylko go importuje i dokłada zmienne animacji renderera. Reset i role bazowe są w `styles/base.css`, prymitywy w `styles/primitives.css`, a reguły ekranów w arkuszach feature'ów. Żaden z tych plików nie definiuje własnej palety.
+OpenBot jest dark-first i korzysta z kompaktowej skali kontrolek: 24 px dla elementów pomocniczych, 28 px dla toolbarów, 32 px jako standard oraz 36 px dla ważnych akcji. Paleta i wszystkie globalne tokeny `--openbot-*` mieszkają w `packages/brand/src/tokens.css` — jednym pliku, który importują też web i mobile; `src/renderer/src/styles.css` tylko go importuje i dokłada zmienne animacji renderera. Reset i role bazowe są w `styles/base.css`, prymitywy w `styles/primitives.css`, a reguły ekranów w arkuszu własnego feature'a — `features/<domena>/<domena>.css`, importowanym z `styles.css` w kolejności, która jest kaskadą. Wyjątkiem jest `styles/app-shell.css`: jego końcówka to warstwa motywu wspólna dla wszystkich domen, więc zostaje całością (powód opisany w nagłówku pliku). Żaden z tych plików nie definiuje własnej palety.
 
 ## Publiczne API
 
-Feature’y importują wyłącznie z `components/ui`. Bezpośrednie importy z Kobalte i Lucide są zabronione. Kobalte jest silnikiem zachowania, a nie publicznym API aplikacji; dzięki temu jego aktualizacja nie wymaga zmian w feature’ach.
+Feature’y — katalogi `src/renderer/src/features/<domena>/` — importują wyłącznie z `components/ui`. Bezpośrednie importy z Kobalte i Lucide są zabronione. Kobalte jest silnikiem zachowania, a nie publicznym API aplikacji; dzięki temu jego aktualizacja nie wymaga zmian w feature’ach.
 
 - `Text` i `Heading` — tekst interfejsu; dobierz semantyczne `as`, a wygląd przez `variant` lub `size`.
 - `Button` — akcja z tekstem. `primary` służy jednej najważniejszej akcji w kontekście, `secondary` akcjom standardowym, `ghost` toolbarom, `danger` operacjom destrukcyjnym, a `link` akcjom osadzonym w tekście.

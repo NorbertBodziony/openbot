@@ -2,7 +2,7 @@ import type { AgentMemory } from "@openbot/contracts/ipc";
 import { onCleanup } from "solid-js";
 import { expect, fireEvent, fn, waitFor, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
-import AgentSettingsPanel from "../src/components/conversation/AgentSettingsPanel";
+import AgentSettingsPanel from "../src/features/conversation/AgentSettingsPanel";
 import { STORY_AGENT_STATUS, STORY_AGENTS, STORY_MODELS } from "./fixtures";
 import { createMockOpenBot } from "./mock-openbot";
 

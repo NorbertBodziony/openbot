@@ -23,13 +23,25 @@ The first three are spelled out where they are enforced — `src/backend/AGENTS.
 changes" lists the boundaries in full; `docs/ARCHITECTURE.md` "Change rules" says where a change
 belongs.
 
-## Do not run repo-wide checks. CI owns the full suite.
+## CI owns the minutes-long suites. Run the fast checks yourself.
 
-Run the narrowest test for what you touched, `biome check <paths>`, `bun run check:ui` if you
-touched `src/renderer` — it scans the whole renderer in 60 ms and is not one of the slow ones —
-and a targeted `tsc` on the project you changed. Do not run `bun run check`, `check:desktop`,
-`test`, or `build-storybook`: each takes minutes, and the desktop suite flakes under load, so a
-red result tells you nothing about your change. CI owns all of it on every push:
+Before you call a task done, run the narrowest test for what you touched, then `bun run lint` and
+`bun run typecheck` — plus `bun run check:ui` if you touched `src/renderer`, which scans the whole
+renderer in 60 ms. All three read more than you changed on purpose and none is expensive: `lint` is
+`biome check .` across every file in about six seconds, `typecheck` is nine `tsc` projects in about
+four. The wide typecheck is the more useful one — a change in `packages/contracts` surfaces as an
+error in `src/renderer` or `src/main`, which a single `tsc -p` on the project you edited never sees.
+
+`bun run typecheck` is `typecheck:*`, and the mobile script is named `mobile:typecheck`, so it is
+the one project the aggregate misses. `apps/mobile` depends on `@openbot/brand`,
+`@openbot/contracts` and `@openbot/team-client`, so an export change in any of them can pass the
+aggregate and still break the app. Run `bun run mobile:typecheck` too — another four seconds — when
+you touch `apps/mobile` or one of those three packages.
+
+Do not run `bun run check`, `check:desktop`, `test`, or `build-storybook`: each takes minutes, and
+the desktop suite flakes under load, so a red result tells you nothing about your change. That is
+where the line falls — how long a command takes and whether you can trust its result, not how many
+files it reads. CI owns all of it on every push:
 
 | CI job | Runner | Command |
 | --- | --- | --- |
@@ -41,6 +53,11 @@ red result tells you nothing about your change. CI owns all of it on every push:
 
 `bun run test:desktop -- <path>` runs one desktop file. Need something wider? Ask for it. Permission
 covers the one command named — not another one, not a build, not a packaged app.
+
+`bun run format` is the one fast command to leave alone: it is `biome check --write .`, so it
+rewrites files your task never touched and puts them in your diff. Fix what you changed with
+`biome check --write <paths>`, or let the pre-commit hook's `bun run check:staged` do it over the
+staged set.
 
 ## Hit every surface
 
@@ -185,16 +202,27 @@ element the test already holds, and fails with "expected null" rather than namin
 `toHaveFocus()` is encouraged.
 
 Two severities. **Error** is for patterns with no honest counter-example: a snapshot, a test id, a
-sleep. **Warning** is for a judgement a pattern cannot make — `typeof` (right when narrowing an
-`unknown` at a trust boundary, wrong on a value whose type is already known), an `object` parameter,
-a module mock. A warning is a prompt to think, never a demand to rewrite; `biome-ignore` is not
-available to you, so making correct code worse to silence one is the one wrong answer. Leave it and
-say why in the PR.
+sleep. **Warning** is for a judgement a pattern cannot make — an `object` parameter, a module mock.
+A warning is a prompt to think, never a demand to rewrite; `biome-ignore` is not available to you, so
+making correct code worse to silence one is the one wrong answer. Leave it and say why in the PR.
 
 Every rule in `tools/biome/anti-slop/rules` owns a fixture in `../fixtures` marking each rejected
 line with `// flag` beside correct code it must leave alone; `scripts/anti-slop-rules.test.ts` checks
 both halves. A pattern that matches nothing is green and enforces nothing — that is how one rule
 stayed blind to `querySelector<HTMLElement>` for months. A new rule without a fixture is not a rule.
+
+A rule here bans a spelling, not a decision, and it does not repeat one Biome already ships.
+`no-runtime-typeof` was deleted for failing the first test: GritQL sees no types, so it could not
+separate `typeof` narrowing an `unknown` at a trust boundary from `typeof` on a value the compiler
+already knows, and all sixteen of its standing warnings turned out to be the correct use — which
+taught readers to skim the warning class that `no-module-mocking` lives in.
+`no-chained-type-assertions` was deleted for failing the second: `noUnsafeTypeAssertion` is already
+an error and reported every chain it caught, while the rule was blind to the unparenthesised
+`value as unknown as T` spelling. `noExplicitAny` owns `any` for the same reason. Cost is the
+tiebreaker when a rule is merely thin: each plugin is a separate traversal of every file, priced by
+how common its head pattern is, so a rule keyed on `const $name = $value` costs more than the rest of
+the linter put together — that is what `no-shape-in-symbol-names` cost to enforce a naming
+preference that review already covers.
 
 `bun run check:ui` is held to the same contract by `tools/ui-foundation/fixtures` and
 `scripts/ui-foundation-check.test.ts`. Two of its checks had gone blind before this existed. The

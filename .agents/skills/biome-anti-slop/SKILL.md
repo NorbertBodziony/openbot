@@ -89,9 +89,14 @@ setup. Preserve unrelated work and adapt to the repository's package manager and
 
 5. Keep each rule's declared severity. The set runs at two levels and the difference is a promise:
    `error` is for a pattern with no honest counter-example, `warn` for a judgement a pattern cannot
-   make - a `typeof` narrowing an `unknown` at a trust boundary is correct, an options-object
-   parameter is a readability call, and whether a module has an injectable seam is a fact about the
-   code under test. A warning is a prompt to think, never a demand to rewrite.
+   make - an options-object parameter is a readability call, whether a `Map` in a store is always
+   replaced whole is a fact about the component, and whether a module has an injectable seam is a
+   fact about the code under test. A warning is a prompt to think, never a demand to rewrite.
+
+   A judgement the pattern cannot make *at all* is a different thing, and does not belong in the
+   set: a rule that fires mostly on correct code trains readers to skim every warning beside it.
+   Neither does a rule Biome already ships - `noUnsafeTypeAssertion` and `noExplicitAny` own their
+   patterns here, and a second diagnostic on the same line adds nothing to read.
 
 6. Every rule ships a fixture beside it under `fixtures/`, marking each line the rule must reject
    with a trailing `// flag` and surrounding it with correct code the rule must leave alone. A

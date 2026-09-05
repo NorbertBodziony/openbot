@@ -1,7 +1,7 @@
 import { createEffect, flush, onSettled } from "solid-js";
-import { useAuth } from "./auth";
-import { useServers } from "./servers";
-import { useSetup } from "./setup";
+import { useAuth } from "./features/account/account-context";
+import { useSetup } from "./features/onboarding/onboarding-context";
+import { useServers } from "./features/servers/servers-context";
 
 /**
  * The deep-link invite, and nothing else.

@@ -1,8 +1,8 @@
 import { expect, fn } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
-import { MessageBody } from "../src/components/conversation/MessageRendering";
 import { Bubble, BubbleContent, type BubbleVariant } from "../src/components/ui";
 import type { AgentMessage } from "../src/data";
+import { MessageBody } from "../src/features/conversation/MessageRendering";
 import { STORY_AGENTS, STORY_ATTACHMENTS } from "./fixtures";
 
 const message: AgentMessage = {

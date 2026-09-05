@@ -10,6 +10,9 @@ staying green in CI.
 Nothing here is compiled, linted or rendered — `biome.json` excludes the directory and no tsconfig
 includes it. Treat every file as data read by the test.
 
+`features/inbox` is not stray either: the composite role count walks the whole renderer rather than
+`components/`, so it takes a component living beside its domain to hold that scope in place.
+
 `components/ui-kit` is not a typo: it is the neighbour that proves skipping the design system
 compares a path prefix against a separator rather than against `components/ui` alone.
 

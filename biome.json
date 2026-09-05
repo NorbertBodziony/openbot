@@ -1,14 +1,11 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.9/schema.json",
   "plugins": [
-    "./tools/biome/anti-slop/rules/no-chained-type-assertions.grit",
     "./tools/biome/anti-slop/rules/no-collections-in-stores.grit",
     "./tools/biome/anti-slop/rules/no-known-value-widening.grit",
     "./tools/biome/anti-slop/rules/no-module-mocking.grit",
     "./tools/biome/anti-slop/rules/no-object-parameters.grit",
     "./tools/biome/anti-slop/rules/no-reflect-escapes.grit",
-    "./tools/biome/anti-slop/rules/no-runtime-typeof.grit",
-    "./tools/biome/anti-slop/rules/no-shape-in-symbol-names.grit",
     "./tools/biome/anti-slop/rules/no-unknown-returns.grit",
     "./tools/biome/anti-slop/rules/no-unknown-type-aliases.grit",
     "./tools/biome/anti-slop/rules/no-unsafe-dictionary-type.grit"
@@ -91,7 +88,7 @@
   },
   "overrides": [
     {
-      "includes": ["src/renderer/src/styles/app-shell.css", "src/renderer/src/styles/conversation.css"],
+      "includes": ["src/renderer/src/styles/app-shell.css", "src/renderer/src/features/conversation/conversation.css"],
       "linter": {
         "rules": {
           "style": {

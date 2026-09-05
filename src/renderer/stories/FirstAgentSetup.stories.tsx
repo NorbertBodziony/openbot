@@ -8,7 +8,7 @@ import {
   FirstAgentSetup,
   type FirstAgentSetupProps,
   type FirstAgentSuggestion,
-} from "../src/components/FirstAgentSetup";
+} from "../src/features/agents/FirstAgentSetup";
 
 function draftFromSuggestion(suggestion: FirstAgentSuggestion): FirstAgentDraft {
   return {

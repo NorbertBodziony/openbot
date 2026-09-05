@@ -1,7 +1,7 @@
 import { expandChatTagReferences } from "@openbot/contracts/chat-tag-references";
 import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
 import type { AgentMessage, AgentProfile } from "../data";
-import { AgentAvatar } from "./AgentAvatar";
+import { AgentAvatar } from "../features/agents/AgentAvatar";
 import { Combobox, Dialog, Input, Kbd, Search, Tabs } from "./ui";
 
 type SearchTab = "all" | "messages" | "agents";

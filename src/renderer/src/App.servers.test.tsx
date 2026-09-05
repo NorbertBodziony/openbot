@@ -15,8 +15,8 @@ import {
   subscriberCounts,
   testServer,
 } from "./app-test-harness";
+import { SIDEBAR_PINS_STORAGE_KEY } from "./features/sidebar/sidebar-pins";
 import { TestResizeObserver } from "./setupTests";
-import { SIDEBAR_PINS_STORAGE_KEY } from "./sidebar-pins";
 
 describe("OpenBot connected desktop shell", () => {
   beforeEach(() => {
