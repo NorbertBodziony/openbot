@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createOpenBotLogger } from "@openbot/logging";
 
@@ -26,16 +26,19 @@ export interface UiFoundationReport {
  * `failures` are relative to `labelRoot`, which the CLI sets to the repository root
  * so a message can be pasted straight into an editor.
  *
- * Takes its roots as arguments rather than resolving them, so the fixture tree in
+ * Takes its roots as arguments rather than resolving them, so the fixture trees in
  * `tools/ui-foundation/fixtures` can prove each check still matches something. Two
  * of these checks silently matched nothing for months.
  */
 export function checkUiFoundation(rendererRoot: string, labelRoot: string): UiFoundationReport {
   const uiRoot = resolve(rendererRoot, "components/ui");
+  // Compared with a separator appended, or components/ui-kit and components/uiLegacy read
+  // as being inside the design system and every check below skips them silently.
+  const insideUi = (path: string): boolean => path.startsWith(`${uiRoot}${sep}`);
   const failures: string[] = [];
 
   for (const file of filesUnder(rendererRoot).filter((path) => /\.(?:ts|tsx)$/.test(path))) {
-    if (file.startsWith(uiRoot) || /\.test\.tsx?$/u.test(file)) continue;
+    if (insideUi(file) || /\.test\.tsx?$/u.test(file)) continue;
     const source = readFileSync(file, "utf8");
     const label = relative(labelRoot, file);
 
@@ -70,7 +73,7 @@ export function checkUiFoundation(rendererRoot: string, labelRoot: string): UiFo
   }
 
   const componentSource = filesUnder(resolve(rendererRoot, "components"))
-    .filter((path) => path.endsWith(".tsx") && !path.startsWith(uiRoot))
+    .filter((path) => path.endsWith(".tsx") && !insideUi(path))
     .filter((path) => !path.endsWith(".test.tsx"))
     .map((path) => readFileSync(path, "utf8"))
     .join("\n");

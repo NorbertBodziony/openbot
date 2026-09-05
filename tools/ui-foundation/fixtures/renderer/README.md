@@ -10,5 +10,8 @@ staying green in CI.
 Nothing here is compiled, linted or rendered — `biome.json` excludes the directory and no tsconfig
 includes it. Treat every file as data read by the test.
 
+`components/ui-kit` is not a typo: it is the neighbour that proves skipping the design system
+compares a path prefix against a separator rather than against `components/ui` alone.
+
 Adding a check to the script means adding both halves to this tree: the file that trips it, and the
 neighbour it must ignore.
