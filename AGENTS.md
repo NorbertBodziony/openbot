@@ -54,6 +54,15 @@ own `check` needs nothing but Bun and finishes in three seconds, so the two halv
 surfaces. `remote:check` is still the Docker-inclusive superset; run it when you touch a Compose
 file.
 
+`remote/scripts` rides along in that same project. `check.ts` and `update.ts` are Bun scripts
+using `Bun.spawn` and `import.meta.dir`, and no `tsconfig` reached them: `tsconfig.node.json` stops
+at the root `scripts/**` and pins `"types": ["node"]`, which is why all thirty root scripts use the
+`Bun` global exactly zero times. Adding `@types/bun` at the root would have made Bun globals
+resolvable repo-wide, including in `src/main`, which runs under Node. Instead `remote/api` already
+had the Bun-typed project the scripts needed, so its `include` carries `../scripts/*.ts` and
+`typecheck:remote` covers both. `update.ts` drains and force-recreates the live coturn container, so
+it is worth a checker.
+
 Do not run `bun run check`, `check:desktop`, `test`, or `build-storybook`: each takes minutes, and
 the desktop suite flakes under load, so a red result tells you nothing about your change. That is
 where the line falls — how long a command takes and whether you can trust its result, not how many
@@ -66,6 +75,9 @@ files it reads. CI owns all of it on every push:
 | Surfaces | `ubuntu-latest` | `bun run mobile:typecheck`, `bun run typecheck:sites`, `bun run typecheck:team-client`, `bun run typecheck:remote` |
 | API | `ubuntu-latest` | `bun run check:api` |
 | Storybook build | `ubuntu-latest` | `bun run build-storybook` |
+
+All five gate the Cloudflare production deploy on a push to `main`. Surfaces did not until recently,
+so a red mobile, site-router, team-client or remote typecheck let the deploy through.
 
 `bun run test:desktop -- <path>` runs one desktop file. Need something wider? Ask for it. Permission
 covers the one command named — not another one, not a build, not a packaged app.

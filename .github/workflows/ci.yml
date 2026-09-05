@@ -67,7 +67,8 @@ jobs:
     # declarations first - both are gitignored, so a fresh checkout cannot
     # resolve `global.css`. `remote/api` is typechecked here rather than through
     # `remote:check`, which also validates both Compose files and so needs
-    # Docker; the workspace's own `check` script needs nothing but Bun.
+    # Docker; the workspace's own `check` script needs nothing but Bun, and its
+    # `include` reaches `../scripts/*.ts` so the stack scripts come with it.
     name: Surfaces
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -193,7 +194,11 @@ jobs:
   deploy-production:
     name: Deploy Cloudflare production
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [check, tests, api, storybook]
+    # `surfaces` gates the deploy even though the Worker it ships lives in
+    # `apps/auth-api`, which `api` already covers: mobile, the site router, the
+    # team client and the remote stack all consume the account API, so a red
+    # Surfaces is the signal that this deploy is the thing about to break them.
+    needs: [check, tests, api, storybook, surfaces]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: cloudflare-production
