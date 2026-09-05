@@ -8,5 +8,8 @@ type Loose = Record<string, unknown>; // flag
 type LooseNumber = Record<number, unknown>; // flag
 type LooseSymbol = Record<symbol, unknown>; // flag
 type LooseKey = Record<PropertyKey, unknown>; // flag
-type Anyed = Record<string, any>; // flag
 type Objected = Record<string, object>; // flag
+type ObjectedKey = Record<PropertyKey, object>; // flag
+
+// Wrong, but `noExplicitAny` already reports it as an error.
+type Anyed = Record<string, any>;

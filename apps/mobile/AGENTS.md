@@ -43,9 +43,7 @@ bun run doctor               # diagnose dependency and config issues
 bunx expo install --fix      # fix incompatible package versions
 ```
 
-The `lint` and `typecheck` examples are permitted only when scoped to files changed by the task; do not run a repository-wide script as-is when it checks unrelated files.
-
-Before declaring any task done, run only targeted lint, Biome, and TypeScript checks covering the files changed by the task.
+Before declaring any task done, run `bun run lint` and `bun run typecheck` here. Both cover the whole app and both finish in seconds, so there is nothing to gain by narrowing them; see `AGENTS.md` "CI owns the minutes-long suites" for which commands are worth avoiding and why.
 
 ## Navigation & Routing
 

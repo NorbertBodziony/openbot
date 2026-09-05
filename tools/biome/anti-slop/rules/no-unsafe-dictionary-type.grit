@@ -2,15 +2,13 @@ language js(typescript)
 
 // scope: global
 
+// The `any` value types are deliberately absent: `noExplicitAny` is already an
+// error, and a second diagnostic on the same line adds nothing to read.
 or {
   `Record<string, unknown>`,
   `Record<number, unknown>`,
   `Record<symbol, unknown>`,
   `Record<PropertyKey, unknown>`,
-  `Record<string, any>`,
-  `Record<number, any>`,
-  `Record<symbol, any>`,
-  `Record<PropertyKey, any>`,
   `Record<string, object>`,
   `Record<number, object>`,
   `Record<symbol, object>`,
