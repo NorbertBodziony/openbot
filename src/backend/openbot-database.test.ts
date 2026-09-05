@@ -1070,6 +1070,56 @@ describe("OpenBotDatabase", () => {
     migrated.close();
   });
 
+  it("rolls back a failed reaction actor rename and succeeds on retry", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-db-reactions-rollback-"));
+    roots.push(root);
+    const database = new OpenBotDatabase(root);
+    await database.initialize();
+    database.close();
+
+    const legacy = new DatabaseSync(database.path);
+    downgradeToV11(legacy);
+    legacy.exec(`
+      INSERT INTO projection_reactions (
+        agent_id, message_id, emoji, actor_kind, actor_bot_id, updated_at, last_event_sequence
+      ) VALUES ('chief', 'message-1', '\u{1F44D}', 'bot', 'helper', '2026-08-20T10:00:00.000Z', 1);
+    `);
+    // This migration rebuilds the reaction table and rewrites the actor kind inside the copy, and it runs
+    // with foreign keys on so a real violation surfaces rather than hiding. The blocker is a child row
+    // pointing at the reaction under its pre-rename actor kind, so the rebuild orphans it and the
+    // migration throws after it has already written the new table.
+    legacy.exec(`
+      CREATE TABLE blocker (
+        agent_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        actor_kind TEXT NOT NULL,
+        actor_bot_id TEXT NOT NULL,
+        FOREIGN KEY(agent_id, message_id, actor_kind, actor_bot_id)
+          REFERENCES projection_reactions(agent_id, message_id, actor_kind, actor_bot_id)
+      );
+      INSERT INTO blocker VALUES ('chief', 'message-1', 'bot', 'helper');
+    `);
+    legacy.close();
+
+    const failed = new OpenBotDatabase(root);
+    await expect(failed.initialize()).rejects.toThrow("migration to version 12 failed");
+
+    const rolledBack = new DatabaseSync(database.path);
+    expect(rolledBack.prepare("SELECT 1 FROM schema_migrations WHERE version = 12").get()).toBeUndefined();
+    expect(rolledBack.prepare("SELECT actor_kind, actor_bot_id FROM projection_reactions").all()).toEqual([
+      { actor_kind: "bot", actor_bot_id: "helper" },
+    ]);
+    rolledBack.exec("DROP TABLE blocker");
+    rolledBack.close();
+
+    const retried = new OpenBotDatabase(root);
+    await retried.initialize();
+    expect(retried.connection.prepare("SELECT actor_kind, actor_agent_id FROM projection_reactions").all()).toEqual([
+      { actor_kind: "agent", actor_agent_id: "helper" },
+    ]);
+    retried.close();
+  });
+
   it("rewrites agent ids without losing a thread, its messages, or its hosted-site history", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-db-ids-v13-"));
     roots.push(root);

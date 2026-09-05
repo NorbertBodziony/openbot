@@ -156,7 +156,8 @@ describe("AgentStore", () => {
     const legacy = {
       version: 1,
       examplesInitialized: true,
-      agents: [
+      // The key a released `bots.json` used. Reading a different one discards every agent in the file.
+      bots: [
         {
           id: "chief",
           name: "Chief",
@@ -166,7 +167,7 @@ describe("AgentStore", () => {
           model: "gpt-5.6-luna",
           reasoningEffort: "medium",
           threadId: "native-codex-thread",
-          workspacePath: join(root, "home", "OpenBot", "Agents", "chief"),
+          workspacePath: join(root, "home", "OpenBot", "Bots", "chief"),
           preview: "Hello",
           updatedAt: "2026-01-01T00:00:00.000Z",
           avatarShape: "cloud",
@@ -198,7 +199,8 @@ describe("AgentStore", () => {
     const legacy = {
       version: 2,
       examplesInitialized: true,
-      agents: [
+      // The key a released `bots.json` used. Reading a different one discards every agent in the file.
+      bots: [
         {
           id: "writer",
           name: "Writer",
@@ -208,7 +210,7 @@ describe("AgentStore", () => {
           model: "claude-sonnet-5",
           reasoningEffort: "high",
           threadId: null,
-          workspacePath: join(root, "home", "OpenBot", "Agents", "writer"),
+          workspacePath: join(root, "home", "OpenBot", "Bots", "writer"),
           preview: "No messages yet",
           updatedAt: null,
           avatarSeed: "writer",
@@ -236,7 +238,7 @@ describe("AgentStore", () => {
       {
         version: 2,
         examplesInitialized: true,
-        agents: [{ id: "chief", role: "Coordinator" }],
+        bots: [{ id: "chief", role: "Coordinator" }],
       },
       null,
       2,
@@ -390,6 +392,37 @@ describe("AgentStore", () => {
     await expect(readFile(join(source.workspacePath, "note.txt"), "utf8")).resolves.toBe("source\n");
   });
 
+  it("keeps a committed duplicate whose pending marker a pre-rename release wrote", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-store-duplicate-recovery-legacy-"));
+    temporaryRoots.push(root);
+    const userData = join(root, "user-data");
+    const home = join(root, "home");
+    const operationId = randomUUID();
+    const store = new AgentStore(userData, home);
+    await store.initialize();
+    const source = await store.getOrCreate("chief");
+    const duplicate = await store.duplicateAgent(source.id, operationId);
+    await store.commitAgentDuplication(duplicate.id, operationId, source.id, EMPTY_LAYOUT);
+    await writeFile(join(duplicate.workspacePath, "note.txt"), "duplicate\n");
+
+    // The crash that stranded this marker happened before the rename, so the file is named after the
+    // duplicate's pre-rename id and spells the key inside it `sourceBotId`; migration v13 has since
+    // renamed the agent. Failing either half makes recovery treat a duplication the user completed as a
+    // half-made one and delete the agent together with its workspace.
+    const legacyId = `bot-${duplicate.id.slice("agent-".length)}`;
+    await writeFile(
+      join(userData, "agent-duplications", `${legacyId}.pending`),
+      `${JSON.stringify({ operationId, sourceBotId: source.id })}\n`,
+    );
+
+    const recovered = new AgentStore(userData, home);
+    await recovered.initialize();
+
+    expect(recovered.list().map((agent) => agent.id)).toEqual(expect.arrayContaining([source.id, duplicate.id]));
+    await expect(readFile(join(duplicate.workspacePath, "note.txt"), "utf8")).resolves.toBe("duplicate\n");
+    await expect(readdir(join(userData, "agent-duplications"))).resolves.toEqual([]);
+  });
+
   it("returns the committed duplicate for the same operation after restart", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-store-duplicate-idempotency-"));
     temporaryRoots.push(root);
@@ -402,6 +435,17 @@ describe("AgentStore", () => {
     const duplicate = await store.duplicateAgent(source.id, operationId);
     const committed = await store.commitAgentDuplication(duplicate.id, operationId, source.id, EMPTY_LAYOUT);
     const currentAgent = await store.updateAgent({ agentId: duplicate.id, title: "Current title" });
+
+    // A receipt a released build stamped spells these two keys `sourceBotId` and `bot`; migration v13
+    // rewrote id values but never key names, so the row survives the upgrade in this shape. Reading only
+    // the current spelling would throw "The agent duplication receipt is invalid." on the first retry of
+    // a duplication that had already committed, instead of handing back the copy the user has.
+    store.database.connection
+      .prepare("UPDATE orchestration_command_receipts SET result_json = ? WHERE command_id = ?")
+      .run(
+        JSON.stringify({ sourceBotId: source.id, result: { bot: committed.agent, layout: committed.layout } }),
+        `agent-duplication:${operationId}`,
+      );
 
     const restored = new AgentStore(userData, home);
     await restored.initialize();
@@ -515,7 +559,7 @@ describe("AgentStore", () => {
     temporaryRoots.push(root);
     const userData = join(root, "user-data");
     const statePath = join(userData, "bots.json");
-    const unsupported = '{"version":999,"examplesInitialized":true,"agents":[]}\n';
+    const unsupported = '{"version":999,"examplesInitialized":true,"bots":[]}\n';
     await mkdir(userData, { recursive: true });
     await writeFile(statePath, unsupported);
 

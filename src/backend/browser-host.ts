@@ -19,7 +19,7 @@ import { createOpenBotLogger, toLogValue } from "@openbot/logging";
 import { app, type BrowserWindow, type Session, session, type WebContents, WebContentsView } from "electron";
 import { embeddedBrowserUserAgent, embeddedBrowserUserAgentForUrl } from "./browser-identity";
 import { isCloseBrowserTabShortcut, isGlobalSearchShortcut, isToggleDevToolsShortcut } from "./browser-shortcuts";
-import { persistentBrowserUrl } from "./browser-state";
+import { isPersistableBrowserUrl, persistentBrowserUrl, storedBrowserTab } from "./browser-state";
 import type { DynamicToolCallParams, DynamicToolResult } from "./protocol";
 import { isRecord } from "./protocol";
 
@@ -958,7 +958,10 @@ async function readBrowserState(path: string): Promise<StoredBrowserState> {
       return { version: 1, activeTabId: null, tabs: [] };
     }
     const tabs = Array.isArray(parsed.tabs)
-      ? parsed.tabs.filter(isStoredBrowserTab).map((tab) => ({ ...tab, url: persistentBrowserUrl(tab.url) }))
+      ? parsed.tabs
+          .map(storedBrowserTab)
+          .filter((tab) => tab !== null)
+          .map((tab) => ({ ...tab, url: persistentBrowserUrl(tab.url) }))
       : [];
     return {
       version: 1,
@@ -973,47 +976,12 @@ async function readBrowserState(path: string): Promise<StoredBrowserState> {
   }
 }
 
-function isStoredBrowserTab(value: unknown): value is StoredBrowserState["tabs"][number] {
-  if (
-    !isRecord(value) ||
-    !isString(value.id) ||
-    !value.id ||
-    value.id.length > INPUT_LIMITS.identifier ||
-    !isString(value.url) ||
-    value.url.length > INPUT_LIMITS.browserUrl
-  ) {
-    return false;
-  }
-  if (
-    value.ownerThreadId !== null &&
-    (!isString(value.ownerThreadId) || value.ownerThreadId.length > INPUT_LIMITS.identifier)
-  ) {
-    return false;
-  }
-  if (
-    value.ownerAgentId !== null &&
-    (!isString(value.ownerAgentId) || value.ownerAgentId.length > INPUT_LIMITS.identifier)
-  ) {
-    return false;
-  }
-  return isPersistableBrowserUrl(value.url);
-}
-
 function isMissingFile(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
 function isAllowedMainUrl(value: string): boolean {
   return value === "about:blank" || isPersistableBrowserUrl(value);
-}
-
-function isPersistableBrowserUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:";
-  } catch {
-    return false;
-  }
 }
 
 function validateBounds(bounds: BrowserBounds): BrowserBounds {

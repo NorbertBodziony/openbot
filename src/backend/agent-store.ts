@@ -93,7 +93,7 @@ export const DEFAULT_REASONING_EFFORT: AgentReasoningEffort = "medium";
 // every existing install, and is what stops the legacy import running a second time. None of the
 // three follows the bot-to-agent rename.
 const LEGACY_AGENTS_STATE_FILE = "bots.json";
-const LEGACY_AGENTS_STATE_KEY = "agents";
+const LEGACY_AGENTS_STATE_KEY = "bots";
 const LEGACY_AGENTS_IMPORT_COMMAND_ID = "legacy-import:bots:v1";
 
 const logger = createOpenBotLogger("agent-store");
@@ -318,11 +318,17 @@ export class AgentStore {
     const value = this.#database.commandResult(duplicationCommandId(operationId));
     if (value === undefined) return null;
     const result = isRecord(value) ? value.result : null;
-    const resultAgent = isRecord(result) ? result.agent : null;
+    // A receipt is a row a *released* build wrote, and that build spelled these two keys `sourceBotId`
+    // and `bot`. Migration v13 rewrote id values everywhere, so the value beside the key already reads
+    // `agent-<uuid>` and matches the caller; only the key name is from before the rename. Reading one
+    // spelling would make a duplication that committed before the upgrade throw on its first retry
+    // instead of returning the copy the user already has.
+    const resultAgent = isRecord(result) ? (result.agent ?? result.bot) : null;
     const resultLayout = isRecord(result) ? result.layout : null;
+    const receiptSourceId = isRecord(value) ? (value.sourceAgentId ?? value.sourceBotId) : null;
     if (
       !isRecord(value) ||
-      value.sourceAgentId !== sourceAgentId ||
+      receiptSourceId !== sourceAgentId ||
       !isRecord(result) ||
       !isStoredAgent(resultAgent) ||
       !isSidebarLayoutSnapshot(resultLayout)
@@ -649,29 +655,46 @@ export class AgentStore {
       if (!entry.isFile() || !entry.name.endsWith(".pending")) continue;
       const id = entry.name.slice(0, -".pending".length);
       if (!isGeneratedAgentId(id)) continue;
-      const agent = this.#state.agents.find((candidate) => candidate.id === id);
+      // A released build named this file after the duplicate it was making, so the name can still be
+      // `bot-<uuid>` while migration v13 has since renamed that agent to `agent-<uuid>`. The exact name
+      // is tried first, because v13 leaves a `bot-` id alone when the `agent-` spelling is taken and
+      // both agents can then exist at once.
+      const agent =
+        this.#state.agents.find((candidate) => candidate.id === id) ??
+        this.#state.agents.find((candidate) => legacyAgentId(candidate.id) === id);
       const marker = await this.#readDuplicationMarker(id);
+      // Everything below addresses the agent by the id it has *now*, which the marker name only equals
+      // when the same build wrote both. Using the file name would filter nothing out of the roster and
+      // hard-delete an id no row carries, leaving the half-made duplicate visible in the sidebar.
+      const agentId = agent?.id ?? id;
       if (agent && marker) {
         const committed = this.committedAgentDuplication(marker.operationId, marker.sourceAgentId);
-        if (committed?.agent.id === id) {
+        if (committed?.agent.id === agentId) {
           await rm(join(this.#duplicationsRoot, entry.name), { force: true });
           continue;
         }
       }
       if (agent) {
-        this.#state.agents = this.#state.agents.filter((candidate) => candidate.id !== id);
+        this.#state.agents = this.#state.agents.filter((candidate) => candidate.id !== agentId);
         this.#database.hardDeleteAgent(
           `agents:duplicate-recovery:${randomUUID()}`,
-          id,
+          agentId,
           agent.threadId,
           this.#state.agents,
         );
       }
+      // The copy this marker was tracking was made by whichever build crashed, so it can be sitting
+      // under either root, under either spelling of the id. Removing only the current one reports a
+      // clean recovery and leaves the half-written workspace on disk forever.
+      const names = agentId === id ? [id] : [id, agentId];
+      const roots = [this.#agentsRoot, this.#legacyAgentsRoot, this.#avatarsRoot];
       await Promise.all([
-        rm(join(this.#agentsRoot, id), { recursive: true, force: true }),
-        rm(`${join(this.#agentsRoot, id)}.openbot-stage`, { recursive: true, force: true }),
-        rm(join(this.#avatarsRoot, id), { recursive: true, force: true }),
-        rm(`${join(this.#avatarsRoot, id)}.openbot-stage`, { recursive: true, force: true }),
+        ...roots.flatMap((root) =>
+          names.flatMap((name) => [
+            rm(join(root, name), { recursive: true, force: true }),
+            rm(`${join(root, name)}.openbot-stage`, { recursive: true, force: true }),
+          ]),
+        ),
         rm(join(this.#duplicationsRoot, entry.name), { force: true }),
       ]);
     }
@@ -684,16 +707,21 @@ export class AgentStore {
   async #readDuplicationMarker(id: string): Promise<AgentDuplicationMarker | null> {
     try {
       const value = JSON.parse(await readFile(this.#duplicationMarkerPath(id), "utf8"));
+      // A marker on disk was written by whichever build crashed, and a released one spells this
+      // `sourceBotId`. Failing to read it drops the file on the floor: recovery cannot then tell a
+      // duplication that finished from one that died mid-copy, so it deletes the agent the user kept
+      // along with its workspace.
+      const sourceAgentId = isRecord(value) ? (value.sourceAgentId ?? value.sourceBotId) : null;
       if (
         !isRecord(value) ||
         !isString(value.operationId) ||
         !isUuidV4(value.operationId) ||
-        !isString(value.sourceAgentId) ||
-        !value.sourceAgentId
+        !isString(sourceAgentId) ||
+        !sourceAgentId
       ) {
         return null;
       }
-      return { operationId: value.operationId, sourceAgentId: value.sourceAgentId };
+      return { operationId: value.operationId, sourceAgentId };
     } catch {
       return null;
     }
