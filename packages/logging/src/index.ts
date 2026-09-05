@@ -104,10 +104,10 @@ function redactSerializedJson(value: string): string | null {
   }
 }
 
-// `typeof` below narrows caller-provided unions, not already-known domain
-// types, so the no-runtime-typeof warning does not apply. Conversion is
-// cycle-safe: a revisited object becomes "[circular]" instead of overflowing,
-// so logging a rejection value can never hide the failure it reports.
+// The `typeof` checks below narrow caller-provided unions rather than
+// already-known domain types. Conversion is cycle-safe: a revisited object
+// becomes "[circular]" instead of overflowing, so logging a rejection value can
+// never hide the failure it reports.
 export function redactValue(value: LogValue): LogValue {
   return convertSafely(value);
 }

@@ -4,9 +4,9 @@ This is an Expo/React Native mobile application. Prioritize mobile-first pattern
 
 - Never run any build, packaging, signing, submission, or deployment command for the mobile app unless the user gives explicit permission for that specific command.
 - Never start an iOS simulator, Android emulator, device run, or native development client unless the user gives explicit permission for that specific run.
-- Do not run wide or full-repository checks by default. The allowed default checks are lint, Biome, and TypeScript checks limited to files changed by the task.
-- Before creating or executing a PR, wider checks are required. If they have not been run, stop before the PR and request explicit permission for each concrete wider check that must be run.
-- Permission for a wider check authorizes only the one named check or command. It does not authorize other wider checks, builds, simulator/emulator runs, or subsequent commands.
+- `bun run lint` and `bun run typecheck` are the default checks here and need no permission. Each covers the whole app in seconds, so narrowing them to changed files buys nothing and hides a break in one of the packages the app imports.
+- Run both before you call a task done and before a PR. Anything slower than them is a build, a bundle, or a native run, and the two bullets above already govern those.
+- Permission for one command authorizes only that command. It does not authorize another build, another simulator/emulator run, or any subsequent command.
 - If a requested workflow would require a prohibited command, explain the limitation and wait for explicit permission rather than substituting a broader command or running it implicitly.
 
 ## Design system and native chrome
@@ -43,9 +43,7 @@ bun run doctor               # diagnose dependency and config issues
 bunx expo install --fix      # fix incompatible package versions
 ```
 
-The `lint` and `typecheck` examples are permitted only when scoped to files changed by the task; do not run a repository-wide script as-is when it checks unrelated files.
-
-Before declaring any task done, run only targeted lint, Biome, and TypeScript checks covering the files changed by the task.
+Both are scoped to this app: `lint` is `biome check src` and `typecheck` runs `codegen` before `tsc`. See "Execution and verification limits" above for when to run them, and `AGENTS.md` "CI owns the minutes-long suites" for the repository-wide commands worth avoiding and why.
 
 ## Navigation & Routing
 

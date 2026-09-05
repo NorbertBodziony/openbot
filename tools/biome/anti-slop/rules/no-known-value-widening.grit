@@ -2,12 +2,13 @@ language js(typescript)
 
 // scope: global
 
+// Owns `unknown` and `object` in a const annotation, and nothing else. `any` is
+// already an error under `noExplicitAny`, and a `Record<…, unknown>` annotation
+// is already an error under `no-unsafe-dictionary-type` wherever it appears, so
+// listing either here only reports the same line twice.
 or {
   `const $name: unknown = $value`,
-  `const $name: any = $value`,
-  `const $name: object = $value`,
-  `const $name: Record<$key, unknown> = $value`,
-  `const $name: Record<$key, any> = $value`
+  `const $name: object = $value`
 } as $binding where {
   register_diagnostic(
     span=$binding,
