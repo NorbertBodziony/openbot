@@ -15,12 +15,10 @@ export class TestResizeObserver implements ResizeObserver {
    */
   static readonly instances = new Set<TestResizeObserver>();
 
-  readonly #callback: ResizeObserverCallback;
   readonly #elements = new Set<Element>();
 
-  constructor(callback: ResizeObserverCallback) {
-    this.#callback = callback;
-  }
+  // No constructor: the callback is discarded, because no test drives a resize.
+  // They only assert on `instances`.
 
   disconnect(): void {
     this.#elements.clear();
@@ -36,15 +34,6 @@ export class TestResizeObserver implements ResizeObserver {
     this.#elements.delete(element);
     if (this.#elements.size === 0) TestResizeObserver.instances.delete(this);
   }
-
-  trigger(element: Element): void {
-    if (!this.#elements.has(element)) return;
-    this.#callback([], this);
-  }
-}
-
-export function triggerResize(element: Element): void {
-  for (const observer of TestResizeObserver.instances) observer.trigger(element);
 }
 
 globalThis.ResizeObserver = TestResizeObserver;

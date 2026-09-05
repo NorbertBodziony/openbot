@@ -73,13 +73,6 @@ function QuestionnaireRoot(props: QuestionnaireRootProps): JSX.Element {
   );
 }
 
-export interface QuestionnaireProgressState {
-  current: number;
-  first: boolean;
-  last: boolean;
-  total: number;
-}
-
 export interface QuestionnaireProgressProps extends Omit<ComponentProps<"div">, "children"> {
   children?: JSX.Element;
 }
