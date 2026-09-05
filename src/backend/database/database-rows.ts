@@ -1,6 +1,6 @@
 import type { ConversationMessage } from "@openbot/contracts/ipc";
-import { isConversationMessage } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
+import { currentConversationMessage } from "./legacy-conversation-message";
 
 /**
  * Decoding for raw `node:sqlite` results, shared by every database controller.
@@ -71,9 +71,9 @@ export function decodeThreadAgentRow(value: unknown): { agent_id: string } | nul
 }
 
 export function decodeConversationMessageJson(value: string): ConversationMessage {
-  const parsed = JSON.parse(value);
-  if (!isConversationMessage(parsed)) throw new Error("Invalid conversation message.");
-  return parsed;
+  const message = currentConversationMessage(JSON.parse(value));
+  if (!message) throw new Error("Invalid conversation message.");
+  return message;
 }
 
 export function errorCode(value: unknown): string | null {

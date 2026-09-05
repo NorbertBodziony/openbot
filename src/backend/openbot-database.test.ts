@@ -1202,6 +1202,23 @@ describe("OpenBotDatabase", () => {
       { agent_id: agentId, text: `remember ${legacyId} deploys` },
     ]);
     expect(migrated.connection.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    // v13 moves the id values and leaves the key names, because rewriting a key by text substitution would
+    // also edit a message quoting it. So the released spellings arrive at the reader, and the reader has to
+    // answer with the message rather than with "Invalid conversation message." -- which is the whole page,
+    // not one message, for anyone whose agents ever wrote to each other.
+    const page = migrated.readConversationPage(agentId, `openbot-thread-${agentId}`);
+    expect(page.messages).toEqual([
+      expect.objectContaining({
+        id: "message-1",
+        senderAgentId: agentId,
+        exchange: expect.objectContaining({
+          senderAgentId: agentId,
+          recipientAgentIds: ["helper"],
+          deliveries: [expect.objectContaining({ recipientAgentId: "helper" })],
+        }),
+        reactions: [{ emoji: "\u{1F44D}", actor: { kind: "agent", agentId } }],
+      }),
+    ]);
     migrated.close();
   });
 
@@ -1485,11 +1502,25 @@ function seedLegacyAgent(database: DatabaseSync, legacyId: string, workspacePath
   const rosterJson = JSON.stringify({
     agents: [{ id: legacyId, name: "Chief", threadId, workspacePath, avatarSeed: legacyId }],
   });
+  // The shape a released build persisted: the exchange between two agents and the reaction one of them
+  // left spell the product agent `bot` in their keys and in the actor discriminant. v13 rewrites the id
+  // values inside them and leaves the keys, so this is what a page read meets after the upgrade.
   const messageJson = JSON.stringify({
     id: "message-1",
     author: "agent",
+    status: "completed",
     text: `Wrote ${workspacePath}/index.html`,
     createdAt: "2026-09-01T12:00:00.000Z",
+    senderBotId: legacyId,
+    exchange: {
+      direction: "incoming",
+      messageId: "exchange-1",
+      senderBotId: legacyId,
+      recipientBotIds: ["helper"],
+      replyToMessageId: null,
+      deliveries: [{ id: "delivery-1", recipientBotId: "helper", status: "completed", position: null, error: null }],
+    },
+    reactions: [{ emoji: "\u{1F44D}", actor: { kind: "bot", botId: legacyId } }],
   });
   const pendingJson = JSON.stringify({
     agentId: legacyId,

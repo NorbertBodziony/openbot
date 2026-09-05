@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { ConversationMessage, ConversationSnapshot } from "@openbot/contracts/ipc";
-import { isAgentProvider, isConversationMessage } from "@openbot/contracts/ipc";
+import { isAgentProvider } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import type { ConversationQueries } from "./conversation-queries";
 import type { DatabaseCore } from "./database-core";
 import { databaseRows, decodeThreadAgentRow, objectValue, requiredEventRow } from "./database-rows";
+import { currentConversationMessage } from "./legacy-conversation-message";
 import type { ProviderSession } from "./provider-sessions";
 import type { StoredThreadSummary } from "./thread-summaries";
 
@@ -82,7 +83,7 @@ export class ThreadReplay {
         if (summary) summaries.push({ ...summary, sequence: event.sequence });
       }
       const snapshot = conversationSnapshotValue(objectValue(record?.snapshot));
-      const appendedMessage = record?.appendedMessage;
+      const appendedMessage = currentConversationMessage(record?.appendedMessage);
       const appendedActiveTurnId = record?.activeTurnId;
       if (snapshot) {
         latest = snapshot;
@@ -94,7 +95,7 @@ export class ThreadReplay {
           const activeSession = [...sessions.values()].find((session) => session.state === "active");
           turnSessions.set(snapshot.activeTurnId, activeSession?.id ?? null);
         }
-      } else if (latest && isConversationMessage(appendedMessage)) {
+      } else if (latest && appendedMessage) {
         if (!latest.messages.some((message) => message.id === appendedMessage.id)) {
           latest.messages.push(structuredClone(appendedMessage));
         }
@@ -230,7 +231,7 @@ export class ThreadReplay {
         const eventRecord = objectValue(eventPayload);
         const activityPayload =
           conversationSnapshotValue(objectValue(eventRecord?.snapshot)) ||
-          isConversationMessage(eventRecord?.appendedMessage)
+          currentConversationMessage(eventRecord?.appendedMessage)
             ? (eventRecord?.detail ?? {})
             : eventPayload;
         activityInsert.run(
@@ -325,7 +326,7 @@ function conversationSnapshotValue(value: DynamicRecord | null): ConversationSna
   ) {
     return null;
   }
-  const messages = value.messages.filter(isConversationMessage);
+  const messages = value.messages.map(currentConversationMessage).filter((message) => message !== null);
   if (messages.length !== value.messages.length) return null;
   return {
     agentId,
