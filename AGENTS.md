@@ -196,6 +196,11 @@ line with `// flag` beside correct code it must leave alone; `scripts/anti-slop-
 both halves. A pattern that matches nothing is green and enforces nothing — that is how one rule
 stayed blind to `querySelector<HTMLElement>` for months. A new rule without a fixture is not a rule.
 
+`bun run check:ui` is held to the same contract by `tools/ui-foundation/fixtures/renderer` and
+`scripts/ui-foundation-check.test.ts`: a miniature renderer that breaks every check once, beside the
+correct neighbour each must leave alone. Two of its checks had gone blind before it existed. Adding a
+check there means adding both halves to that tree.
+
 ## Pull requests
 
 - **Never open a PR unless you were asked to.**
