@@ -1,7 +1,7 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { isString } from "@openbot/contracts/runtime-values";
+import { legacyAgentId } from "@openbot/contracts/validation";
 import { isRecord } from "./protocol";
-import { legacyAgentId } from "./workspace-paths";
 
 export interface StoredBrowserTab {
   id: string;

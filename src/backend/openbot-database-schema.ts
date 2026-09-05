@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { type DynamicRecord, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
+import { isGeneratedAgentId } from "@openbot/contracts/validation";
 import { createOpenBotLogger, toLogValue } from "@openbot/logging";
-import { isGeneratedAgentId } from "./workspace-paths";
 
 const BASELINE_SCHEMA_VERSION = 8;
 
@@ -732,6 +732,13 @@ function readAgentIdRenames(db: DatabaseSync): readonly AgentIdRename[] {
     // replacing the row -- so an agent nobody touched would quietly disappear on upgrade. An id whose target
     // is taken is left alone instead: a stale spelling is legible, a deleted agent is not recoverable.
     if (taken.has(newId)) continue;
+    // The rename is carried out as a text substitution, so it reaches this id wherever it appears -- and an
+    // id the caller chose can *contain* a generated one. `getOrCreate` takes any string, so `bot-<uuid>-copy`
+    // is a legal id sitting beside `bot-<uuid>`, and rewriting the token inside it renames a second agent
+    // nobody asked about. Should `agent-<uuid>-copy` already exist, the row-level `OR REPLACE` below
+    // resolves that collision by deleting it, and two agents become one. A stale spelling is legible; an
+    // agent that vanished on upgrade is not recoverable, so an id that is a piece of another id is skipped.
+    if (containedInAnotherId(row.agent_id, taken)) continue;
     renames.push({
       oldId: row.agent_id,
       newId,
@@ -739,6 +746,13 @@ function readAgentIdRenames(db: DatabaseSync): readonly AgentIdRename[] {
     });
   }
   return renames;
+}
+
+function containedInAnotherId(agentId: string, taken: ReadonlySet<string>): boolean {
+  for (const candidate of taken) {
+    if (candidate !== agentId && candidate.includes(agentId)) return true;
+  }
+  return false;
 }
 
 // The workspace root moves from `OpenBot/Bots` to `OpenBot/Agents`; the id in the leaf is rewritten by the

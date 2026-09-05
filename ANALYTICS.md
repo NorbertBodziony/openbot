@@ -18,11 +18,13 @@ Every event has these low-cardinality properties:
 
 - `surface`: `desktop`, `desktop_host`, or `landing`;
 - `environment`: currently `production` only;
-- `event_schema_version`: the integer schema generation, currently `4`;
+- `event_schema_version`: the integer schema generation, currently `5`;
 - `app_version` and `platform` on desktop surfaces;
 - `acquisition_source` on landing surfaces: `direct`, `search`, `social`, `github`, or `other`.
 
-Reports must filter to `event_schema_version = 4`. Historical events remain available but must not
+Reports must filter to `event_schema_version = 5`. Generation 5 renames the product agent throughout: the
+`origin` property reports `agent` where generation 4 reported `bot`, so the two generations cannot be
+combined in one report. Historical events remain available but must not
 be mixed into current conversion or reliability metrics.
 
 ## Identity
@@ -109,7 +111,7 @@ automatic interaction capture remain disabled.
    segment only by coarse acquisition source, placement, and platform.
 5. Reliability: failed outcomes, safe failure codes, P90/P99 durations, and update/provider health.
 
-Every dashboard must filter by the intended `surface` and `event_schema_version = 4`. Website bounce
+Every dashboard must filter by the intended `surface` and `event_schema_version = 5`. Website bounce
 uses OpenPanel's standard single-`screen_view` definition. Do not emit synthetic screen views to
 change it; use the engaged-session report for meaningful landing activity.
 

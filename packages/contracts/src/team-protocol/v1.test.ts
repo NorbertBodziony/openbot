@@ -66,6 +66,39 @@ describe("Team protocol v1", () => {
     expect(queueUpdate.text).toBe("Follow up with @Research.");
   });
 
+  it("keeps a dynamic map's keys out of the vocabulary translation", () => {
+    // `responses` is answers by question id, and a question id is any nonempty string its author chose.
+    // Renaming that key would leave the answer filed under `botId` while the question it belongs to still
+    // says `agentId`, and the client could no longer pair them.
+    const conversation = JSON.parse(
+      encodeTeamProtocolV1CurrentHttpResponse("GET", "/v1/agents/agent-1/conversation", 200, {
+        agentId: "agent-1",
+        threadId: "thread-1",
+        activeTurnId: null,
+        revision: 1,
+        readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+        messages: [
+          {
+            id: "message-1",
+            text: "Which one?",
+            createdAt: "2026-08-30T12:00:00.000Z",
+            author: "agent",
+            status: "completed",
+            questionPrompt: {
+              requestId: "request-1",
+              questions: [{ id: "agentId", header: "Agent", question: "Which agent?", isSecret: false, options: null }],
+              resolution: { status: "answered", responses: { agentId: { status: "answered", answers: ["chief"] } } },
+            },
+          },
+        ],
+      }),
+    );
+
+    expect(conversation.botId).toBe("agent-1");
+    expect(conversation.messages[0].questionPrompt.questions[0].id).toBe("agentId");
+    expect(Object.keys(conversation.messages[0].questionPrompt.resolution.responses)).toEqual(["agentId"]);
+  });
+
   it("decodes bounded compatibility metadata and finds the highest common version", () => {
     const support = decodeTeamProtocolSupportV1({
       appVersion: "0.4.0",

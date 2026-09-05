@@ -11,8 +11,7 @@ import {
   type SidebarSection,
 } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
-import { isUuidV4 } from "@openbot/contracts/validation";
-import { legacyAgentId } from "./workspace-paths";
+import { isUuidV4, legacyAgentId } from "@openbot/contracts/validation";
 
 interface StoredSidebarLayout extends SidebarLayoutSnapshot {
   version: 2;

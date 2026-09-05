@@ -37,11 +37,10 @@ import {
   type UpdateAgentInput,
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isNumber, isOneOf, isString } from "@openbot/contracts/runtime-values";
-import { isUuidV4 } from "@openbot/contracts/validation";
+import { isGeneratedAgentId, isUuidV4, legacyAgentId } from "@openbot/contracts/validation";
 import { createOpenBotLogger, toLogValue } from "@openbot/logging";
 import { OpenBotDatabase, type ProviderSession, stableThreadId } from "./openbot-database";
 import { isRecord } from "./protocol";
-import { isGeneratedAgentId, legacyAgentId } from "./workspace-paths";
 
 type StoredAgent = AgentSummary;
 type PersistedStoredAgent = Omit<StoredAgent, "avatarUrl" | "provider"> & {

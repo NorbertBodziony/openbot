@@ -18,7 +18,7 @@ const MAX_PENDING_EVENTS = 100;
 const MAX_ACTIVE_TURNS = 1_000;
 const MAX_HOSTED_SITE_OPERATIONS = 10_000;
 const ACTIVE_TURN_TTL_MS = 24 * 60 * 60 * 1_000;
-const ANALYTICS_SCHEMA_VERSION = 4;
+const ANALYTICS_SCHEMA_VERSION = 5;
 
 type AnalyticsIdentity = Pick<CentralAuthUser, "id" | "email">;
 type AnalyticsOperationKind = "clear" | "identify" | "track";

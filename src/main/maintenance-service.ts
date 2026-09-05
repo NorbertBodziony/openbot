@@ -43,7 +43,10 @@ export async function exportOpenBotData(
       context.mailbox.listExportAttachments(),
     ]);
     const manifest = {
-      schemaVersion: 3,
+      // 4, not 3: a schema 3 archive a released build wrote spells the roster `bots`, and this one spells
+      // it `agents`. Anything reading the manifest picks its parser by this number, so leaving it at 3
+      // hands a reader the wrong shape under a version that promised the old one.
+      schemaVersion: 4,
       exportedAt: new Date().toISOString(),
       application: { name: "OpenBot", version: app.getVersion() },
       scope: {
@@ -111,7 +114,8 @@ export async function exportDiagnostics(
   });
   const update = context.updater.getStatus();
   const diagnostics = {
-    schemaVersion: 2,
+    // 3, not 2: schema 2 reported `botCount` and `botId`, and this report says `agentCount` and `agentId`.
+    schemaVersion: 3,
     generatedAt: new Date().toISOString(),
     application: {
       version: app.getVersion(),

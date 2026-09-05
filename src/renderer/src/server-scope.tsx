@@ -57,7 +57,7 @@ const ServerScope = createSimpleContext({
       loadControlState: loadBrowserControlState,
       beginBrowserLoad,
     } = useBrowserTabs();
-    const { setSidebarLayout, loadLayout: loadSidebarLayout } = useSidebar();
+    const { setSidebarLayout, loadLayout: loadSidebarLayout, reconcileActiveServerPins } = useSidebar();
     const { globalSearchOpen, setGlobalSearchVisibility, selectAgent } = useNavigation();
     const {
       conversationReads,
@@ -128,7 +128,10 @@ const ServerScope = createSimpleContext({
             .catch(() => undefined),
           window.openbot.agent
             .listAgents()
-            .then(applyStoredAgents)
+            .then((storedAgents) => {
+              applyStoredAgents(storedAgents);
+              reconcileActiveServerPins(storedAgents.map((agent) => agent.id));
+            })
             .catch((error) => {
               setAgentStatus((current) => ({ ...current, message: String(error) }));
             }),

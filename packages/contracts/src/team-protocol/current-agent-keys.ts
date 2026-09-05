@@ -61,8 +61,23 @@ const CURRENT_TO_WIRE_MARKETPLACE_KEYS: Readonly<Record<string, string>> = Objec
  */
 const OPAQUE_KEYS: ReadonlySet<string> = new Set(["layout"]);
 
-function isSidebarLayoutPath(path: string): boolean {
-  return new URL(path, "http://openbot.invalid").pathname.startsWith("/v1/sidebar-layout");
+/**
+ * Objects whose keys are data, not vocabulary: `responses` is answers by question id, and `references` is
+ * messages by message id. A question id is any nonempty string the caller chose, so one spelled `agentId`
+ * would be renamed to `botId` on the wire while the `id` on the question itself stayed as written -- and
+ * the client could no longer tell which answer belonged to which question. The values inside are still
+ * translated; only the keys are left as found.
+ */
+const DYNAMIC_MAP_KEYS: ReadonlySet<string> = new Set(["responses", "references"]);
+
+/**
+ * Routes whose *body* is a dynamic map. Sidebar layout already spells the product agent `agent` on both
+ * sides, and the conversation-reads response is read state keyed by agent id -- neither has a key this
+ * translation should touch, and both would be corrupted by one.
+ */
+function isUntranslatedPath(path: string): boolean {
+  const { pathname } = new URL(path, "http://openbot.invalid");
+  return pathname.startsWith("/v1/sidebar-layout") || pathname === "/v1/agents/conversation-reads";
 }
 
 type Direction = "toWire" | "toCurrent";
@@ -87,8 +102,10 @@ function walkObject(value: TeamProtocolV1JsonObject, direction: Direction, key: 
         ? CURRENT_TO_WIRE_KEYS
         : WIRE_TO_CURRENT_KEYS;
   const result: TeamProtocolV1JsonObject = {};
+  const dynamic = DYNAMIC_MAP_KEYS.has(key);
   for (const [entryKey, entryValue] of Object.entries(value)) {
-    result[keys[entryKey] ?? entryKey] = OPAQUE_KEYS.has(entryKey) ? entryValue : walk(entryValue, direction, entryKey);
+    const resultKey = dynamic ? entryKey : (keys[entryKey] ?? entryKey);
+    result[resultKey] = OPAQUE_KEYS.has(entryKey) ? entryValue : walk(entryValue, direction, entryKey);
   }
   return result;
 }
@@ -103,14 +120,14 @@ export function toCurrentAgentKeys(value: TeamProtocolV1JsonValue): TeamProtocol
   return walk(value, "toCurrent", "");
 }
 
-/** As {@link toWireAgentKeys}, but leaves the already-agent-named sidebar layout routes alone. */
+/** As {@link toWireAgentKeys}, but leaves the routes named in {@link isUntranslatedPath} alone. */
 export function toWireAgentKeysForPath(path: string, value: TeamProtocolV1JsonValue): TeamProtocolV1JsonValue {
-  return isSidebarLayoutPath(path) ? value : toWireAgentKeys(value);
+  return isUntranslatedPath(path) ? value : toWireAgentKeys(value);
 }
 
-/** As {@link toCurrentAgentKeys}, but leaves the already-agent-named sidebar layout routes alone. */
+/** As {@link toCurrentAgentKeys}, but leaves the routes named in {@link isUntranslatedPath} alone. */
 export function toCurrentAgentKeysForPath(path: string, value: TeamProtocolV1JsonValue): TeamProtocolV1JsonValue {
-  return isSidebarLayoutPath(path) ? value : toCurrentAgentKeys(value);
+  return isUntranslatedPath(path) ? value : toCurrentAgentKeys(value);
 }
 
 /** As {@link toCurrentAgentKeysForPath}, for the object-shaped results the HTTP adapters return. */
@@ -118,10 +135,10 @@ export function toCurrentAgentKeysObjectForPath(
   path: string,
   value: TeamProtocolV1JsonObject,
 ): TeamProtocolV1JsonObject {
-  return isSidebarLayoutPath(path) ? value : walkObject(value, "toCurrent", "");
+  return isUntranslatedPath(path) ? value : walkObject(value, "toCurrent", "");
 }
 
 /** As {@link toWireAgentKeys}, for the object-shaped payloads the HTTP adapters hand to the codecs. */
 export function toWireAgentKeysObjectForPath(path: string, value: TeamProtocolV1JsonObject): TeamProtocolV1JsonObject {
-  return isSidebarLayoutPath(path) ? value : walkObject(value, "toWire", "");
+  return isUntranslatedPath(path) ? value : walkObject(value, "toWire", "");
 }

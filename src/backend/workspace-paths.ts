@@ -1,5 +1,5 @@
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
-import { isUuidV4 } from "@openbot/contracts/validation";
+import { legacyAgentId } from "@openbot/contracts/validation";
 
 export function sharedPathFromInput(sharedRoot: string, inputPath: string): string {
   const normalized = inputPath.replaceAll("\\", "/");
@@ -30,27 +30,6 @@ export function workspacePathFromInput(workspaceRoot: string, agentId: string, i
     if (normalized.startsWith(prefix)) return join(workspaceRoot, normalized.slice(prefix.length));
   }
   return isAbsolute(decoded) ? decoded : join(workspaceRoot, normalized);
-}
-
-/**
- * The directory name a pre-rename build gave this agent, or the id unchanged when no pre-rename build could
- * have minted it.
- *
- * The UUID suffix is what makes this reversible, and it is the whole safety argument. Only the app mints
- * `agent-<uuid>`, so only such an id is guaranteed to have been `bot-<uuid>` before migration v13. An id a
- * user or an imported `bots.json` chose is an ordinary word: `agent-research` translated to `bot-research`
- * names a directory that may well belong to a *different* agent, and callers here delete directories
- * recursively.
- */
-export function legacyAgentId(agentId: string): string {
-  if (!agentId.startsWith("agent-") || !isGeneratedAgentId(agentId)) return agentId;
-  return `bot-${agentId.slice("agent-".length)}`;
-}
-
-/** Whether this id is one the app minted for itself, in either the pre- or post-rename spelling. */
-export function isGeneratedAgentId(agentId: string): boolean {
-  const prefix = agentId.startsWith("agent-") ? "agent-" : agentId.startsWith("bot-") ? "bot-" : null;
-  return prefix !== null && isUuidV4(agentId.slice(prefix.length));
 }
 
 /**

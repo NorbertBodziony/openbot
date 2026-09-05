@@ -3,6 +3,7 @@ import {
   MAX_SIDEBAR_PINNED_ITEMS,
   normalizeSidebarPinnedItems,
   readSidebarPins,
+  reownSidebarPinnedItems,
   SIDEBAR_PINS_STORAGE_KEY,
   writeSidebarPins,
 } from "./sidebar-pins";
@@ -16,6 +17,27 @@ describe("sidebar pins", () => {
         { kind: "agent", id: "chief" },
       ]),
     ).toEqual([{ kind: "agent", id: "chief" }]);
+  });
+
+  it("repins an agent migration v13 renamed instead of stranding it", () => {
+    const uuid = "6d3e8b17-9c04-4f21-8a55-1b2c3d4e5f60";
+    const items = [
+      { kind: "agent" as const, id: `bot-${uuid}` },
+      { kind: "agent" as const, id: "chief" },
+    ];
+
+    // These pins live in browser storage, which the id migration never touched, so a pinned agent looks
+    // deleted after the upgrade: it disappears from the pinned group while still holding one of six slots.
+    expect(reownSidebarPinnedItems(items, new Set([`agent-${uuid}`, "chief"]))).toEqual([
+      { kind: "agent", id: `agent-${uuid}` },
+      { kind: "agent", id: "chief" },
+    ]);
+
+    // v13 declines to rename onto an id that is taken, so the agent that literally holds the old spelling
+    // keeps this pin; and a pin matching nobody is left alone, because an agent can be absent for reasons
+    // that have nothing to do with the rename.
+    expect(reownSidebarPinnedItems(items, new Set([`agent-${uuid}`, `bot-${uuid}`]))).toEqual(items);
+    expect(reownSidebarPinnedItems(items, new Set(["chief"]))).toEqual(items);
   });
 
   it("keeps at most six items", () => {

@@ -12,6 +12,7 @@ import {
   MAX_SIDEBAR_PINNED_ITEMS,
   normalizeSidebarPinnedItems,
   readSidebarPins,
+  reownSidebarPinnedItems,
   type SidebarPinnedItem,
   type SidebarPinsByServer,
   sidebarPinnedItemKey,
@@ -101,6 +102,24 @@ const Sidebar = createSimpleContext({
       });
     }
 
+    /**
+     * Brings this server's pins up to date with the roster it just sent. Nothing else rewrites them: the
+     * pins are in browser storage, and the id migration ran inside the host's database.
+     */
+    function reconcileActiveServerPins(agentIds: readonly string[]): void {
+      const roster = new Set(agentIds);
+      const serverId = activeServerId();
+      setSidebarPinsByServer((current) => {
+        const items = current[serverId];
+        if (!items) return current;
+        const reowned = reownSidebarPinnedItems(items, roster);
+        if (reowned.every((item, index) => item.id === items[index]?.id)) return current;
+        const next = { ...current, [serverId]: reowned };
+        writeSidebarPins(next);
+        return next;
+      });
+    }
+
     function pinSidebarItem(item: SidebarPinnedItem): void {
       updateActiveServerPins((items) =>
         items.length >= MAX_SIDEBAR_PINNED_ITEMS ||
@@ -153,6 +172,7 @@ const Sidebar = createSimpleContext({
       collapsedSidebarSectionIds,
       toggleSidebarSection,
       pinnedSidebarItems,
+      reconcileActiveServerPins,
       pinSidebarItem,
       unpinSidebarItem,
       reorderPinnedSidebarItems,

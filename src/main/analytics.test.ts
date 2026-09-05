@@ -81,7 +81,7 @@ describe("host analytics", () => {
     );
 
     expect(client.setGlobalProperties).toHaveBeenCalledWith(
-      expect.objectContaining({ event_schema_version: 4, surface: "desktop_host" }),
+      expect.objectContaining({ event_schema_version: 5, surface: "desktop_host" }),
     );
 
     analytics.handleAgentEvent({

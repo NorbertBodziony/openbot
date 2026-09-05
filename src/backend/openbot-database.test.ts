@@ -1262,14 +1262,24 @@ describe("OpenBotDatabase", () => {
     seedLegacyAgent(legacy, "agent-research", "/Users/dev/OpenBot/Agents/agent-research");
     seedLegacyAgent(legacy, "bot-8c41d0f2-6b5a-4e93-8d17-2a0b3c4d5e6f", "/Users/dev/OpenBot/Agents/pair-legacy");
     seedLegacyAgent(legacy, "agent-8c41d0f2-6b5a-4e93-8d17-2a0b3c4d5e6f", "/Users/dev/OpenBot/Agents/pair");
+    // And the rename travels as a text substitution, so an id that *contains* a generated one is caught by
+    // it: rewriting `bot-<uuid>` inside `bot-<uuid>-copy` renames a second agent nobody asked about, onto
+    // an id its neighbour already holds -- which the row-level conflict resolution settles by deleting one
+    // of them. Three agents in, three agents out.
+    seedLegacyAgent(legacy, "bot-1f0a2b3c-4d5e-4f60-8a91-b2c3d4e5f607", "/Users/dev/OpenBot/Agents/prefix");
+    seedLegacyAgent(legacy, "bot-1f0a2b3c-4d5e-4f60-8a91-b2c3d4e5f607-copy", "/Users/dev/OpenBot/Agents/copy");
+    seedLegacyAgent(legacy, "agent-1f0a2b3c-4d5e-4f60-8a91-b2c3d4e5f607-copy", "/Users/dev/OpenBot/Agents/twin");
     legacy.close();
 
     const migrated = new OpenBotDatabase(root);
     await migrated.initialize();
 
     expect(migrated.connection.prepare("SELECT agent_id FROM projection_agents ORDER BY agent_id").all()).toEqual([
+      { agent_id: "agent-1f0a2b3c-4d5e-4f60-8a91-b2c3d4e5f607-copy" },
       { agent_id: "agent-8c41d0f2-6b5a-4e93-8d17-2a0b3c4d5e6f" },
       { agent_id: "agent-research" },
+      { agent_id: "bot-1f0a2b3c-4d5e-4f60-8a91-b2c3d4e5f607" },
+      { agent_id: "bot-1f0a2b3c-4d5e-4f60-8a91-b2c3d4e5f607-copy" },
       { agent_id: "bot-8c41d0f2-6b5a-4e93-8d17-2a0b3c4d5e6f" },
       { agent_id: "bot-research" },
     ]);
