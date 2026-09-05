@@ -576,21 +576,38 @@ export class AgentStore {
     return this.#state.agents.some((candidate) => candidate.id === legacyId) ? null : legacyId;
   }
 
-  /** Answers whether the agent's stored workspace path had to change, which is what has to be persisted. */
+  /**
+   * Answers whether the agent's stored workspace path had to change, which is what has to be persisted.
+   *
+   * The destination is derived from the root and the id, never read from the stored path. An agent the
+   * user named themselves came out of the upgrade still recorded under `OpenBot/Bots/<id>`, because
+   * migration v13 rewrites id values and that id did not change -- so trusting the stored path would find
+   * the workspace already "at" its destination and leave it in the old root forever.
+   */
   async #reconcileWorkspaceDirectory(agent: StoredAgent): Promise<boolean> {
     const legacyId = this.#unclaimedLegacyId(agent.id);
     if (legacyId === null) return false;
+    const targetPath = join(this.#agentsRoot, agent.id);
     const legacyPath = join(this.#legacyAgentsRoot, legacyId);
-    if (legacyPath === agent.workspacePath) return false;
+    if (legacyPath === targetPath) return false;
     // A probe that cannot answer is not permission to guess. `EACCES` on either directory, or a Windows
     // lock, leaves this run unable to tell a moved workspace from a missing one -- so it does nothing and
     // the next launch tries again, rather than moving a directory on a false negative.
-    const current = await probeDirectory(agent.workspacePath);
+    const current = await probeDirectory(targetPath);
     const legacy = await probeDirectory(legacyPath);
-    if (current !== false || legacy !== true) return false;
-    try {
-      await rename(legacyPath, agent.workspacePath);
+    if (current !== false || legacy !== true) {
+      // A previous run moved the files but was interrupted before it could persist where they went.
+      if (current === true && agent.workspacePath !== targetPath) {
+        agent.workspacePath = targetPath;
+        return true;
+      }
       return false;
+    }
+    try {
+      await rename(legacyPath, targetPath);
+      if (agent.workspacePath === targetPath) return false;
+      agent.workspacePath = targetPath;
+      return true;
     } catch (error) {
       // Only the move failed; the workspace itself is still there and still readable. `EXDEV` means
       // `~/OpenBot/Bots` is a link onto another volume, so the move would be a copy, and a copy of a
@@ -598,6 +615,7 @@ export class AgentStore {
       // leave exactly the same situation, so they get the same answer: the files stay where they are and
       // the stored path is pointed back at them. An out-of-date directory name is cosmetic.
       logger.warn("Could not move an agent workspace to its new directory.", toLogValue(error));
+      if (agent.workspacePath === legacyPath) return false;
       agent.workspacePath = legacyPath;
       return true;
     }
@@ -661,13 +679,7 @@ export class AgentStore {
       if (!entry.isFile() || !entry.name.endsWith(".pending")) continue;
       const id = entry.name.slice(0, -".pending".length);
       if (!isGeneratedAgentId(id)) continue;
-      // A released build named this file after the duplicate it was making, so the name can still be
-      // `bot-<uuid>` while migration v13 has since renamed that agent to `agent-<uuid>`. The exact name
-      // is tried first, because v13 leaves a `bot-` id alone when the `agent-` spelling is taken and
-      // both agents can then exist at once.
-      const agent =
-        this.#state.agents.find((candidate) => candidate.id === id) ??
-        this.#state.agents.find((candidate) => legacyAgentId(candidate.id) === id);
+      const agent = this.#agentByEitherSpelling(id);
       const marker = await this.#readDuplicationMarker(id);
       // Everything below addresses the agent by the id it has *now*, which the marker name only equals
       // when the same build wrote both. Using the file name would filter nothing out of the roster and
@@ -706,6 +718,18 @@ export class AgentStore {
     }
   }
 
+  /**
+   * The agent an id names, whether it is spelled the way this build writes ids or the way the build that
+   * wrote the file on disk did. The exact spelling is tried first, because migration v13 leaves a `bot-`
+   * id alone when the `agent-` spelling is already taken and both agents can then exist at once.
+   */
+  #agentByEitherSpelling(id: string): StoredAgent | undefined {
+    return (
+      this.#state.agents.find((candidate) => candidate.id === id) ??
+      this.#state.agents.find((candidate) => legacyAgentId(candidate.id) === id)
+    );
+  }
+
   #duplicationMarkerPath(id: string): string {
     return join(this.#duplicationsRoot, `${id}.pending`);
   }
@@ -717,16 +741,22 @@ export class AgentStore {
       // `sourceBotId`. Failing to read it drops the file on the floor: recovery cannot then tell a
       // duplication that finished from one that died mid-copy, so it deletes the agent the user kept
       // along with its workspace.
-      const sourceAgentId = isRecord(value) ? (value.sourceAgentId ?? value.sourceBotId) : null;
+      const storedSource = isRecord(value) ? (value.sourceAgentId ?? value.sourceBotId) : null;
       if (
         !isRecord(value) ||
         !isString(value.operationId) ||
         !isUuidV4(value.operationId) ||
-        !isString(sourceAgentId) ||
-        !sourceAgentId
+        !isString(storedSource) ||
+        !storedSource
       ) {
         return null;
       }
+      // The value beside that key names the source agent as it was spelled when the marker was written,
+      // and migration v13 has renamed it since. Nothing rewrites a file outside the database, so the
+      // receipt this is about to be compared against already says `agent-<uuid>` while the marker still
+      // says `bot-<uuid>`: comparing them raw throws "The agent duplication receipt is invalid." out of
+      // recovery, and the app never finishes starting.
+      const sourceAgentId = this.#agentByEitherSpelling(storedSource)?.id ?? storedSource;
       return { operationId: value.operationId, sourceAgentId };
     } catch {
       return null;

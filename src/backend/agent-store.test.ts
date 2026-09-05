@@ -79,10 +79,18 @@ describe("AgentStore", () => {
     await mkdir(legacyRoot, { recursive: true });
     await rename(agent.workspacePath, legacyWorkspace);
     await mkdir(`${legacyWorkspace}.openbot-stage`, { recursive: true });
-    // An id the application never minted keeps its spelling across the rename, so nothing about its name
-    // says the directory moved -- but the root did, and a workspace nobody relocates stays in `Bots`
-    // forever while `PRIVACY.md` tells the user their files are under `Agents`.
-    await rename(chief.workspacePath, join(legacyRoot, chief.id));
+    // An id the application never minted keeps its spelling across the rename, so migration v13 leaves its
+    // stored path alone as well: after the upgrade this agent is still *recorded* under `Bots/chief`, and
+    // that is the state the move has to start from. A reconciler that reads the destination out of the
+    // stored path finds the workspace already there and leaves it in the old root forever, while
+    // `PRIVACY.md` tells the user their files are under `Agents`.
+    const legacyChiefWorkspace = join(legacyRoot, chief.id);
+    await rename(chief.workspacePath, legacyChiefWorkspace);
+    store.database.connection
+      .prepare(
+        "UPDATE projection_agents SET agent_json = json_set(agent_json, '$.workspacePath', ?) WHERE agent_id = ?",
+      )
+      .run(legacyChiefWorkspace, chief.id);
 
     // An uploaded avatar is stored under the agent id, and `avatarUrl` derives that directory from the id
     // migration v13 has just rewritten. Left behind, the file is on disk under one name and looked for
@@ -91,10 +99,16 @@ describe("AgentStore", () => {
     await mkdir(legacyAvatar, { recursive: true });
     await writeFile(join(legacyAvatar, "avatar.png"), "uploaded");
 
-    await new AgentStore(userData, home).initialize();
+    const reconciled = new AgentStore(userData, home);
+    await reconciled.initialize();
 
     expect(await readFile(join(agent.workspacePath, "notes.md"), "utf8")).toBe("kept");
-    expect(await readFile(join(chief.workspacePath, "notes.md"), "utf8")).toBe("kept too");
+    expect(await readFile(join(home, "OpenBot", "Agents", chief.id, "notes.md"), "utf8")).toBe("kept too");
+    // Moving the files without recording where they went leaves every conversation and tool call pointing
+    // at a directory that is no longer there.
+    expect(reconciled.list().find((entry) => entry.id === chief.id)?.workspacePath).toBe(
+      join(home, "OpenBot", "Agents", chief.id),
+    );
     await expect(readFile(join(userData, "avatars", "agents", agent.id, "avatar.png"), "utf8")).resolves.toBe(
       "uploaded",
     );
@@ -441,19 +455,19 @@ describe("AgentStore", () => {
     const operationId = randomUUID();
     const store = new AgentStore(userData, home);
     await store.initialize();
-    const source = await store.getOrCreate("chief");
+    const source = await store.createAgent(AGENT_PROFILE_INPUT);
     const duplicate = await store.duplicateAgent(source.id, operationId);
     await store.commitAgentDuplication(duplicate.id, operationId, source.id, EMPTY_LAYOUT);
     await writeFile(join(duplicate.workspacePath, "note.txt"), "duplicate\n");
 
-    // The crash that stranded this marker happened before the rename, so the file is named after the
-    // duplicate's pre-rename id and spells the key inside it `sourceBotId`; migration v13 has since
-    // renamed the agent. Failing either half makes recovery treat a duplication the user completed as a
-    // half-made one and delete the agent together with its workspace.
-    const legacyId = `bot-${duplicate.id.slice("agent-".length)}`;
+    // The crash that stranded this marker happened before the rename, so every id in it is spelled the
+    // old way: the file is named after the duplicate's old id and the source inside it is the source's.
+    // Nothing rewrites a file outside the database, so migration v13 has moved the receipt on and left
+    // the marker behind. Comparing the two raw throws out of recovery and the app never starts.
+    const legacyId = (id: string) => `bot-${id.slice("agent-".length)}`;
     await writeFile(
-      join(userData, "agent-duplications", `${legacyId}.pending`),
-      `${JSON.stringify({ operationId, sourceBotId: source.id })}\n`,
+      join(userData, "agent-duplications", `${legacyId(duplicate.id)}.pending`),
+      `${JSON.stringify({ operationId, sourceBotId: legacyId(source.id) })}\n`,
     );
 
     const recovered = new AgentStore(userData, home);
