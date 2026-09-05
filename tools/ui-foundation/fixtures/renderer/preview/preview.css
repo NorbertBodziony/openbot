@@ -1,0 +1,5 @@
+/* Outside styles/, which the scan used to name by hand and therefore miss. This file is
+   the reason the scope is now the whole renderer tree. */
+.preview {
+  background: rgb(255 0 0);
+}

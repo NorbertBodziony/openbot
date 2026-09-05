@@ -1,0 +1,8 @@
+/* The neighbour each budget must leave alone: a token is not a literal, and the two
+   values the ratchet exempts by hand are a zero radius and a disabled transition. */
+.tokenised {
+  color: var(--openbot-text);
+  font-size: var(--openbot-text-sm);
+  border-radius: 0;
+  transition: none;
+}

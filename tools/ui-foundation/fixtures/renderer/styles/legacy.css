@@ -1,0 +1,7 @@
+/* One unit of each migration budget, so every count in the report is exactly 1. */
+.legacy {
+  color: #ff0000;
+  font-size: 14px;
+  border-radius: 6px;
+  transition: opacity 200ms ease;
+}
