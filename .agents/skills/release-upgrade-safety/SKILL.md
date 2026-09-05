@@ -49,9 +49,32 @@ git diff --name-status <tag>..HEAD
 Each gate names the paths that obviously belong to it. Treat those as a starting point and never as
 the authority: they are written by hand, they go stale, and a release can touch a file nobody
 thought to list. The question a gate actually asks is "does this file carry the hazard I own", and
-only the file in front of you answers that. A file matched by no gate has to be dismissed out loud,
-with its reason, in the Step 3 table — "it was not on a trigger list" is not a reason, "it is a
-renderer component with no persisted state" is.
+only the file in front of you answers that.
+
+**Account for every file, but clear directories with a query and reserve prose for the residue.** A
+release here runs to hundreds of files — the range audited when this skill was written was 942, of
+which 212 were under `src/main` and `src/backend` alone. A rule demanding a sentence per file is a
+rule you will skip, and skipping it is the one failure Step 1 exists to prevent. Bucket first:
+
+```bash
+git diff --name-only <tag>..HEAD | cut -d/ -f1-2 | sort | uniq -c | sort -rn
+```
+
+Then handle each bucket one of three ways, and say in the Step 3 table which one you used:
+
+- **Dismissed as a bucket**, with the reason stated once. A bucket qualifies only if you can say
+  what makes *every* file in it inert — `src/renderer/**` and `apps/mobile/**` ship in the same
+  binary as their callers and write nothing a later build reads; `**/*.test.ts`, `docs/**` and
+  `tools/**` are not in the shipped app at all. "Nothing looked interesting" is not a reason.
+- **Cleared by a derived query.** This is how a large hazard-bearing directory gets honestly
+  covered: gate B's `git grep` over `src/main` and `src/backend` names every file that decodes a
+  versioned payload, so the other two hundred are cleared by the query having asked the right
+  question of all of them. A bucket cleared this way inherits that gate's obligation — if the query
+  returns nothing, the pattern is broken, not the bucket clean.
+- **Named individually.** What is left: a file in a hazard-bearing directory that no bucket
+  dismissal covers and no gate's query reached. This residue should be small. If it is not, that is
+  itself the finding — report the count and say you could not account for it, rather than writing a
+  dismissal you did not earn.
 
 Work this way round because the failure this skill exists to prevent is almost never a hazard that
 was examined and misjudged. It is one that was never looked at, because nothing pointed at it.
@@ -79,15 +102,32 @@ Triggered by any change to that file or to `src/backend/database/`.
   tag**. Read that number, never remember it:
 
   ```bash
-  git show <tag>:src/backend/openbot-database-schema.ts | grep -E 'version: [0-9]+' | tail -1
+  git show "<tag>:src/backend/openbot-database-schema.ts" | grep -E 'version: [0-9]+' | tail -1
   ```
 
   A literal written into this file would go stale the first time a migration ships and would then
   reject the correct number. `validateMigrationRegistry` throws on a gap, so a skipped number is
   loud — but a *reused* one is a migration that never runs on any database that already applied it.
-- **No shipped `migrateTo*` body may have changed**, including the frozen `migrateToBaselineV8`.
-  Read every hunk of the diff, not the stat. A database that already applied version 12 will never
-  apply it again, so an edit to it reaches new installs only and the two populations diverge.
+
+  **Quote the whole `<rev>:<path>` argument, and quote it even after you put the tag in a variable.**
+  In zsh `$T:src/...` parses as the `:s` substitution modifier and dies with `bad substitution`
+  before git runs — and only for paths starting `s`, so `$T:packages/...` works and teaches you the
+  wrong lesson. The aborted command prints nothing, which is indistinguishable from a clean read.
+  `"${T}:src/..."` is safe in both shells.
+- **No shipped migration body may have changed.** Do not grep for `migrateTo` — only
+  `migrateToBaselineV8` is spelled that way, so the grep comes back empty on a release that rewrote
+  every other one. Derive the bodies from the registry instead:
+
+  ```bash
+  git show "<tag>:src/backend/openbot-database-schema.ts" | grep -E '^\s+up: [a-zA-Z]' | sort -u
+  ```
+
+  Read every hunk of the diff for each function it names, not the stat. A database that already
+  applied version 12 will never apply it again, so an edit to it reaches new installs only and the
+  two populations diverge. **One body can be `up:` for several versions** —
+  `refreshProviderSessionsForDynamicTools` is currently the migration for 9, 10 and 14 — so a
+  one-line edit there rewrites three shipped migrations at once, and the diff shows it as a single
+  changed function far from any `version:` line.
 - **If the migration executes DDL, `LATEST_SCHEMA_SQL` must be extended in the same change.**
   `createLatestDatabase` execs that SQL and then stamps every `MIGRATIONS` entry as applied
   *without running it*, so a DDL migration missing from it ships new installs a database without
@@ -197,7 +237,15 @@ git diff --stat --diff-filter=MDR <tag>..HEAD -- \
   ':(exclude)packages/contracts/src/team-protocol/v*.test.ts'
 ```
 
-**This must be empty.** Three things in that command are load-bearing:
+**Empty is the clean answer, but do not treat non-empty as rare.** The release audited when this
+skill was written modified all four adapters and `v1.ts`, legitimately: renaming the product concept
+forced the encode and decode halves apart, because they had shared one implementation only for as
+long as the wire vocabulary and the app vocabulary were the same words. Expect to read hunks. What
+the emptiness of this command actually buys you is that nothing frozen changed *without* you
+noticing — so a non-empty result is the start of the work, and an empty one is only trustworthy if
+you have proved the command can still speak.
+
+Three things in that command are load-bearing:
 
 - **Every pathspec is quoted, so git expands it and the shell never sees a glob.** Do not build the
   list into a variable: an unquoted expansion splits in bash and not in zsh, and the check then
@@ -314,6 +362,18 @@ Three separate hazards; check all three.
   length of that gap the old Worker runs against the new schema. No `NOT NULL` column without a
   default, no rename, no drop of a column the deployed Worker still reads. A contraction needs the
   two-step release — expand, deploy the Worker that uses it, contract in a later change.
+  - **Indexes and triggers race too, and they are the ones that get missed** — the list above is
+    about columns, and a migration can leave every column compatible while changing what the old
+    Worker's writes *do*. A `CREATE TRIGGER` fires on statements the old Worker is already issuing.
+    Swapping a `UNIQUE` index is worse: if the replacement is partial and predicated on a column the
+    old Worker does not know to populate, its rows fall outside the new index and the constraint it
+    was relying on silently stops being enforced for the length of the gap.
+    `0018_remote_device_sessions.sql` is the worked example: it drops
+    `remote_sessions_one_active_per_user_host` for a new index predicated on
+    `auth_session_hash IS NOT NULL`, then keeps the old guarantee alive with a second
+    `..._legacy_user_host` index covering exactly the rows the old Worker still writes. Copy that
+    shape — when you narrow a unique index, add the legacy one beside it rather than assuming the
+    gap is short.
 - **Installed desktop builds never update**, in *both* directions. A build from a year ago keeps
   calling `auth:*` against the current Worker forever, and unlike a D1 mistake that is not
   recoverable by a redeploy.
