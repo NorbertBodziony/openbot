@@ -164,6 +164,11 @@ describe("remote API Dockerfile", () => {
   });
 });
 
+// Every field, not just `dependencies`, even though the image installs with
+// `--production`. Today every workspace edge in the repo is a plain dependency, so
+// the difference is inert; the bias is deliberate for when it stops being. Naming a
+// workspace the pruned install turns out not to need costs one harmless COPY line,
+// and missing one costs the image.
 function workspaceDependencies(manifest: string): string[] {
   return readDependencies(manifest)
     .filter(([, , version]) => version.startsWith("workspace:"))
