@@ -20,7 +20,11 @@ import {
   encodeTeamProtocolV3CurrentHttpRequest,
   encodeTeamProtocolV3CurrentHttpResponse,
 } from "./v3-adapter";
-import { decodeTeamProtocolV3WebRtcHttpResponse, encodeTeamProtocolV3WebRtcHttpRequest } from "./v3-webrtc-adapter";
+import {
+  decodeTeamProtocolV3WebRtcHttpResponse,
+  encodeTeamProtocolV3WebRtcHttpRequest,
+  encodeTeamProtocolV3WebRtcHttpResponse,
+} from "./v3-webrtc-adapter";
 
 const duplicatePath = "/v1/agents/bot-source/duplicate";
 /**
@@ -137,6 +141,12 @@ describe("Team protocol v3", () => {
     expect(encodeTeamProtocolV3WebRtcHttpRequest("POST", duplicatePath, requestFixture)).toEqual(requestFixture);
     expect(decodeTeamProtocolV3WebRtcHttpResponse("POST", duplicatePath, 201, responseFixture)).toEqual(
       currentResponseFixture,
+    );
+    // The direction the decode assertion above cannot see. What this peer sends has to leave in the frozen
+    // vocabulary: a response spelled `agent` is one the receiving peer's frozen codec rejects outright, and
+    // no already-shipped client would understand it either.
+    expect(encodeTeamProtocolV3WebRtcHttpResponse("POST", duplicatePath, 201, currentResponseFixture)).toEqual(
+      responseFixture,
     );
     expect(encodeTeamProtocolV3WebRtcHttpRequest("GET", scopedUsagePath, undefined)).toEqual({});
     expect(

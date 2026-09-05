@@ -190,6 +190,17 @@ describe("Team protocol v2", () => {
       }),
     ).toEqual({ appVersion: "1.0.0", protocol: { minimum: 1, maximum: 2 }, capabilities: [] });
     expect(decodeTeamProtocolV2CurrentHttpResponse("POST", "/v1/browser/visible", 204, {})).toEqual({});
+    // A request this peer sends has to leave in the frozen vocabulary, whatever the handler on the other
+    // end will call it. Encoding and decoding shared one implementation until the two vocabularies stopped
+    // being the same words, at which point whichever direction it was written for broke the other.
+    expect(
+      encodeTeamProtocolV2CurrentHttpRequest("POST", "/v1/browser/open", {
+        url: "https://example.com/",
+        ownerThreadId: "thread-1",
+        ownerAgentId: "chief",
+        focus: true,
+      }),
+    ).toEqual({ url: "https://example.com/", ownerThreadId: "thread-1", ownerBotId: "chief", focus: true });
     // A request off the wire is wire-shaped, and the handler that reads it says `ownerAgentId`. Handing
     // back the wire spelling loses the tab's owner silently: nothing throws, the field is simply absent.
     expect(

@@ -41,7 +41,7 @@ import { isUuidV4 } from "@openbot/contracts/validation";
 import { createOpenBotLogger, toLogValue } from "@openbot/logging";
 import { OpenBotDatabase, type ProviderSession, stableThreadId } from "./openbot-database";
 import { isRecord } from "./protocol";
-import { legacyAgentId } from "./workspace-paths";
+import { isGeneratedAgentId, legacyAgentId } from "./workspace-paths";
 
 type StoredAgent = AgentSummary;
 type PersistedStoredAgent = Omit<StoredAgent, "avatarUrl" | "provider"> & {
@@ -547,7 +547,12 @@ export class AgentStore {
   async #reconcileWorkspaceDirectory(agent: StoredAgent): Promise<boolean> {
     const legacyPath = join(this.#legacyAgentsRoot, legacyAgentId(agent.id));
     if (legacyPath === agent.workspacePath) return false;
-    if ((await directoryExists(agent.workspacePath)) || !(await directoryExists(legacyPath))) return false;
+    // A probe that cannot answer is not permission to guess. `EACCES` on either directory, or a Windows
+    // lock, leaves this run unable to tell a moved workspace from a missing one -- so it does nothing and
+    // the next launch tries again, rather than moving a directory on a false negative.
+    const current = await probeDirectory(agent.workspacePath);
+    const legacy = await probeDirectory(legacyPath);
+    if (current !== false || legacy !== true) return false;
     try {
       await rename(legacyPath, agent.workspacePath);
       return false;
@@ -573,7 +578,7 @@ export class AgentStore {
     if (legacyId === agent.id) return;
     const currentPath = join(this.#avatarsRoot, agent.id);
     const legacyPath = join(this.#avatarsRoot, legacyId);
-    if ((await directoryExists(currentPath)) || !(await directoryExists(legacyPath))) return;
+    if ((await probeDirectory(currentPath)) !== false || (await probeDirectory(legacyPath)) !== true) return;
     try {
       await rename(legacyPath, currentPath);
     } catch (error) {
@@ -908,23 +913,26 @@ function isValidAgentId(id: string): boolean {
   return /^[a-z0-9][a-z0-9-]{0,63}$/.test(id) && basename(id) === id;
 }
 
-/**
- * The gate that lets a crashed duplication's leftovers be cleaned up, so it has to recognize an id this
- * build would never mint. A database restored from the user's own file copy never ran migration v13 and
- * still spells its agents `bot-<uuid>`; narrowing this to `agent-` would strand that install's orphan on
- * disk forever.
- */
-function isGeneratedAgentId(id: string): boolean {
-  const prefix = id.startsWith("agent-") ? "agent-" : id.startsWith("bot-") ? "bot-" : null;
-  return prefix !== null && isUuidV4(id.slice(prefix.length));
-}
-
 async function directoryExists(path: string): Promise<boolean> {
   try {
     return (await lstat(path)).isDirectory();
   } catch (error) {
     if (isRecord(error) && error.code === "ENOENT") return false;
     throw error;
+  }
+}
+
+/**
+ * {@link directoryExists}, but for the startup reconciliation, which runs after the database has already
+ * migrated and so must never be the reason the app refuses to open. `null` is "could not tell" -- an
+ * `EACCES`, an `EPERM`, a Windows lock -- and every caller treats it as "leave this alone".
+ */
+async function probeDirectory(path: string): Promise<boolean | null> {
+  try {
+    return await directoryExists(path);
+  } catch (error) {
+    logger.warn("Could not check an agent directory during startup reconciliation.", toLogValue(error));
+    return null;
   }
 }
 

@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { type DynamicRecord, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { createOpenBotLogger, toLogValue } from "@openbot/logging";
+import { isGeneratedAgentId } from "./workspace-paths";
 
 const BASELINE_SCHEMA_VERSION = 8;
 
@@ -664,23 +665,42 @@ function rewriteGeneratedAgentIds(db: DatabaseSync): void {
   if (renames.length === 0) return;
 
   const statements = textColumnStatements(db);
+  for (const [index, rename] of renames.entries()) maskAvatarSeed(statements, rename, index);
   for (const root of legacyWorkspaceRoots(renames)) substitute(statements, root.from, root.to);
   for (const rename of renames) substitute(statements, rename.oldId, rename.newId);
-  for (const rename of renames) restoreAvatarSeed(statements, rename);
+  for (const [index, rename] of renames.entries()) unmaskAvatarSeed(statements, rename, index);
 }
 
 /**
  * An agent the app created for itself starts with its own id as `avatarSeed`, and the seed is the input to
  * the function that draws the face -- not an identifier. Rewriting it would give every one of those agents
  * a different face on upgrade, and would diverge from the seed already published in
- * `marketplace_agent_versions`. So the substitution above is undone for this one key, everywhere it is
- * stored: the roster projection, and the event payloads a replay would rebuild that projection from.
+ * `marketplace_agent_versions`. So the seed is put beyond the substitution's reach first and put back
+ * afterwards, everywhere it is stored: the roster projection, and the event payloads a replay would
+ * rebuild that projection from.
  *
- * Matching the serialized key is safe in this direction. No database that has not yet run this migration
- * can hold an `agent-<uuid>` id at all, so a seed spelled that way is one this migration just wrote.
+ * Masking rather than substituting back is what keeps this exact. Only a seed that *was* the old id is
+ * restored; a seed that already read `agent-<uuid>` before the migration -- an agent installed from a
+ * listing another user published from a renamed build -- is not this migration's doing and is left alone.
+ *
+ * The sentinel is the six-character escape `\u0000`, not the byte it denotes. Every payload column carries
+ * a `json_valid` CHECK that a raw control character would fail mid-migration, and the escape is both valid
+ * JSON and something no serializer emits for an identifier, so nothing stored can collide with it.
  */
-function restoreAvatarSeed(statements: readonly TextColumnStatement[], rename: AgentIdRename): void {
-  substitute(statements, `"avatarSeed":"${rename.newId}"`, `"avatarSeed":"${rename.oldId}"`);
+function maskAvatarSeed(statements: readonly TextColumnStatement[], rename: AgentIdRename, index: number): void {
+  substitute(statements, seedLiteral(rename.oldId), seedSentinel(index));
+}
+
+function unmaskAvatarSeed(statements: readonly TextColumnStatement[], rename: AgentIdRename, index: number): void {
+  substitute(statements, seedSentinel(index), seedLiteral(rename.oldId));
+}
+
+function seedLiteral(seed: string): string {
+  return `"avatarSeed":"${seed}"`;
+}
+
+function seedSentinel(index: number): string {
+  return String.raw`"avatarSeed":"\u0000openbot-avatar-seed-` + index + String.raw`\u0000"`;
 }
 
 function readAgentIdRenames(db: DatabaseSync): readonly AgentIdRename[] {
@@ -694,6 +714,12 @@ function readAgentIdRenames(db: DatabaseSync): readonly AgentIdRename[] {
   const renames: AgentIdRename[] = [];
   for (const row of rows) {
     if (!isDynamicRecord(row) || !isString(row.agent_id)) continue;
+    // `bot-` alone is not proof the application minted this id. An id a user chose, or one an imported
+    // `bots.json` carried, is an ordinary word: renaming `bot-research` to `agent-research` invents a new
+    // identity for it, and if `agent-research` already exists the primary-key update collides, the
+    // migration throws, `runMigration` rolls back -- and the next launch tries the same thing again, so the
+    // user never gets back in. The UUID suffix is what distinguishes the two, so only it is rewritten.
+    if (!isGeneratedAgentId(row.agent_id)) continue;
     renames.push({
       oldId: row.agent_id,
       newId: `agent-${row.agent_id.slice("bot-".length)}`,
@@ -710,12 +736,32 @@ function readAgentIdRenames(db: DatabaseSync): readonly AgentIdRename[] {
 function legacyWorkspaceRoots(renames: readonly AgentIdRename[]): readonly { from: string; to: string }[] {
   const roots = new Map<string, { from: string; to: string }>();
   for (const rename of renames) {
-    const suffix = `/OpenBot/Bots/${rename.oldId}`;
-    if (rename.workspacePath === null || !rename.workspacePath.endsWith(suffix)) continue;
-    const from = `${rename.workspacePath.slice(0, -suffix.length)}/OpenBot/Bots/`;
-    roots.set(from, { from, to: `${from.slice(0, -"Bots/".length)}Agents/` });
+    if (rename.workspacePath === null) continue;
+    // A Windows profile stores this path with backslashes. Matching only the POSIX form would leave the
+    // root behind and rewrite the leaf alone, giving `OpenBot\Bots\agent-<uuid>` -- a name no reader
+    // recognizes, since rebasing a path out of a resumed provider transcript looks for an `Agents` parent.
+    for (const separator of ["/", "\\"]) {
+      const root = ["OpenBot", "Bots", ""].join(separator);
+      const suffix = `${separator}${root}${rename.oldId}`;
+      if (!rename.workspacePath.endsWith(suffix)) continue;
+      const from = `${rename.workspacePath.slice(0, -suffix.length)}${separator}${root}`;
+      const to = `${from.slice(0, -`Bots${separator}`.length)}Agents${separator}`;
+      // The path is read back through `json_extract`, so it arrives unescaped, while the column it has to
+      // be substituted in holds the serialized JSON -- where a Windows separator is doubled. Both forms are
+      // rewritten; on POSIX they are the same string and the map collapses them.
+      for (const [rawFrom, rawTo] of [
+        [from, to],
+        [jsonEscape(from), jsonEscape(to)],
+      ]) {
+        roots.set(rawFrom, { from: rawFrom, to: rawTo });
+      }
+    }
   }
   return [...roots.values()];
+}
+
+function jsonEscape(value: string): string {
+  return JSON.stringify(value).slice(1, -1);
 }
 
 function textColumnStatements(db: DatabaseSync): readonly TextColumnStatement[] {

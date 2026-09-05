@@ -1145,6 +1145,32 @@ describe("OpenBotDatabase", () => {
     migrated.close();
   });
 
+  it("leaves an agent id the application did not mint alone", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-db-ids-custom-"));
+    roots.push(root);
+    const database = new OpenBotDatabase(root);
+    await database.initialize();
+    database.close();
+
+    // `bot-` is not proof of a generated id. `bot-research` is a name a user or an imported `bots.json`
+    // chose, and `agent-research` is already taken -- renaming the first onto the second collides on the
+    // primary key, rolls the migration back, and repeats that on every launch, so the user never gets in.
+    const legacy = new DatabaseSync(database.path);
+    downgradeToV11(legacy);
+    seedLegacyAgent(legacy, "bot-research", "/Users/dev/OpenBot/Agents/bot-research");
+    seedLegacyAgent(legacy, "agent-research", "/Users/dev/OpenBot/Agents/agent-research");
+    legacy.close();
+
+    const migrated = new OpenBotDatabase(root);
+    await migrated.initialize();
+
+    expect(migrated.connection.prepare("SELECT agent_id FROM projection_agents ORDER BY agent_id").all()).toEqual([
+      { agent_id: "agent-research" },
+      { agent_id: "bot-research" },
+    ]);
+    migrated.close();
+  });
+
   it("rejects a database created by a newer application", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-db-newer-"));
     roots.push(root);
@@ -1389,16 +1415,16 @@ function seedLegacyAgent(database: DatabaseSync, legacyId: string, workspacePath
     .prepare(
       `INSERT INTO orchestration_events
          (event_id, command_id, aggregate_type, aggregate_id, event_type, occurred_at, payload_json)
-       VALUES ('event-1', ?, 'hosted-site-terminal', ?, 'hosted-site.terminal-pending', '2026-09-01T12:00:00.000Z', ?)`,
+       VALUES (?, ?, 'hosted-site-terminal', ?, 'hosted-site.terminal-pending', '2026-09-01T12:00:00.000Z', ?)`,
     )
-    .run(`hosted-site-terminal-pending:${legacyId}:operation-1:succeeded`, legacyId, pendingJson);
+    .run(`event-${legacyId}`, `hosted-site-terminal-pending:${legacyId}:operation-1:succeeded`, legacyId, pendingJson);
   database
     .prepare(
       `INSERT INTO orchestration_events
          (event_id, command_id, aggregate_type, aggregate_id, event_type, occurred_at, payload_json)
-       VALUES ('event-2', 'agents-replaced:1', 'agent-roster', 'agent-roster', 'agents.replaced', '2026-09-01T12:00:00.000Z', ?)`,
+       VALUES (?, ?, 'agent-roster', 'agent-roster', 'agents.replaced', '2026-09-01T12:00:00.000Z', ?)`,
     )
-    .run(rosterJson);
+    .run(`roster-${legacyId}`, `agents-replaced:${legacyId}`, rosterJson);
 }
 
 function downgradeReactionsToV7(database: DatabaseSync): void {
