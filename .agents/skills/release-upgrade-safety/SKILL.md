@@ -65,6 +65,12 @@ triggered is reported as **not triggered** — never dropped silently, because "
 `references/surfaces.md` holds the exhaustive path inventory. Load it when a gate fires and you
 need the exact file, not before.
 
+**Some checks below pass by producing no output. Prove the command can still speak before you trust
+its silence** — run it over a range you know contains a hit, or confirm a list you expect to be long
+is not empty. An empty result means "nothing is wrong" and "I asked the wrong question" equally
+well, and the second is the more common of the two. This is not hypothetical: it is how `check:ui`
+lost two checks (`AGENTS.md`, Tests) and why the repo deleted `no-runtime-typeof`.
+
 ### A. SQLite schema — `src/backend/openbot-database-schema.ts`
 
 Triggered by any change to that file or to `src/backend/database/`.
@@ -117,21 +123,18 @@ git grep -lE 'version *(!==|===) *[0-9]|version: *z\.literal' <tag> HEAD -- \
 
 The gate fires if the release diff touches any file that prints. Three deliberate details:
 
-- **Both revisions, unioned.** Searching only `HEAD` means that *removing* a version guard removes
-  the file from the result, so the one change most worth auditing is the one that hides the file.
-  Searching only the tag misses a serialization owner the release adds. The tag side also carries
-  the pre-rename filename, which is what you need to find the rename.
-- **`z.literal` is a second spelling.** `remote-desktop-secret-store.ts` validates with
-  `z.object({ version: z.literal(1), ... })` and matches no comparison operator at all. Any decoder
-  that pins a version by schema rather than by `===` is the same hazard; when you meet a third
-  spelling, widen the pattern rather than trusting this one.
-- **No `\b`.** `git grep -E` is POSIX ERE, where `\b` matches nothing, so the natural spelling of
-  this pattern returns an empty list and reports that the release changed no serialization owner.
-  Same failure as gate C — a check that answers the wrong question and calls the silence a pass.
+- **Both revisions, unioned.** Searching `HEAD` alone means *removing* a version guard removes the
+  file from the result, hiding the change most worth auditing. The tag alone misses an owner the
+  release adds, and the tag side carries the pre-rename filename you need to spot a rename.
+- **`z.literal` is a second spelling** — `remote-desktop-secret-store.ts` pins its version by schema
+  and matches no comparison operator. Widen the pattern when you meet a third spelling rather than
+  trusting this one.
+- **No `\b`** — `git grep -E` is POSIX ERE, where it matches nothing and the list comes back empty.
 
-The list is still only a starting point. Step 1 is what guarantees an unmatched file gets looked
-at: a persistence change spelled in a way no pattern here anticipates is caught by having to
-dismiss the file by name, not by this command.
+The list is still only a starting point, and it is short enough to eyeball: if it prints nothing, or
+far less than the file inventory in `references/surfaces.md`, the pattern is broken rather than the
+release clean. Step 1 is what actually guarantees an unmatched file gets looked at — a persistence
+change spelled in a way no pattern anticipates is caught by having to dismiss the file by name.
 
 The trigger lives here rather than in `references/surfaces.md` because you classify triggers before
 you open any reference; a trigger that pointed at the inventory would need the inventory read first,
@@ -196,12 +199,10 @@ git diff --stat --diff-filter=MDR <tag>..HEAD -- \
 
 **This must be empty.** Three things in that command are load-bearing:
 
-- **Every pathspec is quoted, so git expands it and the shell never sees a glob.** Do not collect
-  the file list into a variable first. An unquoted `$FROZEN` word-splits under bash but *not* under
-  zsh, where the newline-joined list becomes a single path that matches nothing — so the check
-  prints empty and passes while a frozen codec sits modified in the diff. A gate that reports clean
-  for the wrong reason is worse than no gate, and this is the one gate whose whole output is its
-  own emptiness.
+- **Every pathspec is quoted, so git expands it and the shell never sees a glob.** Do not build the
+  list into a variable: an unquoted expansion splits in bash and not in zsh, and the check then
+  prints empty for the wrong reason. This gate's entire signal is its own emptiness, so before
+  trusting a clean result, run it once over a range you know modifies a frozen file.
 - **`v*.ts` covers the adapters.** `packages/contracts/AGENTS.md` freezes a codec, an adapter, and
   client and host fixtures for every released protocol, so `v1-adapter.ts`, `v2-adapter.ts`,
   `v3-adapter.ts` and `v3-webrtc-adapter.ts` are as frozen as `v1.ts`. A pattern anchored on
