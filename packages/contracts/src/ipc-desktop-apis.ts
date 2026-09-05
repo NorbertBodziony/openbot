@@ -1,3 +1,19 @@
+import type { AgentEvent, ScopedAgentEvent } from "./ipc-agent-events";
+import type { AgentModelOption } from "./ipc-agent-identity";
+import type {
+  AgentMemory,
+  CreateAgentMemoryInput,
+  DeleteAgentMemoryInput,
+  UpdateAgentMemoryInput,
+} from "./ipc-agent-memories";
+import type { AccountUsage, AgentProviderId, AgentStatus } from "./ipc-agent-status";
+import type {
+  AgentSummary,
+  CreateAgentInput,
+  DuplicateAgentResult,
+  SetAgentAvatarInput,
+  UpdateAgentInput,
+} from "./ipc-agents";
 import type {
   AnalyticsPreference,
   AppInfo,
@@ -13,6 +29,16 @@ import type {
   UpdatePreference,
   UpdateStatus,
 } from "./ipc-app-auth";
+import type { RespondToApprovalInput, RespondToBrowserTakeoverInput } from "./ipc-approvals";
+import type {
+  AttachmentImportEvent,
+  ChooseAttachmentsInput,
+  DraftAttachment,
+  FilePreview,
+  OpenAttachmentInput,
+  OpenSharedFileInput,
+  OpenWorkspaceFileInput,
+} from "./ipc-attachments";
 import type {
   BrowserBounds,
   BrowserControlState,
@@ -25,58 +51,17 @@ import type {
   BrowserVisibilityInput,
 } from "./ipc-browser";
 import type {
-  AccountUsage,
-  AcknowledgeFailedTurnInput,
-  AgentEvent,
-  AgentMemory,
-  AgentModelOption,
-  AgentProviderId,
-  AgentStatus,
-  AgentSummary,
-  AttachmentImportEvent,
-  CancelQueuedMessageInput,
-  ChooseAttachmentsInput,
   ConversationPage,
   ConversationReadState,
   ConversationSearchPage,
   ConversationWithReadState,
-  CreateAgentInput,
-  CreateAgentMemoryInput,
-  CreateRoutineInput,
-  DeleteAgentMemoryInput,
-  DeleteRoutineInput,
-  DraftAttachment,
-  DuplicateAgentResult,
-  FilePreview,
-  InterruptTurnInput,
-  ListRoutineRunsInput,
   MarkConversationReadInput,
-  OpenAttachmentInput,
-  OpenSharedFileInput,
-  OpenWorkspaceFileInput,
-  QueuedMessageReceipt,
-  QueueSnapshot,
   ReadConversationPageInput,
-  ReorderQueueInput,
-  RespondToApprovalInput,
-  RespondToBrowserTakeoverInput,
   RespondToPromptInput,
-  Routine,
-  RoutineRun,
-  ScopedAgentEvent,
   SearchConversationMessagesInput,
   SendMessageInput,
-  SetAgentAvatarInput,
   SetMessageReactionInput,
-  SidebarLayoutAction,
-  SidebarLayoutSnapshot,
-  SteerQueuedMessageInput,
-  TestRoutineInput,
-  UpdateAgentInput,
-  UpdateAgentMemoryInput,
-  UpdateQueuedMessageInput,
-  UpdateRoutineInput,
-} from "./ipc-conversation";
+} from "./ipc-conversations";
 import type {
   DynamicIslandAction,
   DynamicIslandGeometry,
@@ -101,6 +86,26 @@ import type {
   MarketplaceAgentQuery,
   SubmitMarketplaceAgentInput,
 } from "./ipc-marketplace-agents";
+import type {
+  AcknowledgeFailedTurnInput,
+  CancelQueuedMessageInput,
+  InterruptTurnInput,
+  QueuedMessageReceipt,
+  QueueSnapshot,
+  ReorderQueueInput,
+  SteerQueuedMessageInput,
+  UpdateQueuedMessageInput,
+} from "./ipc-queue";
+import type {
+  CreateRoutineInput,
+  DeleteRoutineInput,
+  ListRoutineRunsInput,
+  Routine,
+  RoutineRun,
+  TestRoutineInput,
+  UpdateRoutineInput,
+} from "./ipc-routines";
+import type { SidebarLayoutAction, SidebarLayoutSnapshot } from "./ipc-sidebar-layout";
 import type {
   InstalledSkill,
   InstallSkillInput,
