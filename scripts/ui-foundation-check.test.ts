@@ -46,6 +46,8 @@ describe("ui foundation check", () => {
         "components/branches/NativeSelect.tsx: use a component from components/ui instead of a native control",
         "components/branches/NativeTextarea.tsx: use a component from components/ui instead of a native control",
         "components/branches/ColourBackgroundRgb.tsx: a colour literal in an inline style is not allowed; use a palette token",
+        "components/branches/ColourBackgroundRgba.tsx: a colour literal in an inline style is not allowed; use a palette token",
+        "components/branches/ColourTextHsla.tsx: a colour literal in an inline style is not allowed; use a palette token",
         "components/branches/ColourBorderTopHsl.tsx: a colour literal in an inline style is not allowed; use a palette token",
         "components/branches/ColourFillNamed.tsx: a colour literal in an inline style is not allowed; use a palette token",
         "components/branches/ColourStrokeHex.tsx: a colour literal in an inline style is not allowed; use a palette token",
@@ -61,7 +63,7 @@ describe("ui foundation check", () => {
         // second pattern entirely, which the hex does not exercise, so losing that reads 2
         // as well. The token spelling a colour in tokens.css must stay uncounted, or this
         // reads 4 and the word boundaries have gone.
-        budget("colour literals outside the palette", 4),
+        budget("colour literals outside the palette", 6),
         budget("untokenised font-size", 1),
         budget("untokenised border-radius", 1),
         budget("untokenised transition durations", 2),
