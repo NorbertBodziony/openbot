@@ -113,6 +113,21 @@ describe("Team protocol v1", () => {
       requestId: "request-1",
       answers: { agentId: ["chief"] },
     });
+
+    // The key is data, so it is not context either: a question id that happens to spell a discriminant
+    // must not decide what the answer under it means. Here the user answered the literal word "agent".
+    const answered = JSON.parse(
+      encodeTeamProtocolV1CurrentHttpRequest("POST", "/v1/prompts/respond", {
+        requestId: "request-1",
+        answers: { kind: ["agent"] },
+      }),
+    );
+
+    expect(answered.answers).toEqual({ kind: ["agent"] });
+    expect(decodeTeamProtocolV1CurrentHttpRequest("POST", "/v1/prompts/respond", answered)).toEqual({
+      requestId: "request-1",
+      answers: { kind: ["agent"] },
+    });
   });
 
   it("decodes bounded compatibility metadata and finds the highest common version", () => {

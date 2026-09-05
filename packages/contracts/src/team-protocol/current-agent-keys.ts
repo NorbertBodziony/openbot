@@ -105,8 +105,15 @@ function walkObject(value: TeamProtocolV1JsonObject, direction: Direction, key: 
   const result: TeamProtocolV1JsonObject = {};
   const dynamic = DYNAMIC_MAP_KEYS.has(key);
   for (const [entryKey, entryValue] of Object.entries(value)) {
-    const resultKey = dynamic ? entryKey : (keys[entryKey] ?? entryKey);
-    result[resultKey] = OPAQUE_KEYS.has(entryKey) ? entryValue : walk(entryValue, direction, entryKey);
+    if (dynamic) {
+      // A dynamic map's key is data the caller chose, so it names neither a value discriminant nor an
+      // opaque subtree: carrying it on as context would let a question id spelled `kind` rewrite the
+      // answer filed under it, and a message id spelled `layout` leave a whole referenced message
+      // untranslated. The empty context is the one the top-level call already uses.
+      result[entryKey] = walk(entryValue, direction, "");
+      continue;
+    }
+    result[keys[entryKey] ?? entryKey] = OPAQUE_KEYS.has(entryKey) ? entryValue : walk(entryValue, direction, entryKey);
   }
   return result;
 }
