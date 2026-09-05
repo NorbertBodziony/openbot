@@ -62,10 +62,28 @@ export function isGeneratedAgentId(agentId: string): boolean {
  * not open a second way out of the workspace.
  */
 export function rebaseLegacyWorkspacePath(workspacePath: string, agentId: string, candidate: string): string | null {
-  if (basename(workspacePath) !== agentId || basename(dirname(workspacePath)) !== "Agents") return null;
-  const legacyRoot = join(dirname(dirname(workspacePath)), "Bots", legacyAgentId(agentId));
-  if (legacyRoot === workspacePath || !isWithin(legacyRoot, candidate)) return null;
-  return join(workspacePath, relative(legacyRoot, candidate));
+  const counterpart = counterpartWorkspaceRoot(workspacePath, agentId);
+  if (counterpart === null || counterpart === workspacePath || !isWithin(counterpart, candidate)) return null;
+  return join(workspacePath, relative(counterpart, candidate));
+}
+
+/**
+ * The other root this agent's workspace could be sitting under -- the pre-rename one when the move
+ * succeeded, and the post-rename one when it did not. The move gives up on `EXDEV` or a permission error
+ * and leaves the directory where it was, but migration v13 has already rewritten the paths inside that
+ * agent's messages to where it *would* have gone, so the fallback has to run in both directions or those
+ * links stay broken for exactly the users whose move failed.
+ */
+function counterpartWorkspaceRoot(workspacePath: string, agentId: string): string | null {
+  const parent = dirname(workspacePath);
+  const legacyId = legacyAgentId(agentId);
+  if (basename(workspacePath) === agentId && basename(parent) === "Agents") {
+    return join(dirname(parent), "Bots", legacyId);
+  }
+  if (basename(workspacePath) === legacyId && basename(parent) === "Bots") {
+    return join(dirname(parent), "Agents", agentId);
+  }
+  return null;
 }
 
 export function isWithin(root: string, candidate: string): boolean {
