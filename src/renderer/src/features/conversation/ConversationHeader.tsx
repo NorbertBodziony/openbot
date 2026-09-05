@@ -3,9 +3,9 @@ import { useConversationViewScope } from "./conversation-scope";
 const loadAgentSettingsPanel = () => import("./AgentSettingsPanel");
 
 import { Show } from "solid-js";
-import { AgentAvatar } from "../../components/AgentAvatar";
 import { ProviderModelPicker } from "../../components/ProviderModelPicker";
 import { Button } from "../../components/ui";
+import { AgentAvatar } from "../agents/AgentAvatar";
 import { ComputerIcon, RemoteDesktopIcon } from "./ConversationIcons";
 
 /** @internal Stable HMR boundary for conversation header. */

@@ -1,8 +1,8 @@
 import type { ServerSummary, SidebarLayoutAction, SidebarLayoutSnapshot } from "@openbot/contracts/ipc";
 import { createMemo, createSignal } from "solid-js";
-import { serverSupportsCapability } from "../../server-capabilities";
-import { useServers } from "../../servers";
 import { createSimpleContext } from "../../simple-context";
+import { serverSupportsCapability } from "../servers/server-capabilities";
+import { useServers } from "../servers/servers-context";
 import {
   normalizeSidebarPeopleOrder,
   readSidebarPeopleOrder,

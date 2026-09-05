@@ -6,9 +6,6 @@ import type {
   ConversationSnapshot,
 } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import { cleanAgentMessageText } from "../../agent-message-text";
-import { useAgentReadTracking } from "../../agent-read-tracking";
-import { useAgents } from "../../agents";
 import { desktopAnalytics } from "../../analytics";
 import {
   agentMessagesEqual,
@@ -20,13 +17,15 @@ import {
 } from "../../app-message-projection";
 import { createStoredMessage, updateStored } from "../../app-stored-values";
 import type { AgentMessage } from "../../data";
-import { useDirectMessages } from "../../direct-messages";
 import { usePlatform } from "../../platform";
 import { createScopeGuard } from "../../scope-lifetime";
-import { useServers } from "../../servers";
 import { createSimpleContext } from "../../simple-context";
-import { notifyTeamTyping } from "../../team-typing";
 import { useTurns } from "../../turns";
+import { cleanAgentMessageText } from "../agents/agent-message-text";
+import { useAgentReadTracking } from "../agents/agent-read-tracking";
+import { useAgents } from "../agents/agents-context";
+import { useServers } from "../servers/servers-context";
+import { notifyTeamTyping } from "../team/team-typing";
 import { agentConversationKey, agentMessageKey, messagePromptRequestKey, promptRequestKey } from "./conversation-keys";
 import { mergeConversationPage, windowedSnapshotMessages } from "./conversation-merge";
 import {
@@ -38,6 +37,7 @@ import {
   readStateForMessages,
   retainedAutoReadState,
 } from "./conversation-read-state";
+import { useDirectMessages } from "./direct-messages-context";
 
 /**
  * What each agent has *said*: the messages on screen, the pages they came from,

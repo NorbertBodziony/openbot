@@ -1,9 +1,9 @@
 import type { StateId } from "@norbert_bodziony/bloub";
 import { For } from "solid-js";
-import { AgentAvatar } from "../../components/AgentAvatar";
 import { Button } from "../../components/ui/button";
 import { ChevronDown, Sparkles } from "../../components/ui/icons";
 import type { AgentMessage, AgentProfile } from "../../data";
+import { AgentAvatar } from "../agents/AgentAvatar";
 
 export const AGENT_ACTIVITY_ANIMATIONS = [
   "thinking",

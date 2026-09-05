@@ -13,7 +13,6 @@ import type {
 import { createEffect, createMemo, createSignal, createStore, For, onSettled, Show } from "solid-js";
 import { normalizeAvatarFile } from "../../avatar-image";
 import { AVATAR_HUE_OPTIONS, avatarCandidateSeeds, avatarHueSwatch } from "../../bloub-avatar";
-import { AgentAvatar } from "../../components/AgentAvatar";
 import { PanelResizer, readPanelWidth, savePanelWidth } from "../../components/PanelResizer";
 import { ProviderModelPicker } from "../../components/ProviderModelPicker";
 import {
@@ -30,6 +29,7 @@ import {
   Textarea,
 } from "../../components/ui";
 import type { AgentProfile } from "../../data";
+import { AgentAvatar } from "../agents/AgentAvatar";
 import { AgentMemoriesModal } from "./AgentMemoriesModal";
 import { AgentRoutinesSettings, type RoutineSelectionRequest } from "./AgentRoutinesSettings";
 import { BackIcon, SettingsForwardIcon } from "./ConversationIcons";

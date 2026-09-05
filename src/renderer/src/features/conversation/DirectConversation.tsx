@@ -1,7 +1,6 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { DirectConversationSnapshot, DirectMessage, TeamPresenceMember } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, For, onCleanup, onSettled, Show } from "solid-js";
-import { TeamPersonAvatar, teamMemberName } from "../../components/TeamPersonAvatar";
 import { TypingDots } from "../../components/TypingDots";
 import {
   Bubble,
@@ -13,6 +12,7 @@ import {
   MessageGroup,
   Textarea,
 } from "../../components/ui";
+import { TeamPersonAvatar, teamMemberName } from "../team/TeamPersonAvatar";
 import { calculateChatScrollMargin, createChatVirtualizer } from "./createChatVirtualizer";
 import { ScrollToLatestButton, scrollToLatestMessage } from "./MessageNavigation";
 import {

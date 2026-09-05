@@ -1,9 +1,9 @@
 import type { TeamPresenceMember } from "@openbot/contracts/ipc";
 import { Loading } from "solid-js";
-import { useDirectMessages } from "../../direct-messages";
 import { DirectConversation } from "../../lazy-views";
-import { usePresence } from "../../presence";
-import { useServers } from "../../servers";
+import { useServers } from "../servers/servers-context";
+import { usePresence } from "../team/team-context";
+import { useDirectMessages } from "./direct-messages-context";
 
 /**
  * A conversation with a person rather than an Agent. The member is a prop because

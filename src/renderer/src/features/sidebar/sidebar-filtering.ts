@@ -4,8 +4,8 @@
  */
 
 import type { DirectThreadSummary, TeamPresenceMember } from "@openbot/contracts/ipc";
-import { teamMemberName } from "../../components/TeamPersonAvatar";
 import type { AgentProfile } from "../../data";
+import { teamMemberName } from "../team/TeamPersonAvatar";
 import type { SidebarAgentState } from "./sidebar-types";
 
 export function sidebarAgentStateLabel(state: SidebarAgentState): string {

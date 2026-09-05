@@ -1,16 +1,16 @@
 import type { CentralAuthUser } from "@openbot/contracts/ipc";
 import { createMemo } from "solid-js";
-import { useAgents } from "../../agents";
-import { useBrowserTabs } from "../../browser-tabs";
 import { useNavigation } from "../../navigation";
 import { usePlatform } from "../../platform";
-import { usePresence } from "../../presence";
 import { useProviders } from "../../providers";
-import { useRemoteDesktop } from "../../remote-desktop";
-import { useServerSettings } from "../../server-settings";
-import { useServers } from "../../servers";
-import { useSettings } from "../../settings";
 import { useTurns } from "../../turns";
+import { useAgents } from "../agents/agents-context";
+import { useBrowserTabs } from "../browser/browser-context";
+import { useRemoteDesktop } from "../remote-desktop/remote-desktop-context";
+import { useServerSettings } from "../servers/server-settings";
+import { useServers } from "../servers/servers-context";
+import { useSettings } from "../settings/settings-context";
+import { usePresence } from "../team/team-context";
 import { Conversation } from "./Conversation";
 import { useConversation } from "./conversation-context";
 

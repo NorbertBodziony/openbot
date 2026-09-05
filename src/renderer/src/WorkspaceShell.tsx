@@ -1,21 +1,21 @@
 import type { CentralAuthUser } from "@openbot/contracts/ipc";
 import { createMemo, Show } from "solid-js";
-import { useAgents } from "./agents";
-import { useDirectMessages } from "./direct-messages";
+import { WorkspaceAccountDock } from "./features/account/WorkspaceAccountDock";
+import { useAgents } from "./features/agents/agents-context";
+import { WorkspaceAgentSetup } from "./features/agents/WorkspaceAgentSetup";
+import { useDirectMessages } from "./features/conversation/direct-messages-context";
 import { WorkspaceConversation } from "./features/conversation/WorkspaceConversation";
 import { WorkspaceDirectConversation } from "./features/conversation/WorkspaceDirectConversation";
+import { RemoteCompatibilityScreen } from "./features/remote-desktop/RemoteCompatibilityScreen";
+import { useRemoteDesktop } from "./features/remote-desktop/remote-desktop-context";
+import { useServers } from "./features/servers/servers-context";
+import { WorkspaceServerRail } from "./features/servers/WorkspaceServerRail";
 import { WorkspaceSidebar } from "./features/sidebar/WorkspaceSidebar";
 import { useLayout } from "./layout";
 import { LEFT_PANEL_COMPACT } from "./layout-constants";
 import { usePlatform } from "./platform";
-import { RemoteCompatibilityScreen } from "./RemoteCompatibilityScreen";
-import { useRemoteDesktop } from "./remote-desktop";
-import { useServers } from "./servers";
-import { WorkspaceAccountDock } from "./WorkspaceAccountDock";
-import { WorkspaceAgentSetup } from "./WorkspaceAgentSetup";
 import { WorkspaceLeftPanelResizer } from "./WorkspaceLeftPanelResizer";
 import { WorkspaceOverlays } from "./WorkspaceOverlays";
-import { WorkspaceServerRail } from "./WorkspaceServerRail";
 
 /**
  * The application frame, and nothing else: which pane occupies the middle, how

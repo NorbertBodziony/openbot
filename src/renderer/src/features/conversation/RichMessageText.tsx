@@ -2,9 +2,9 @@ import { type ChatTagKind, chatTagReferences } from "@openbot/contracts/chat-tag
 import type { AttachmentSummary, InstalledSkill } from "@openbot/contracts/ipc";
 import type { JSX } from "@solidjs/web";
 import { createMemo, createSignal, createUniqueId, For, onCleanup, Show } from "solid-js";
-import { AgentAvatar } from "../../components/AgentAvatar";
 import { Button, Puzzle } from "../../components/ui";
 import type { AgentProfile, MessageCitation } from "../../data";
+import { AgentAvatar } from "../agents/AgentAvatar";
 import { AnchoredTooltip } from "./AnchoredTooltip";
 import { AttachmentReferenceVisual, attachmentReferenceTone } from "./AttachmentReference";
 import { LinkIcon } from "./ConversationIcons";

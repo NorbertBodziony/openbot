@@ -3,8 +3,6 @@ import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-lib
 import { createSignal, Show } from "solid-js";
 import { expect, it, vi } from "vitest";
 import { App } from "./App";
-import { createAgentInitialMessage } from "./agent-initial-message";
-import { useAgents } from "./agents";
 import { desktopAnalytics } from "./analytics";
 import { AppProviders } from "./app-providers";
 import {
@@ -20,12 +18,14 @@ import {
   testConversationPage,
   testServer,
 } from "./app-test-harness";
+import { createAgentInitialMessage } from "./features/agents/agent-initial-message";
+import { useAgents } from "./features/agents/agents-context";
 import { useConversation } from "./features/conversation/conversation-context";
+import { useServers } from "./features/servers/servers-context";
 import { SIDEBAR_PINS_STORAGE_KEY } from "./features/sidebar/sidebar-pins";
 import { SIDEBAR_COLLAPSED_STORAGE_KEY } from "./features/sidebar/sidebar-sections";
 import { useLayout } from "./layout";
 import { useNavigation } from "./navigation";
-import { useServers } from "./servers";
 
 describe("OpenBot connected desktop shell", () => {
   beforeEach(() => {

@@ -1,7 +1,13 @@
 import type { CentralAuthUser } from "@openbot/contracts/ipc";
 import { createMemo, Loading, Show } from "solid-js";
-import { useAgents } from "./agents";
-import { useAuth } from "./auth";
+import { useAuth } from "./features/account/account-context";
+import { useAgents } from "./features/agents/agents-context";
+import { useSetup } from "./features/onboarding/onboarding-context";
+import { useRemoteDesktop } from "./features/remote-desktop/remote-desktop-context";
+import { useServerSelection } from "./features/servers/server-selection";
+import { useServerSettings } from "./features/servers/server-settings";
+import { useServers } from "./features/servers/servers-context";
+import { useSettings } from "./features/settings/settings-context";
 import { useUpdates } from "./features/updates/updates-context";
 import {
   GlobalSearch,
@@ -15,12 +21,6 @@ import {
 import { useNavigation } from "./navigation";
 import { usePlatform } from "./platform";
 import { useProviders } from "./providers";
-import { useRemoteDesktop } from "./remote-desktop";
-import { useServerSelection } from "./server-selection";
-import { useServerSettings } from "./server-settings";
-import { useServers } from "./servers";
-import { useSettings } from "./settings";
-import { useSetup } from "./setup";
 
 interface AccountProps {
   account: () => CentralAuthUser;

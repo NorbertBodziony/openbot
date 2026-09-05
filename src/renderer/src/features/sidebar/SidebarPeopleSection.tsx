@@ -5,8 +5,8 @@
  */
 
 import { For, Show } from "solid-js";
-import { TeamPersonAvatar, teamMemberName } from "../../components/TeamPersonAvatar";
 import { Badge, Button } from "../../components/ui";
+import { TeamPersonAvatar, teamMemberName } from "../team/TeamPersonAvatar";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
 import { sidebarMessageTime } from "./sidebar-filtering";
 import { useSidebarScope } from "./sidebar-scope";

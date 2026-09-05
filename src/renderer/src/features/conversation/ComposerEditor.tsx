@@ -5,9 +5,9 @@ import type { DraftAttachment, InstalledSkill } from "@openbot/contracts/ipc";
 import { Portal } from "@solidjs/web";
 import { createEffect, createMemo, createSignal, createUniqueId, Show } from "solid-js";
 import { createStaticAvatarSvg } from "../../bloub-avatar";
-import { AgentAvatar } from "../../components/AgentAvatar";
 import { Listbox, Puzzle } from "../../components/ui";
 import type { AgentProfile } from "../../data";
+import { AgentAvatar } from "../agents/AgentAvatar";
 import { AnchoredTooltip } from "./AnchoredTooltip";
 import { AttachmentReferenceVisual, appendAttachmentReferenceVisual } from "./AttachmentReference";
 

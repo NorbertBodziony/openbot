@@ -1,13 +1,13 @@
 import type { AgentApproval, AgentEvent, QueueSnapshot } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal } from "solid-js";
-import { seededAttentionPrompts } from "./agent-runtime-snapshot";
-import { useAgents } from "./agents";
 import { desktopAnalytics } from "./analytics";
 import { useAnsweredPrompts } from "./answered-prompts";
-import { useDynamicIsland } from "./dynamic-island";
+import { seededAttentionPrompts } from "./features/agents/agent-runtime-snapshot";
+import { useAgents } from "./features/agents/agents-context";
 import { agentConversationKey, promptRequestKey } from "./features/conversation/conversation-keys";
+import { useDynamicIsland } from "./features/dynamic-island/dynamic-island-context";
+import { useServers } from "./features/servers/servers-context";
 import { createScopeGuard } from "./scope-lifetime";
-import { useServers } from "./servers";
 import { createSimpleContext } from "./simple-context";
 
 type PromptEvent = Extract<AgentEvent, { type: "prompt" }>;

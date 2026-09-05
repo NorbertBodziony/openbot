@@ -2,7 +2,6 @@ import type { QueueDeliveryStatus } from "@openbot/contracts/ipc";
 import { Dynamic } from "@solidjs/web";
 import { For, Show } from "solid-js";
 import { avatarHeadColor } from "../../bloub-avatar";
-import { AgentAvatar } from "../../components/AgentAvatar";
 import {
   Button,
   CalendarClock,
@@ -20,6 +19,7 @@ import {
   X,
 } from "../../components/ui";
 import type { AgentProfile, ChatActionMarkerModel, ChatActionMarkerStatus } from "../../data";
+import { AgentAvatar } from "../agents/AgentAvatar";
 
 interface ChatActionMarkerProps {
   marker: ChatActionMarkerModel;

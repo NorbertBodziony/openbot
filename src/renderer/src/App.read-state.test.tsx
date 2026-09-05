@@ -14,7 +14,7 @@ import {
   testServer,
 } from "./app-test-harness";
 import { useConversation } from "./features/conversation/conversation-context";
-import { useServerScope } from "./server-scope";
+import { useServerScope } from "./features/servers/server-scope";
 
 describe("OpenBot connected desktop shell", () => {
   beforeEach(() => {

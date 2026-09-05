@@ -1,6 +1,6 @@
 import { Show } from "solid-js";
-import { AgentAvatar } from "../../components/AgentAvatar";
 import { TypingDots } from "../../components/TypingDots";
+import { AgentAvatar } from "../agents/AgentAvatar";
 import type { ResolvedPinnedItem, SidebarAgentState } from "./sidebar-types";
 
 export function SidebarAgentIndicator(props: { state: SidebarAgentState }) {
