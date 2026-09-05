@@ -118,7 +118,13 @@ interface EnqueueInput {
 }
 
 interface TransferManifest {
-  version: 1;
+  /**
+   * 2, because the rename changed the field names inside: `recipientBotIds` became `recipientAgentIds` and
+   * `ownerBotId` became `ownerAgentId`. Nothing in the app reads this sidecar back -- it is written for the
+   * user and the model looking at the transfer directory -- but a released version 1 on disk spells those
+   * fields the old way, and leaving both shapes under one number would make the version say nothing.
+   */
+  version: 2;
   kind: "message-transfer" | "generated-attachment";
   transferId?: string;
   messageId?: string;
@@ -1020,7 +1026,7 @@ export class MailboxStore {
           ...(input.ownerThreadId !== undefined ? { ownerThreadId: input.ownerThreadId } : {}),
         };
         await writeTransferManifest(entry.generatedRoot, {
-          version: 1,
+          version: 2,
           kind: "generated-attachment",
           generatedAttachmentId: entry.id,
           ...(input.ownerAgentId ? { ownerAgentId: input.ownerAgentId } : {}),
@@ -1125,7 +1131,7 @@ export class MailboxStore {
         ...(input.ownerThreadId !== undefined ? { ownerThreadId: input.ownerThreadId } : {}),
       };
       await writeTransferManifest(generatedRoot, {
-        version: 1,
+        version: 2,
         kind: "generated-attachment",
         generatedAttachmentId: id,
         ...(input.ownerAgentId ? { ownerAgentId: input.ownerAgentId } : {}),
@@ -1282,7 +1288,7 @@ export class MailboxStore {
         });
       }
       await writeTransferManifest(temporaryRoot, {
-        version: 1,
+        version: 2,
         kind: "message-transfer",
         transferId,
         messageId,

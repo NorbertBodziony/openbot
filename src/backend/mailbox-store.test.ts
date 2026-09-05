@@ -216,7 +216,7 @@ describe("MailboxStore", () => {
       await readFile(join(root, "Shared", "Transfers", receipt.messageId, ".openbot-transfer.json"), "utf8"),
     );
     expect(manifest).toMatchObject({
-      version: 1,
+      version: 2,
       kind: "message-transfer",
       messageId: receipt.messageId,
       sender: { kind: "user" },
