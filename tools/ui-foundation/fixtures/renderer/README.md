@@ -13,5 +13,6 @@ includes it. Treat every file as data read by the test.
 `components/ui-kit` is not a typo: it is the neighbour that proves skipping the design system
 compares a path prefix against a separator rather than against `components/ui` alone.
 
-Adding a check to the script means adding both halves to this tree: the file that trips it, and the
-neighbour it must ignore.
+Adding a check to the script means adding the file that trips it here, beside the neighbour it must
+ignore. If the check reports once per file rather than once per occurrence, that neighbour cannot live
+here — the violation would account for the failure either way — so it goes in `../renderer-clean`.
